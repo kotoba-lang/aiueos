@@ -764,7 +764,7 @@ while time.time() < end:
         # titlebar at (380, 142) -- press, release, press, release -- and one at
         # (380, 40), a press on the maximize control at (476, 146), F11 down and up --
         # each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 90:
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 106:
             k = globals().get("uiux_sent", 0)
             seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
                     (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
@@ -808,6 +808,15 @@ while time.time() < end:
                     ev = [{"type": "abs", "data": {"axis": "x", "value": 1383}},
                           {"type": "abs", "data": {"axis": "y", "value": 574}},
                           {"type": "btn", "data": {"down": True, "button": "left"}}]
+                elif k >= 90:
+                    # ADR-0259: Ctrl+Alt+Q signs out, then the PIN 4 2 4 2 and Enter sign in again
+                    j = k - 90
+                    if j < 6:
+                        qc, dn = (("ctrl", True), ("alt", True), ("q", True), ("q", False), ("alt", False), ("ctrl", False))[j]
+                    else:
+                        qc = ("4", "4", "2", "2", "4", "4", "2", "2", "ret", "ret")[j - 6]
+                        dn = (j - 6) % 2 == 0
+                    ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
                 elif k >= 60:
                     # ADR-0258: Ctrl+Alt+L locks; a press at (456, 146) and a key (x) are swallowed; a
                     # wrong PIN (4 2 4 3, Enter) is refused; the right one (4 2 4 2, Enter) unlocks

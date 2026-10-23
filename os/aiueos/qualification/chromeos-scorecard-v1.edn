@@ -117,8 +117,9 @@
    :procedure "Sign out; sign in again."
    :expected "Windows and data of the session are gone from memory; the next session starts clean."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-sign-out" "ADR-0259" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "Sign out zeroes the desktop session's words (window bodies, scroll offsets, saved maximize rects, selection, minimized register), leaves one fresh window and locks; the PIN signs in to a clean session (read back from the surface: all zero). Only the desktop session is wiped (not the clipboard the broker holds, not the RAM behind the surface); the account is not switched; the PIN is the test PIN (ADR-0258)."
    }
   {:id :B4 :category :identity :title "Several accounts on one machine"
    :weight 0 :required false :required-level :device

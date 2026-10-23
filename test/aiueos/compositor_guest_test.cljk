@@ -1424,3 +1424,92 @@
       (is (= :screen-lock-ok-missing (:reason (guest/classify "guest-browser-screen-lock" {:serial (str pre lines states)}))))
       (is (= :guest-browser-screen-lock-absent (:reason (guest/classify "guest-browser-screen-lock" {:serial (str pre screen-lock-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-screen-lock" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private so-rows
+  ;; n at windows focus stack rect ops text-px hash
+  [[91 "456,146" 3 4 "314" "272,132,240,200" 187 1080 "f1860b60"]
+   [92 "456,146" 3 4 "314" "272,132,240,200" 187 1080 "f1860b60"]
+   [93 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [94 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [95 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [96 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [97 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [98 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [99 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [100 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [101 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [102 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [103 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [104 "456,146" 1 1 "1" "80,80,520,360" 30 33 "921cb55f"]
+   [105 "456,146" 1 1 "1" "80,80,520,360" 72 582 "60620c8b"]
+   [106 "456,146" 1 1 "1" "80,80,520,360" 72 582 "60620c8b"]])
+
+(defn- so-line [[n at w f st rect ops px h]]
+  (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=0 at=" at " reduce=none windows=" w " focus=" f
+       " stack=" st " rect=" rect " ops=" ops " text-px=" px " hash=" h "\r\n"))
+
+(def ^:private so-lock-rows
+  [[91 0 7 0 0]
+   [92 0 7 0 0]
+   [93 1 0 0 0]
+   [94 1 0 0 0]
+   [95 1 0 0 0]
+   [96 1 0 0 0]
+   [97 1 0 1 0]
+   [98 1 0 1 0]
+   [99 1 0 2 0]
+   [100 1 0 2 0]
+   [101 1 0 3 0]
+   [102 1 0 3 0]
+   [103 1 0 4 0]
+   [104 1 0 4 0]
+   [105 0 3 0 0]
+   [106 0 3 0 0]])
+
+(defn- so-state-lines [body]
+  (apply str (for [n (range 90 107)]
+               (str "AIUEOS_GUEST_BROWSER_SIGNOUT n=" n
+                    (if (<= n 92) " body=57 scroll=0 maxrect=0 minreg=0 windows=3 focus=4"
+                        (str " body=" body " scroll=0 maxrect=0 minreg=0 windows=1 focus=1"))
+                    "\r\n"))))
+
+(def ^:private sign-out-ok
+  "AIUEOS_GUEST_BROWSER_SIGN_OUT_OK events=16 session=zeroed locked=1 pin=signed-in clean=windows-1\r\n")
+
+(deftest guest-browser-sign-out-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        ok (str lock-part so so-states (so-state-lines 0) sign-out-ok)]
+    (testing "signed out, the session zeroed, signed in to a clean session: green"
+      (let [r (guest/classify "guest-browser-sign-out" {:serial ok})]
+        (is (= :guest-browser-sign-out (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "the lock gate still reads its own lines with the sign-out lines present"
+      (is (= :guest-browser-screen-lock (:reason (guest/classify "guest-browser-screen-lock" {:serial ok})))))
+    (testing "a session that still has body words after the sign-out is red"
+      (is (= :session-not-zeroed
+             (:reason (guest/classify "guest-browser-sign-out"
+                                      {:serial (str lock-part so so-states (so-state-lines 3) sign-out-ok)})))))
+    (testing "no data before the sign-out proves nothing and is red"
+      (is (= :no-session-data-before-sign-out
+             (:reason (guest/classify "guest-browser-sign-out"
+                                      {:serial (str lock-part so so-states
+                                                    (.replace (so-state-lines 0) "body=57" "body=0") sign-out-ok)})))))
+    (testing "a clean session that is not the model's is red"
+      (let [bad (.replace so "n=105 src=0 at=456,146 reduce=none windows=1" "n=105 src=0 at=456,146 reduce=none windows=2")]
+        (is (= :sign-out-differs-from-model
+               (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part bad so-states (so-state-lines 0) sign-out-ok)}))))))
+    (testing "it needs the screen-lock gate green first"
+      (is (= :no-screen-lock (:reason (guest/classify "guest-browser-sign-out" {:serial (str so so-states (so-state-lines 0) sign-out-ok)})))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :sign-out-ok-missing (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part so so-states (so-state-lines 0))}))))
+      (is (= :guest-browser-sign-out-absent (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part sign-out-ok)}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-sign-out" {:serial ok :qemu-unmeasured? true})))))))
