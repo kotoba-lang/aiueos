@@ -17,15 +17,16 @@ Fixed on 2026-10-23 for Linear JUN-90, JUN-89 and JUN-140. The data is
   (JUN-89: "設計記述、QEMUだけの成功、コード量、旧 os-coverage のマーカー割合は製品完成度に換算しない").
 - ChromeOS is the comparison, not the implementation: a row names what a person does and what they see, not how it is built.
 
-Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user`. A QEMU run never stands in for the real machine.
+Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user`. A QEMU run is `:qemu` unless it is a run in the reference VM with a kept receipt (below); only then does it count as `:device`.
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 0%.** No row is `:pass`: there is no run on a reference machine. README's capability table says the real-machine boot
-(P5) is `:spec`, and the owner has not yet confirmed the reference machine (below). The checker refuses a `:pass` while it is
-unconfirmed.
+**SCORE 17%.** Ten rows are `:pass`, each by a receipt of a run in the reference VM (below): C1, C2, C3, C4, D1, D2, D4, D7, G4 and I5
+(weight 17 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
+`:spec`) and the release rows (A3..A5) are not covered by the VM.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 41% of the required weight (a row whose behaviour is gated
+Beside the score, and never added to it, the **QEMU-level progress** is 41% of the required weight (it counts the rows above too) (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
 security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
 
@@ -116,6 +117,13 @@ weights that do not sum to 100.
 ## Reference machine (owner, 2026-10-23)
 
 The owner's answer: the reference is a VM on the Mac the agent works on, and the ChromeOS it is compared with is the
-latest ChromeOS in a VM on the same Mac. Still to be confirmed: the hypervisor and firmware, what is excluded, and
-whether a run in that VM counts as `:device`-level evidence. Until the owner confirms, the file keeps
-`confirmed-by-owner false` and no row can be `:pass`; the QEMU gates stay `:qemu`-level.
+latest ChromeOS in a VM on the same Mac. For the details the owner said to take the recommended choice, and this file does:
+
+- **The VM** is the QEMU + UEFI stack the gates already run on this Mac (MacBookPro18,4, Apple M1 Max); each receipt records the
+  host, the QEMU version, the commit and a hash of the serial log and of every screenshot.
+- **A run in it with a kept receipt counts as `:device`-level evidence** (`scripts/vm-receipt.cljk` writes the receipt;
+  `os/aiueos/qualification/receipts/vm-20261023/` holds the first two).
+- **No row is excluded.** A row the VM cannot exercise (Wi-Fi, Bluetooth, battery, suspend, an external display, a touchpad) stays
+  `:unachieved`; `:release` rows still need the release artifact.
+- **Not done:** the expected behaviours were taken from ChromeOS and were not re-measured in a ChromeOS VM on this Mac. The owner can
+  overturn any of the above; the checker follows `reference-machine` in the scorecard file.

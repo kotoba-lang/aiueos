@@ -24,14 +24,18 @@
 {:format :aiueos.scorecard/v1
  :date "2026-10-23"
  :issue ["JUN-90" "JUN-89" "JUN-140"]
- ;; 2026-10-23, owner: the reference is a VM on this Mac (the host the agent works on), and the ChromeOS
- ;; it is compared with is the latest ChromeOS in a VM on the same Mac. Still open: which hypervisor and
- ;; firmware, what is excluded, and whether a run in that VM counts as :device-level evidence (until the owner
- ;; says so, nothing is :pass and the QEMU gates stay :qemu-level).
- :reference-machine {:target "VM on the owner's Mac" :model "this Mac (the VM host)" :firmware :owner-to-confirm
-                     :chromeos-device "latest ChromeOS in a VM on the same Mac" :exclusions :owner-to-confirm
-                     :vm-counts-as-device :owner-to-confirm
-                     :confirmed-by-owner false}
+ ;; 2026-10-23, owner: the reference is a VM on this Mac, and the ChromeOS it is compared with is the latest
+ ;; ChromeOS in a VM on the same Mac. For the rest the owner said to go with the recommended choice: the VM is the
+ ;; QEMU + UEFI stack the gates already run on this Mac (hypervisor and firmware recorded in each receipt); a run in
+ ;; it with a kept receipt counts as :device-level evidence; no row is excluded (a row the VM cannot exercise stays
+ ;; :unachieved, and :release rows still need the release artifact). The expected behaviours were taken from
+ ;; ChromeOS and were not re-measured in a ChromeOS VM.
+ :reference-machine {:target "VM on the owner's Mac" :model "MacBookPro18,4 (Apple M1 Max), the VM host"
+                     :firmware "UEFI (OVMF) under QEMU, as the gates boot it"
+                     :chromeos-device "latest ChromeOS in a VM on the same Mac (expected behaviours not yet re-measured there)"
+                     :exclusions "none; rows a VM cannot exercise stay :unachieved"
+                     :vm-counts-as-device true
+                     :confirmed-by-owner true}
  :levels [:design :qemu :device :release :user]
  :categories {
    :boot "Boot and first run"
@@ -128,8 +132,8 @@
    :procedure "Press each launcher button and dock tile with the pointer."
    :expected "The app's window opens, once; pressing again raises it."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-launch" "ADR-0233"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-launch" "ADR-0233" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    :note "Gated under QEMU for four apps."
    }
   {:id :C2 :category :shell :title "Move, resize, focus and raise windows"
@@ -137,24 +141,24 @@
    :procedure "Drag a titlebar, drag the resize handle, click a window behind another."
    :expected "The window follows the pointer, keeps its minimum size, and the clicked window is focused and raised."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-drag" "gate guest-browser-resize" "gate guest-browser-input" "ADR-0229" "ADR-0230"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-drag" "gate guest-browser-resize" "gate guest-browser-input" "ADR-0229" "ADR-0230" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :C3 :category :shell :title "Switch windows from the keyboard"
    :weight 1 :required true :required-level :device
    :procedure "Alt+Tab with two or more windows."
    :expected "Focus and stacking move through the windows in order."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-focus-cycle" "ADR-0237"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-focus-cycle" "ADR-0237" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :C4 :category :shell :title "Maximize and restore"
    :weight 1 :required true :required-level :device
    :procedure "Double-press the titlebar, press the control, press F11, twice each."
    :expected "The window fills the work area and returns to the exact rect."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-window-maximize" "gate guest-browser-maximize-control" "ADR-0250" "ADR-0251"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-window-maximize" "gate guest-browser-maximize-control" "ADR-0250" "ADR-0251" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :C5 :category :shell :title "Minimize, and a list of open windows"
    :weight 2 :required true :required-level :device
@@ -226,16 +230,16 @@
    :procedure "Type in a window; use F6, Enter, Escape, F10, F11."
    :expected "Keys reach the focused window and the shell actions."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-type" "gate guest-browser-keyboard-activate" "ADR-0225" "ADR-0249"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-type" "gate guest-browser-keyboard-activate" "ADR-0225" "ADR-0249" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :D2 :category :input :title "Pointer and wheel"
    :weight 1 :required true :required-level :device
    :procedure "Move, press, drag, scroll with a pointer."
    :expected "Each is followed exactly."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-cursor" "gate guest-browser-scroll" "ADR-0236" "ADR-0238"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-cursor" "gate guest-browser-scroll" "ADR-0236" "ADR-0238" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :D3 :category :input :title "Touchpad gestures"
    :weight 2 :required true :required-level :device
@@ -250,8 +254,8 @@
    :procedure "Type romaji; convert with Space; commit; use Hankaku/Zenkaku."
    :expected "Kana and kanji appear as the IME composes; the candidate order is stable."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-preedit" "gate guest-browser-dictionary" "ADR-0235" "ADR-0227" "ADR-0228"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-preedit" "gate guest-browser-dictionary" "ADR-0235" "ADR-0227" "ADR-0228" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    :note "Dictionary generated from Unihan; coverage of the font only."
    }
   {:id :D5 :category :input :title "Other layouts and input methods"
@@ -276,8 +280,8 @@
    :procedure "Ctrl+C, Ctrl+V between windows; refuse the permission once."
    :expected "Copy and paste work when admitted and do nothing when refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-clipboard" "ADR-0241" "ADR-0096"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-clipboard" "ADR-0241" "ADR-0096" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    }
   {:id :D8 :category :input :title "Drag and drop"
    :weight 1 :required true :required-level :device
@@ -471,8 +475,8 @@
    :procedure "Request clipboard and file access; grant one, refuse one."
    :expected "Granted works, refused does nothing, both are recorded."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0096" "gate guest-broker"]
+   :status :pass :qemu-progress :pass
+   :evidence ["ADR-0096" "gate guest-broker" "receipt os/aiueos/qualification/receipts/vm-20261023/broker/receipt.edn"]
    }
   {:id :G5 :category :security :title "Key lifecycle and revocation"
    :weight 1 :required true :required-level :release
@@ -552,8 +556,8 @@
    :procedure "Toggle high contrast; read the ratios."
    :expected "Text and bars are at least 7:1 and the choice holds."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["gate guest-browser-high-contrast" "ADR-0247"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-high-contrast" "ADR-0247" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
    :note "Palette and ratio gated under QEMU; the dock keeps its colours."
    }
   {:id :I6 :category :power :title "Screen reader"

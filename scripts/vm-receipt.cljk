@@ -1,0 +1,45 @@
+#!/usr/bin/env kbb
+;; Write the receipt of a run in the reference VM (the owner's Mac, scorecard v1): the serial log, the
+;; classifier's verdict for each named profile, the host, the commit, and a hash of every screenshot the
+;; run left. A scorecard row may name the receipt as evidence; the checker reads it back.
+;;
+;;   kbb --backend sci --classpath src scripts/vm-receipt.cljk --serial F --out DIR --profiles a,b,c [--shots DIR]
+;; Exit 0 when every named profile is green on the serial, 1 otherwise.
+
+(ns vm-receipt
+  (:require [aiueos.compositor.guest :as g]
+            [clojure.string :as str]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            ["node:crypto" :as crypto]
+            ["node:child_process" :as cp]))
+
+(def ^:private args (vec *command-line-args*))
+(defn- opt [f] (let [i (.indexOf args f)] (when-not (neg? i) (nth args (inc i) nil))))
+(defn- sh [cmd] (str/trim (str (.execSync cp cmd #js {:encoding "utf8" :stdio #js ["ignore" "pipe" "ignore"]}))))
+(defn- sha [buf] (-> (.createHash crypto "sha256") (.update buf) (.digest "hex")))
+
+(let [serial-path (opt "--serial") out (opt "--out")
+      profiles (str/split (opt "--profiles") #",")
+      shots (opt "--shots")
+      serial (str (.readFileSync fs serial-path "utf8"))
+      verdicts (into {} (for [p profiles]
+                          (let [r (g/classify p {:serial serial})]
+                            [p {:green? (boolean (:green? r)) :reason (:reason r)}])))
+      shot-hashes (when shots
+                    (into (sorted-map)
+                          (for [f (sort (js->clj (.readdirSync fs shots)))
+                                :when (str/ends-with? f ".ppm")]
+                            [f (sha (.readFileSync fs (.join path shots f)))])))
+      receipt {:date (sh "date -u +%Y-%m-%dT%H:%M:%SZ")
+               :commit (sh "git rev-parse HEAD")
+               :host {:model (sh "sysctl -n hw.model") :cpu (sh "sysctl -n machdep.cpu.brand_string")
+                      :os (sh "uname -srm") :qemu (sh "qemu-system-x86_64 --version | head -1")}
+               :serial-sha256 (sha (.readFileSync fs serial-path))
+               :verdicts verdicts
+               :screenshots-sha256 shot-hashes}]
+  (.mkdirSync fs out #js {:recursive true})
+  (.writeFileSync fs (.join path out "kernel-serial.log") serial)
+  (.writeFileSync fs (.join path out "receipt.edn") (str (pr-str receipt) "\n"))
+  (println (str "RECEIPT " out " profiles=" (count profiles) " green=" (count (filter :green? (vals verdicts)))))
+  (when-not (every? :green? (vals verdicts)) (.exit js/process 1)))
