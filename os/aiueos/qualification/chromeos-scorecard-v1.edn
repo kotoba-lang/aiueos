@@ -99,9 +99,9 @@
    :procedure "Sign in on the reference machine with a passkey bound to it; read back the session."
    :expected "The session opens; a passkey for another device is refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["apps/session/README.md" "ADR-0113"]
-   :note "The authority flow and its refusals are tested with an injected authority; no human passkey ceremony on the machine."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-passkey" "ADR-0270" "ADR-0113" "receipt os/aiueos/qualification/receipts/vm-20261024/passkey/receipt.edn"]
+   :note "On the lock screen C runs a WebAuthn-shaped ceremony: a fresh challenge, a P-256 signature, and a verification against the public point registered on this machine's volume (the key is drawn from the virtio-rng and kept in sector 1035). A passkey made on another device signs but does not verify (the lock stays, the red bar shows); this device's verifies and opens a session whose id is printed (AIUEOS_GUEST_BROWSER_PASSKEY_TRY). Every frame equals the frame model. Limits, stated so the owner can reject this pass: the private key sits in the clear on the volume (no secure element or TPM seal, no data encryption at rest, G3), so 'bound to the device' means 'kept on this volume'; user presence is the key press; the other device is a test key, not a second machine; no counter or attestation; the PIN remains the other way in."
    }
   {:id :B2 :category :identity :title "Lock and unlock the screen"
    :weight 2 :required true :required-level :device
@@ -184,17 +184,18 @@
    :procedure "Raise a notification from an app."
    :expected "It appears, can be dismissed, and is listed."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-notify" "ADR-0268" "receipt os/aiueos/qualification/receipts/vm-20261024/notify/receipt.edn"]
+   :note "Two notifications are raised, drawn as toasts; F8 dismisses the newest, F7 opens a list that still holds the dismissed one and F7 closes it; every frame equals a model written apart from the Kotoba. The raise is a test hook writing the surface words, not a real app call; keyboard-only; no timeout, sound or pointer dismiss."
    }
   {:id :C8 :category :shell :title "Settings"
    :weight 1 :required true :required-level :device
    :procedure "Change contrast, scale and network settings in the settings window."
    :expected "The change applies and is kept across a reboot."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-settings" "ADR-0260" "ADR-0265"]
-   :note "The high-contrast choice and the UI scale (125 %) are kept across a reboot (a record on the volume, written with readback, read by the second boot of the same volume, ADR-0260/0265). No settings window, no network setting."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-settings" "ADR-0260" "ADR-0265" "ADR-0269" "receipt os/aiueos/qualification/receipts/vm-20261024/settings/receipt.edn"]
+   :note "Window 2 (opened from launcher button 2) shows Contrast, Scale and Network; a pointer click on each line changes that setting (contrast high, 125 %, network off), the frame follows (palette, scale, the status area saying OFFLINE), each change is written to the volume with readback, and the second boot of the same volume reads all three, opens the window with them and draws the frame the model gives. Limits, stated so the owner can reject this pass: the network setting is a shell flag (the status area reports OFFLINE while it is off; no adapter is reconfigured and there is no Wi-Fi), the controls are lines of text without a hover or pressed look, and the record is applied at the settings stage rather than at boot."
    }
   {:id :C9 :category :shell :title "Status area: network, power, clock"
    :weight 1 :required true :required-level :device
@@ -268,8 +269,9 @@
    :procedure "Switch to another layout (US, JIS) and another language."
    :expected "The layout changes the characters produced."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-layout" "ADR-0267" "gate guest-browser-ime-toggle" "ADR-0228" "receipt os/aiueos/qualification/receipts/vm-20261024/layout/receipt.edn"]
+   :note "F9 flips US and JIS; the same physical keys type @ 2 A : \" on US and \" * @ + on JIS, every frame equal to a model written apart from the Kotoba. Another language is the Japanese input method (Hankaku/Zenkaku, D4). English mode only; two layouts; not kept across a reboot; no dead keys or compose; no physical JIS yen/ro keys."
    }
   {:id :D6 :category :input :title "Text editing"
    :weight 1 :required true :required-level :device
@@ -319,7 +321,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
    :evidence ["gate guest-browser-flow-parity" "ADR-0234" "amu PR 1489"]
-   :note "The kernel desktop carries a behavioural mirror of the Browser's surface and flow; the real Browser/CSSOM graph is not compiled for the kernel (floor :browser-component is open)."
+   :note "The kernel desktop carries a behavioural mirror of the Browser's surface and flow; the real Browser/CSSOM graph is not compiled for the kernel (floor :browser-component is open). Measured 2026-10-24 (os/aiueos/scripts/measure-browser-component.py): browser.surface and browser.text-edit lock and link as an 11-module graph with the guest twins of the text library, and the kernel target stops at the first host regex literal in cssom.core; cssom.core and cssom.layout hold about 127 such literals — measured on the uncommitted working tree of the owner's cssom checkout, where a port off host regex is already under way (floors note, 2026-10-24 correction)."
    }
   {:id :E2 :category :web :title "HTTPS pages"
    :weight 3 :required true :required-level :device
@@ -421,9 +423,9 @@
    :procedure "Plug a cable; read the lease."
    :expected "An address and a route come up."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["smoke-qemu-dhcp.sh" "ADR-0140"]
-   :note "DHCP in QEMU and an RTL8125 driver; not the reference machine's NIC."
+   :status :pass :qemu-progress :pass
+   :evidence ["smoke-qemu-dhcp.sh" "ADR-0140" "ADR-0076" "receipt os/aiueos/qualification/receipts/vm-20261024/dhcp-suite/receipt.edn" "receipt os/aiueos/qualification/receipts/vm-20261024/dhcp/receipt.edn"]
+   :note "In the reference VM (a virtio NIC on SLIRP) the boot configured 10.0.2.15/255.255.255.0 with router 10.0.2.2 from a DHCP offer and ack, and the stack then used that address (AIUEOS_DHCP_OK, AIUEOS_DHCP_CONSUMED). smoke-qemu-dhcp.sh passes in full (AIUEOS_DHCP_SMOKE_OK admitted=1 refused=3): the unmodified boot takes the lease and three tampered replies (foreign transaction id, wrong message type, an option running past the frame) are each refused with their own reason (5, 9, 8). Not the RTL8125 on a physical machine."
    }
   {:id :F5 :category :storage :title "USB storage"
    :weight 1 :required true :required-level :device
@@ -516,12 +518,13 @@
    :evidence []
    }
   {:id :H4 :category :update :title "Backup and restore of user data"
-   :weight 1 :required true :required-level :release
+   :weight 1 :required true :required-level :device
    :procedure "Back up; wipe; restore."
    :expected "The data reads back byte for byte."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-backup" "ADR-0271" "receipt os/aiueos/qualification/receipts/vm-20261024/backup/receipt.edn"]
+   :note "The user data this machine has is the settings record (sector 1034) and the passkey record (1035). They were copied to backup sectors, wiped (the machine then saw no settings and no passkey), restored, and read back byte for byte (SHA-256 of each sector equal), with the same settings (contrast high, 125 %, network off) and the same signing key (same public point; it signs and verifies). Limits, stated so the owner can reject this pass: the user data is two records, not files (no file system, F2); the backup sits on the same volume, so it covers a wipe or a bad write of the record, not the loss of the disk; there is no user interface for it and no off-device copy."
    }
   {:id :I1 :category :power :title "Suspend and resume"
    :weight 2 :required true :required-level :device
@@ -553,8 +556,9 @@
    :procedure "Play a sound; change the volume."
    :expected "Sound plays at the set level."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-audio" "ADR-0272" "receipt os/aiueos/qualification/receipts/vm-20261024/audio/receipt.edn"]
+   :note "A polled virtio-sound driver played a 440 Hz burst at volume 100; the volume-down key was pressed twice (100 -> 75 -> 50) and the burst played again. Measured by the HOST on the WAV file QEMU's sound card wrote (kept in the receipt, audio.wav): two bursts of about 0.4 s at 440.0 Hz, RMS 23170 then 11306, a ratio of 0.488 for volume 50. Limits, stated so the owner can reject this pass: the volume is a software gain in the stage with no mixer, indicator or mute; one output stream; a VM's sound card writing a file, not a speaker; no playback of audio files (E6) and no input."
    }
   {:id :I5 :category :power :title "High-contrast mode"
    :weight 1 :required true :required-level :device

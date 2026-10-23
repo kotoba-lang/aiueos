@@ -300,6 +300,21 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-audio
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-audio"]
+  :doc "Guest browser sound (ADR-0272) on KERNEL.ELF under QEMU with a virtio sound card writing a WAV: a 440 Hz burst at volume 100, the volume-down key twice, the burst again at 50; the host measures the WAV (two 440 Hz bursts, the second at half the RMS level)."}
+ :browser-desktop-backup
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-backup"]
+  :doc "Guest browser backup and restore (ADR-0271) on KERNEL.ELF under QEMU, after the settings stage: the settings and passkey records are copied to backup sectors, wiped (the machine sees neither), restored, and read back byte for byte (SHA-256), with the same settings and the same signing key."}
+ :browser-desktop-passkey
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-passkey"]
+  :doc "Guest browser device-bound passkey (ADR-0270) on KERNEL.ELF under QEMU, after the notification stage: Ctrl+Alt+L locks; F3 offers a passkey of another device (signed, not verified against this device's registered public point: refused); F4 offers this device's (verified: the session opens); every frame equals browser-frame-model.cljk's."}
+ :browser-desktop-notify
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-notify"]
+  :doc "Guest browser notifications (ADR-0268) on KERNEL.ELF under QEMU, after the layout stage: the stage raises two notifications (toasts), F8 dismisses the newest, F7 opens and closes the list that still holds the dismissed one; every frame equals browser-frame-model.cljk's."}
+ :browser-desktop-layout
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-layout"]
+  :doc "Guest browser keyboard layouts (ADR-0267) on KERNEL.ELF under QEMU, after the clock stage: US shift+2, 2, shift+a, shift+;, shift+', F9 to JIS, shift+2, shift+', the key right of P, shift+;, F9 back; Kotoba maps physical key + layout to the character; every frame equals browser-frame-model.cljk's."}
  :browser-desktop-clock
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-clock"]
   :doc "Guest browser clock (ADR-0264) on KERNEL.ELF under QEMU, after the editing stage: C sets the machine's real-time clock to 12:34, reads it back from the CMOS registers and reports the minute of the day in surface word 1968; browser-frame2 draws HH:MM at the right end of the launcher row; both frames equal browser-frame-model.cljk's and the second is the first plus five glyphs."}

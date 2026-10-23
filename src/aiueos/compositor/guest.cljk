@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup" "guest-browser-audio"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1469,42 +1469,47 @@
       {:green? true :exit 0 :reason :guest-browser-sign-out
        :leftover [:memory-read-from-the-surface-not-the-ram :clipboard-not-cleared :test-pin-hash-in-the-image :draw-list-not-pixels]})))
 
-;; Guest browser settings (ADR-0260): the high-contrast choice survives a reboot. The gate boots the SAME volume
-;; twice (the harness keeps the first serial as :serial1). First boot: no record on the volume, the host presses
-;; F10, Kotoba flips the palette (surface word 2039) and C writes the choice to the settings sector with readback.
-;; Second boot: the settings stage reads the record, applies it, and the host sends only Alt -- the frame is
-;; high-contrast because the volume said so. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid= contrast=
-;; and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= text-px= hash= written= stored=. Green needs the sign-out gate
-;; green on the second serial, both boots' frames equal to browser-frame-model.cljk's ("settings-frame"), and, apart
-;; from the model: boot one starts with no record (valid=0) and ends having written the choice (stored=1); boot two
-;; starts with the record (valid=1 contrast=1), its keys are Alt and not F10, it writes nothing, and its frames are
-;; the frames boot one drew.
+;; Guest browser settings (ADR-0260, ADR-0265, ADR-0269): contrast, scale and the network setting survive a reboot, and are changed in
+;; a settings window. The gate boots the SAME volume twice (the harness keeps the first serial as :serial1). The stage opens window 2,
+;; the settings app (title "Settings", body "Contrast: .. / Scale: ..% / Network: .."), by a press on launcher button 2 through the
+;; reducer. First boot: no record on the volume, the host clicks the three lines of the window's body (contrast, scale, network: each
+;; a press and a release; the release carries no position, so after the scale click it reads (160, 120) in the new viewport) -- contrast high, 125 %, network off; C writes the record after each change with readback; the status area says ONLINE (a NIC is attached) until the network setting is off, then
+;; OFFLINE. Second boot: the stage reads the record, applies all three before the first frame and the host sends only Alt -- the window
+;; shows the stored values and the frame is the one boot one ended on. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT
+;; valid= contrast= scale= net= and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= pct= net= win= text-px= hash= written= stored=.
+;; Green needs the sign-out gate green on the same serial, both boots' frames equal to browser-frame-model.cljk's ("settings-frame"),
+;; and, apart from the model: boot one starts with no record, writes after each of the three changes and ends with all three stored;
+;; boot two starts with the record (valid=1 contrast=1 scale=125 net=1), is not told by the keys, writes nothing, and draws what boot
+;; one ended on.
 
-(def ^:private settings-want
-  (let [a {:hc 1 :ops 77 :pct 100 :px 668 :hash "bed963dd"}
-        z {:hc 1 :ops 77 :pct 125 :px 1757 :hash "244cc84c"}]
-    [(assoc a :n 1) (assoc a :n 2) (assoc a :n 3) (assoc z :n 4) (assoc z :n 5) (assoc z :n 6)]))
+(def ^:private settings-want-1
+  [{:n 1 :key 0 :at "0,0" :hc 0 :pct 100 :net 0 :ops 158 :px 1467 :hash "979da48d" :written 0 :stored "none"}
+   {:n 2 :key 0 :at "200,131" :hc 1 :pct 100 :net 0 :ops 156 :px 1427 :hash "1708b5e4" :written 1 :stored 1}
+   {:n 3 :key 0 :at "200,131" :hc 1 :pct 100 :net 0 :ops 156 :px 1427 :hash "1708b5e4" :written 1 :stored 1}
+   {:n 4 :key 0 :at "200,151" :hc 1 :pct 125 :net 0 :ops 156 :px 3790 :hash "41efdd5a" :written 2 :stored 1}
+   {:n 5 :key 0 :at "160,120" :hc 1 :pct 125 :net 0 :ops 156 :px 3777 :hash "fb3ee8f8" :written 2 :stored 1}
+   {:n 6 :key 0 :at "200,171" :hc 1 :pct 125 :net 1 :ops 158 :px 3848 :hash "a4b646bb" :written 3 :stored 1}
+   {:n 7 :key 0 :at "200,171" :hc 1 :pct 125 :net 1 :ops 158 :px 3848 :hash "a4b646bb" :written 3 :stored 1}])
 (def ^:private settings-want-2
-  (mapv #(assoc (last settings-want) :n %) [1 2]))
+  [{:n 1 :key 0 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 2 :key 225 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 3 :key 224 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}])
 
 (defn- settings-lines [s]
-  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) pct=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
-       (mapv (fn [[_ n key hc ops pct px hash written stored]]
-               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :ops (parse-long ops) :pct (parse-long pct) :px (parse-long px)
-                :hash hash :written (parse-long written) :stored (if (= stored "none") "none" (parse-long stored))}))))
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) at=(\d+,\d+) hc=(\d+) ops=(\d+) pct=(\d+) net=(\d+) win=2,2 text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
+       (mapv (fn [[_ n key at hc ops pct net px hash written stored]]
+               {:n (parse-long n) :key (parse-long key) :at at :hc (parse-long hc) :pct (parse-long pct) :net (parse-long net)
+                :ops (parse-long ops) :px (parse-long px) :hash hash :written (parse-long written)
+                :stored (if (= stored "none") "none" (parse-long stored))}))))
 
 (defn- settings-boot [s]
-  (when-let [[_ v c] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+) scale=(\d+)" (or s ""))]
-    [(parse-long v) (parse-long c)]))
-(defn- settings-scale [s]
-  (when-let [[_ v] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=\d+ contrast=\d+ scale=(\d+)" (or s ""))]
-    (parse-long v)))
+  (when-let [[_ v c sc nt] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+) scale=(\d+) net=(\d+)" (or s ""))]
+    (mapv parse-long [v c sc nt])))
 
 (defn guest-browser-settings-result
   [{:keys [serial serial1 qemu-unmeasured?] :as opts}]
   (let [l1 (settings-lines serial1)
         l2 (settings-lines serial)
-        shape (fn [ls] (mapv #(select-keys % [:n :hc :ops :pct :px :hash]) ls))
         sign-out (guest-browser-sign-out-result opts)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1515,27 +1520,29 @@
       (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6" (or serial1 ""))
                 (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial ""))))
       {:green? false :exit 1 :reason :settings-ok-missing :leftover [:settings-ok-missing]}
-      (not= (settings-boot serial1) [0 0])
+      (not= (settings-boot serial1) [0 0 100 0])
       {:green? false :exit 1 :reason :first-boot-had-a-record :leftover [:first-boot-had-a-record]}
-      (not= (settings-boot serial) [1 1])
-      {:green? false :exit 1 :reason :second-boot-did-not-read-the-choice :leftover [:second-boot-did-not-read-the-choice]}
-      (not= (shape l1) settings-want)
-      {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]}
-      (not= (shape l2) settings-want-2)
-      {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]}
-      (not= (settings-scale serial) 125)
-      {:green? false :exit 1 :reason :second-boot-did-not-read-the-scale :leftover [:second-boot-did-not-read-the-scale]}
-      (not= (settings-scale serial1) 100)
-      {:green? false :exit 1 :reason :first-boot-had-a-scale :leftover [:first-boot-had-a-scale]}
-      (not= (mapv (juxt :written :stored) l1) [[1 1] [1 1] [1 1] [2 1] [2 1] [2 1]])
-      {:green? false :exit 1 :reason :choice-not-written :leftover [:choice-not-written]}
-      (not= (vec (take 2 (mapv :key l1))) [273 272])
-      {:green? false :exit 1 :reason :first-boot-did-not-press-f10 :leftover [:first-boot-did-not-press-f10]}
-      (or (some #{273 272} (map :key l2)) (not= (mapv (juxt :written :stored) l2) [[0 1] [0 1]]))
+      (not= (settings-boot serial) [1 1 125 1])
+      {:green? false :exit 1 :reason :second-boot-did-not-read-the-settings :leftover [:second-boot-did-not-read-the-settings]}
+      (not= l1 settings-want-1)
+      {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat l1 (repeat nil)) settings-want-1)))}
+      (not= l2 settings-want-2)
+      {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat l2 (repeat nil)) settings-want-2)))}
+      ;; the rules, by name (independent of the tables above)
+      (not= (mapv :written l1) [0 1 1 2 2 3 3])
+      {:green? false :exit 1 :reason :a-change-was-not-written :leftover [:a-change-was-not-written]}
+      (not= (mapv :at l1) ["0,0" "200,131" "200,131" "200,151" "160,120" "200,171" "200,171"])
+      {:green? false :exit 1 :reason :first-boot-did-not-click-the-lines :leftover [:first-boot-did-not-click-the-lines]}
+      (or (some #(not= "0,0" %) (map :at l2)) (some pos? (map :written l2)))
       {:green? false :exit 1 :reason :second-boot-was-told-or-wrote :leftover [:second-boot-was-told-or-wrote]}
       :else
       {:green? true :exit 0 :reason :guest-browser-settings
-       :leftover [:contrast-and-scale-only :no-settings-window :no-network :restored-at-the-settings-stage-not-at-boot]})))
+       :leftover [:network-setting-is-a-shell-flag-not-the-adapter :keys-and-clicks-only-no-drawn-buttons
+                  :restored-at-the-settings-stage-not-at-boot]})))
 
 ;; Guest browser UI scale (ADR-0261): after the sign-out stage the host sends F11 (the clean session's window is
 ;; maximized), Ctrl+= three times and Ctrl+- twice (125, 150, 150, 125, 100) and F11 again. Kotoba chooses the
@@ -1861,6 +1868,329 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-clock
        :leftover [:no-power-state :network-state-is-boot-time-not-live :set-by-the-test-hook :not-refreshed-each-minute :draw-list-not-pixels]})))
+
+;; Guest browser keyboard layouts (ADR-0267): after the clock stage the host types, in English mode at the caret the editing stage left,
+;; US shift+2, 2, shift+a, shift+;, shift+', then F9 (JIS), shift+2, shift+', the key right of P, shift+;, then F9 again. Kotoba maps the
+;; physical key and the layout word (surface word 1970) to the character. The kernel prints
+;; AIUEOS_GUEST_BROWSER_LAYOUT n= key= text= layout= caret= ops= text-px= hash= for each of the 36 key events. Green needs the clock gate
+;; green on the same serial and every line equal to browser-frame-model.cljk's ("layout-frame"), and, apart from the model, the
+;; characters by name: US gives @ 2 A : " and JIS gives " * @ +, the same physical keys, and F9 flips the layout word.
+
+(def ^:private layout-want
+  [{:n 1 :key 169 :layout 0 :text "ab_c|e" :caret 5 :ops 77 :px 668 :hash "bed963dd"}
+   {:n 2 :key 13 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 3 :key 12 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 4 :key 168 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 5 :key 13 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 6 :key 12 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 7 :key 169 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 8 :key 121 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 9 :key 120 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 10 :key 168 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 11 :key 169 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 12 :key 157 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 13 :key 156 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 14 :key 168 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 15 :key 169 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 16 :key 161 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 17 :key 160 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 18 :key 168 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 19 :key 269 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 20 :key 268 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 21 :key 169 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 22 :key 13 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 23 :key 12 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 24 :key 168 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 25 :key 169 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 26 :key 161 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 27 :key 160 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 28 :key 168 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 29 :key 105 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 30 :key 104 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 31 :key 169 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 32 :key 157 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 33 :key 156 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 34 :key 168 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 35 :key 269 :layout 0 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 36 :key 268 :layout 0 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- layout-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LAYOUT n=(\d+) key=(\d+) text=(\S*) layout=(\d+) caret=(\d+) sel=- ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key text layout caret ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :layout (parse-long layout) :text text :caret (parse-long caret)
+                :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-layout-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (layout-lines serial)
+        at (fn [n] (nth ls (dec n) nil))
+        clock (guest-browser-clock-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? clock))
+      (assoc clock :reason :no-clock :leftover (into [:no-clock] (:leftover clock)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-layout-absent :leftover [:guest-browser-layout-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36" (or serial "")))
+      {:green? false :exit 1 :reason :layout-ok-missing :leftover [:layout-ok-missing]}
+      (not= ls layout-want)
+      {:green? false :exit 1 :reason :layout-differs-from-model :leftover [:layout-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) layout-want)))}
+      ;; the characters, by name (independent of the table above)
+      (not (and (= "ab_c|@2A:\"e" (:text (at 16))) (= 0 (:layout (at 16)))))
+      {:green? false :exit 1 :reason :us-characters-wrong :leftover [:us-characters-wrong]}
+      (not (and (= 1 (:layout (at 19))) (= 1 (:layout (at 20)))))
+      {:green? false :exit 1 :reason :f9-did-not-switch-to-jis :leftover [:f9-did-not-switch-to-jis]}
+      (not= "ab_c|@2A:\"\"*@+e" (:text (at 34)))
+      {:green? false :exit 1 :reason :jis-characters-wrong :leftover [:jis-characters-wrong]}
+      (not (and (= 0 (:layout (at 35))) (= 0 (:layout (at 36)))))
+      {:green? false :exit 1 :reason :f9-did-not-switch-back :leftover [:f9-did-not-switch-back]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-layout
+       :leftover [:us-and-jis-only :english-mode-only :no-compose-or-dead-keys :draw-list-not-pixels]})))
+
+;; Guest browser notifications (ADR-0268): after the layout stage the stage plays two apps that raise a notification ("Backup", then
+;; "Update"); both show as toasts. The host presses F8 (dismiss the newest shown), F7 (open the list), F7 (close it), F8, F7, F7. The kernel
+;; prints AIUEOS_GUEST_BROWSER_NOTIFY n= key= notes= panel= ops= text-px= hash= for the 15 frames (baseline, two posts, twelve key events),
+;; notes being the four entry states (0 empty, 1 shown, 2 dismissed). Green needs the layout gate green on the same serial and every line
+;; equal to browser-frame-model.cljk's ("notify-frame"), and, apart from the model, the rules by name: a raised notification appears
+;; (ops grow), dismissing removes it from the toasts but not from the list, the list shows both, and it closes.
+
+(def ^:private notify-want
+  [{:n 1 :key 0 :notes "0000" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 2 :key 0 :notes "1000" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 3 :key 0 :notes "1100" :panel 0 :ops 100 :px 1088 :hash "132f00a4"}
+   {:n 4 :key 265 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 5 :key 264 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 6 :key 261 :notes "1200" :panel 1 :ops 100 :px 1105 :hash "b1f973ae"}
+   {:n 7 :key 260 :notes "1200" :panel 1 :ops 100 :px 1105 :hash "b1f973ae"}
+   {:n 8 :key 261 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 9 :key 260 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 10 :key 265 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 11 :key 264 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 12 :key 261 :notes "2200" :panel 1 :ops 99 :px 1088 :hash "4782e143"}
+   {:n 13 :key 260 :notes "2200" :panel 1 :ops 99 :px 1088 :hash "4782e143"}
+   {:n 14 :key 261 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 15 :key 260 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- notify-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_NOTIFY n=(\d+) key=(\d+) notes=(\d{4}) panel=(\d) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key notes panel ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :notes notes :panel (parse-long panel) :ops (parse-long ops)
+                :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-notify-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (notify-lines serial)
+        at (fn [n] (nth ls (dec n) nil))
+        layout (guest-browser-layout-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? layout))
+      (assoc layout :reason :no-layout :leftover (into [:no-layout] (:leftover layout)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-notify-absent :leftover [:guest-browser-notify-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_NOTIFY_OK events=12" (or serial "")))
+      {:green? false :exit 1 :reason :notify-ok-missing :leftover [:notify-ok-missing]}
+      (not= ls notify-want)
+      {:green? false :exit 1 :reason :notify-differs-from-model :leftover [:notify-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) notify-want)))}
+      ;; the rules, by name (independent of the table above)
+      (not (and (< (:ops (at 1)) (:ops (at 2)) (:ops (at 3))) (= "1100" (:notes (at 3)))))
+      {:green? false :exit 1 :reason :raised-notifications-do-not-appear :leftover [:raised-notifications-do-not-appear]}
+      (not (and (= "1200" (:notes (at 4))) (< (:ops (at 4)) (:ops (at 3)))))
+      {:green? false :exit 1 :reason :dismiss-did-not-remove-the-toast :leftover [:dismiss-did-not-remove-the-toast]}
+      (not (and (= 1 (:panel (at 6))) (= "1200" (:notes (at 6))) (> (:ops (at 6)) (:ops (at 4)))))
+      {:green? false :exit 1 :reason :list-does-not-show-both :leftover [:list-does-not-show-both]}
+      (not (and (= 0 (:panel (at 8))) (= (:hash (at 8)) (:hash (at 4)))))
+      {:green? false :exit 1 :reason :list-did-not-close :leftover [:list-did-not-close]}
+      (not (and (= "2200" (:notes (at 10))) (= (:hash (at 10)) (:hash (at 1))) (= 1 (:panel (at 12)))))
+      {:green? false :exit 1 :reason :dismissed-notifications-not-listed :leftover [:dismissed-notifications-not-listed]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-notify
+       :leftover [:raised-by-a-test-hook-not-a-real-app :keyboard-only :four-entries-seven-characters :no-timeout :no-sound :draw-list-not-pixels]})))
+
+;; Guest browser device-bound passkey (ADR-0270): after the notification stage the host locks the screen (Ctrl+Alt+L), presses F3 (a passkey
+;; made on another device) and F4 (this device's passkey). C runs a WebAuthn-shaped ceremony each time -- a fresh challenge, a signature with
+;; the key, a verification against the public point REGISTERED on this device's volume (the key is made the first time it is needed and kept
+;; in sector 1035) -- and the verdict goes back to the lock as the PIN's does. The kernel prints AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=
+;; created= pub=<8 bytes of SHA-256 of the public point>, AIUEOS_GUEST_BROWSER_PASSKEY_TRY n= key= signed= verified= session=, and
+;; AIUEOS_GUEST_BROWSER_PASSKEY n= key= locked= denied= ops= text-px= hash= for the 10 key events. Green needs the notification gate green on
+;; the same serial, every frame equal to browser-frame-model.cljk's ("passkey-frame"), and, apart from it: the other device's passkey
+;; signed but did NOT verify (no session), this device's verified and opened a session (16 hex digits), and the screen is locked
+;; between the two and open after the second.
+
+(def ^:private passkey-want
+  [{:n 1 :key 117 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 2 :key 225 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 3 :key 153 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 4 :key 152 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 5 :key 224 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 6 :key 116 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 7 :key 245 :locked 1 :denied 1 :ops 31 :px 33 :hash "921cb55f"}
+   {:n 8 :key 244 :locked 1 :denied 1 :ops 31 :px 33 :hash "921cb55f"}
+   {:n 9 :key 249 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 10 :key 248 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- passkey-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY n=(\d+) key=(\d+) locked=(\d) denied=(\d) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key locked denied ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :locked (parse-long locked) :denied (parse-long denied)
+                :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn- passkey-tries [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_TRY n=(\d+) key=(device|other-device) signed=(\d) verified=(\d) session=([0-9a-f]{16}|none)\s*$" (or s ""))
+       (mapv (fn [[_ n key signed verified session]]
+               {:n (parse-long n) :key key :signed (parse-long signed) :verified (parse-long verified) :session session}))))
+
+(defn guest-browser-passkey-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (passkey-lines serial)
+        tries (passkey-tries serial)
+        notify (guest-browser-notify-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? notify))
+      (assoc notify :reason :no-notify :leftover (into [:no-notify] (:leftover notify)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-passkey-absent :leftover [:guest-browser-passkey-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=\d pub=[0-9a-f]{16}\s*$" (or serial "")))
+      {:green? false :exit 1 :reason :no-registered-device-key :leftover [:no-registered-device-key]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_OK events=10 tries=2 accepted=1\s*$" (or serial "")))
+      {:green? false :exit 1 :reason :passkey-ok-missing :leftover [:passkey-ok-missing]}
+      (not= ls passkey-want)
+      {:green? false :exit 1 :reason :passkey-differs-from-model :leftover [:passkey-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) passkey-want)))}
+      ;; the ceremony, by name (independent of the frame table)
+      (not= (mapv (juxt :key :signed :verified) tries) [["other-device" 1 0] ["device" 1 1]])
+      {:green? false :exit 1 :reason :other-device-passkey-not-refused-or-own-not-verified :leftover [:other-device-passkey-not-refused-or-own-not-verified]}
+      (not (and (= "none" (:session (first tries))) (re-matches #"[0-9a-f]{16}" (:session (second tries)))))
+      {:green? false :exit 1 :reason :session-id-wrong :leftover [:session-id-wrong]}
+      (not (and (= [0 0] [(:locked (nth ls 1)) (:denied (nth ls 1))]) (= 1 (:locked (nth ls 5))) (= [1 1] [(:locked (nth ls 7)) (:denied (nth ls 7))])
+                (= [0 0] [(:locked (nth ls 9)) (:denied (nth ls 9))])))
+      {:green? false :exit 1 :reason :lock-state-wrong :leftover [:lock-state-wrong]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-passkey
+       :leftover [:private-key-in-the-clear-on-the-volume :no-secure-element :the-other-device-is-a-test-key :user-presence-is-the-key-press-only
+                  :no-counter-no-attestation :draw-list-not-pixels]})))
+
+;; Guest browser backup and restore of the user's records (ADR-0271): after the settings stage (first boot of the settings gate's script: the three
+;; settings changed by clicks, the passkey registered) the stage copies the settings record (sector 1034) and the passkey record (1035) to
+;; their backup sectors, wipes the originals, checks the machine sees neither, restores them, and checks the sectors read back byte for byte
+;; (SHA-256 before and after), the settings read the same, and the restored key still signs and verifies against the registered point. The
+;; kernel prints AIUEOS_GUEST_BROWSER_BACKUP_TAKE / _WIPE / _RESTORE / _OK. Green needs the sign-out gate green on the same serial, the
+;; settings stage's seven frames equal to the model's first boot (the data is what the clicks made), and every line of the cycle.
+
+(defn guest-browser-backup-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        take (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=([0-9a-f]{16}) passkey=([0-9a-f]{16})\s*$" s)
+        wipe (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=(\d) passkey-blank=(\d)\s*$" s)
+        rest (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=([0-9a-f]{16}) passkey=([0-9a-f]{16}) settings-valid=(\d) contrast=(\d) scale=(\d+) net=(\d) pub=([0-9a-f]{16}) key-signs=(\d)\s*$" s)
+        reg (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=\d pub=([0-9a-f]{16})\s*$" s)
+        sign-out (guest-browser-sign-out-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? sign-out))
+      (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6\s*$" s))
+      {:green? false :exit 1 :reason :no-settings-stage :leftover [:no-settings-stage]}
+      (not= (settings-lines s) settings-want-1)
+      {:green? false :exit 1 :reason :settings-differ-from-model :leftover [:settings-differ-from-model]}
+      (not (and take wipe rest reg)) {:green? false :exit 1 :reason :guest-browser-backup-absent :leftover [:guest-browser-backup-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\s*$" s))
+      {:green? false :exit 1 :reason :backup-ok-missing :leftover [:backup-ok-missing]}
+      (not= ["0" "1"] (subvec wipe 1))
+      {:green? false :exit 1 :reason :wipe-did-not-remove-the-data :leftover [:wipe-did-not-remove-the-data]}
+      (not= (subvec take 1) [(nth rest 1) (nth rest 2)])
+      {:green? false :exit 1 :reason :restored-bytes-differ :leftover [:restored-bytes-differ]}
+      (not= ["1" "1" "125" "1"] (subvec rest 3 7))
+      {:green? false :exit 1 :reason :restored-settings-differ :leftover [:restored-settings-differ]}
+      (not (and (= (nth rest 7) (second reg)) (= "1" (nth rest 8))))
+      {:green? false :exit 1 :reason :restored-key-differs :leftover [:restored-key-differs]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-backup
+       :leftover [:the-user-data-is-two-records :the-backup-is-on-the-same-volume :no-user-interface :no-off-device-copy]})))
+
+;; Guest browser sound (ADR-0272): with a virtio sound card attached whose output QEMU writes to a WAV file, the stage plays a 440 Hz tone burst at
+;; volume 100, waits for the volume-down key twice (the volume becomes 50) and plays the burst again. The kernel prints
+;; AIUEOS_GUEST_BROWSER_AUDIO_REG / _PLAY n= vol= / _VOLUME n= key= vol= / _OK; the HOST measures the WAV: two tone bursts about 0.4 s long at
+;; 440 Hz, the second at half the RMS level of the first. Green needs the backup gate green on the same serial, the serial lines, and the
+;; measured WAV (it is not taken from the guest's word).
+
+(defn- wav-int16 [^js bytes off] (let [v (bit-or (aget bytes off) (bit-shift-left (aget bytes (inc off)) 8))] (if (>= v 32768) (- v 65536) v)))
+(defn- wav-u32 [^js bytes off] (+ (aget bytes off) (* 256 (aget bytes (+ off 1))) (* 65536 (aget bytes (+ off 2))) (* 16777216 (aget bytes (+ off 3)))))
+
+(defn wav-bursts
+  "Parse a PCM WAV (RIFF, 16-bit) and find its tone bursts: runs of 20 ms windows whose RMS (first channel) is above 300, each with its RMS,
+  zero-crossing frequency and duration in seconds. Returns {:rate :channels :bursts [...]} or {:error kw}."
+  [^js bytes]
+  (let [n (if bytes (.-length bytes) 0)
+        tag (fn [off] (apply str (map #(char (aget bytes (+ off %))) (range 4))))]
+    (if (or (< n 44) (not= "RIFF" (tag 0)) (not= "WAVE" (tag 8)))
+      {:error :not-a-wav}
+      (let [channels (+ (aget bytes 22) (* 256 (aget bytes 23)))
+            rate (wav-u32 bytes 24)
+            bits (+ (aget bytes 34) (* 256 (aget bytes 35)))
+            data-off (loop [off 12] (cond (> (+ off 8) n) nil
+                                          (= "data" (tag off)) (+ off 8)
+                                          :else (recur (+ off 8 (wav-u32 bytes (+ off 4))))))]
+        (if (or (nil? data-off) (not= bits 16) (< channels 1))
+          {:error :unsupported-wav}
+          (let [frames (quot (- n data-off) (* 2 channels))
+                at (fn [i] (wav-int16 bytes (+ data-off (* 2 channels i))))
+                win (quot rate 50)
+                nwin (quot frames win)
+                rms (fn [lo hi] (let [c (- hi lo)] (if (<= c 0) 0 (Math/sqrt (/ (reduce + (map #(let [v (at %)] (* v v)) (range lo hi))) c)))))
+                loud (mapv (fn [w] (> (rms (* w win) (* (inc w) win)) 300)) (range nwin))
+                runs (loop [w 0 cur nil out []]
+                       (cond (>= w nwin) (if cur (conj out cur) out)
+                             (nth loud w) (recur (inc w) (if cur [(first cur) w] [w w]) out)
+                             :else (recur (inc w) nil (if cur (conj out cur) out))))
+                burst (fn [[a b]]
+                        (let [lo (* a win) hi (* (inc b) win)
+                              xs (vec (filter #(and (neg? (at %)) (>= (at (inc %)) 0)) (range lo (dec hi))))
+                              secs (/ (- hi lo) rate)
+                              ;; frequency from the first to the last rising zero crossing (the window edges hold silence)
+                              freq (if (> (count xs) 1) (/ (* (dec (count xs)) rate) (- (peek xs) (first xs))) 0)]
+                          {:rms (rms lo hi) :freq freq :seconds secs}))]
+            {:rate rate :channels channels :bursts (mapv burst runs)}))))))
+
+(defn guest-browser-audio-result
+  [{:keys [serial wav qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        reg (re-find #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_REG ready=1 streams=(\d+)\s*$" s)
+        plays (mapv (fn [[_ n vol frames acc]] {:n (parse-long n) :vol (parse-long vol) :frames (parse-long frames) :accepted (parse-long acc)})
+                    (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=(\d+) vol=(\d+) frames=(\d+) accepted=(\d)\s*$" s))
+        vols (mapv (fn [[_ n key vol]] {:n (parse-long n) :key (parse-long key) :vol (parse-long vol)})
+                   (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=(\d+) key=(\d+) vol=(\d+)\s*$" s))
+        backup (guest-browser-backup-result opts)
+        w (when wav (wav-bursts wav))
+        [b1 b2] (:bursts w)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? backup))
+      (assoc backup :reason :no-backup :leftover (into [:no-backup] (:leftover backup)))
+      (not reg) {:green? false :exit 1 :reason :guest-browser-audio-absent :leftover [:guest-browser-audio-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_OK plays=2 volumes=100,50\s*$" s))
+      {:green? false :exit 1 :reason :audio-ok-missing :leftover [:audio-ok-missing]}
+      (not= (mapv (juxt :n :vol :accepted) plays) [[1 100 1] [2 50 1]])
+      {:green? false :exit 1 :reason :plays-wrong :leftover [:plays-wrong]}
+      (not= (mapv (juxt :key :vol) vols) [[457 75] [456 75] [457 50] [456 50]])
+      {:green? false :exit 1 :reason :volume-keys-wrong :leftover [:volume-keys-wrong]}
+      (nil? wav) {:green? false :exit 1 :reason :no-wav :leftover [:no-wav]}
+      (:error w) {:green? false :exit 1 :reason (:error w) :leftover [(:error w)]}
+      (not= 2 (count (:bursts w)))
+      {:green? false :exit 1 :reason :wav-does-not-hold-two-bursts :leftover [:wav-does-not-hold-two-bursts] :bursts (:bursts w)}
+      (not (every? #(and (< 0.3 (:seconds %) 0.55) (< 420 (:freq %) 460)) [b1 b2]))
+      {:green? false :exit 1 :reason :burst-is-not-a-440hz-tone :leftover [:burst-is-not-a-440hz-tone] :bursts (:bursts w)}
+      (not (< 14000 (:rms b1) 26000))
+      {:green? false :exit 1 :reason :first-burst-not-at-full-level :leftover [:first-burst-not-at-full-level] :bursts (:bursts w)}
+      (not (< 0.45 (/ (:rms b2) (:rms b1)) 0.55))
+      {:green? false :exit 1 :reason :second-burst-not-at-half-level :leftover [:second-burst-not-at-half-level] :bursts (:bursts w)}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-audio :bursts (:bursts w)
+       :leftover [:volume-is-a-software-gain-in-the-stage :one-output-stream :no-mixer-ui :no-mute-or-devices :no-input]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -2306,7 +2636,9 @@
     "guest-browser-sign-out" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0260: two boots of the same volume (the runner sets the phase and keeps the volume).
+    ;; ADR-0269: a NIC is attached so the status area can say ONLINE until the network setting is turned off.
     "guest-browser-settings" {"AIUEOS_GUEST_BROWSER" "1"
+                              "AIUEOS_TEST_NET" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0261: the scale keys come after the sign-out stage.
     "guest-browser-ui-scale" {"AIUEOS_GUEST_BROWSER" "1"
@@ -2321,6 +2653,27 @@
     ;; ADR-0266: a virtio NIC is attached (SLIRP, no host network) so the network state it draws can be ONLINE.
     "guest-browser-clock" {"AIUEOS_GUEST_BROWSER" "1"
                            "AIUEOS_TEST_NET" "1"
+                           "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0267: the layout stage follows the clock stage, and its gate needs the clock gate green (a NIC attached).
+    "guest-browser-layout" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0268: the notification stage follows the layout stage; its gate needs the layout (and clock) gates green.
+    "guest-browser-notify" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0270: the passkey stage follows the notification stage; its gate needs the notification gate (and so the clock and layout gates).
+    "guest-browser-passkey" {"AIUEOS_GUEST_BROWSER" "1"
+                             "AIUEOS_TEST_NET" "1"
+                             "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0271: the backup stage follows the settings stage (one boot: the settings script's first-boot clicks, then the cycle).
+    "guest-browser-backup" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0272: a virtio sound card writing a WAV file; the audio stage follows the backup stage.
+    "guest-browser-audio" {"AIUEOS_GUEST_BROWSER" "1"
+                           "AIUEOS_TEST_NET" "1"
+                           "AIUEOS_TEST_AUDIO" "1"
                            "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
@@ -2371,6 +2724,11 @@
     "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
     "guest-browser-text-edit" (guest-browser-text-edit-result opts)
     "guest-browser-clock" (guest-browser-clock-result opts)
+    "guest-browser-layout" (guest-browser-layout-result opts)
+    "guest-browser-notify" (guest-browser-notify-result opts)
+    "guest-browser-passkey" (guest-browser-passkey-result opts)
+    "guest-browser-backup" (guest-browser-backup-result opts)
+    "guest-browser-audio" (guest-browser-audio-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2421,6 +2779,11 @@
     "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
     "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
     "guest-browser-clock" "AIUEOS_GUEST_BROWSER_CLOCK"
+    "guest-browser-layout" "AIUEOS_GUEST_BROWSER_LAYOUT"
+    "guest-browser-notify" "AIUEOS_GUEST_BROWSER_NOTIFY"
+    "guest-browser-passkey" "AIUEOS_GUEST_BROWSER_PASSKEY"
+    "guest-browser-backup" "AIUEOS_GUEST_BROWSER_BACKUP"
+    "guest-browser-audio" "AIUEOS_GUEST_BROWSER_AUDIO"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2471,6 +2834,11 @@
     "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
     "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
     "guest-browser-clock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLOCK_OK"
+    "guest-browser-layout" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAYOUT_OK"
+    "guest-browser-notify" "AIUEOS_COMPOSITOR_GUEST_BROWSER_NOTIFY_OK"
+    "guest-browser-passkey" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PASSKEY_OK"
+    "guest-browser-backup" "AIUEOS_COMPOSITOR_GUEST_BROWSER_BACKUP_OK"
+    "guest-browser-audio" "AIUEOS_COMPOSITOR_GUEST_BROWSER_AUDIO_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

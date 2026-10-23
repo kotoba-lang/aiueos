@@ -307,6 +307,11 @@ fi
 # a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first
 # packet aiueos ever sends be checked against an actual reply rather than a
 # loopback of itself. No host network access is involved.
+# ADR-0272: a virtio sound card whose output goes to a WAV file next to the serial log, so the sound the guest plays can be measured on the host.
+audio_args=
+if [ "${AIUEOS_TEST_AUDIO:-0}" = 1 ]; then
+  audio_args="-audiodev wav,id=aiueossnd,path=$out/audio.wav -device virtio-sound-pci,audiodev=aiueossnd"
+fi
 net_args=
 if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
   # `guestfwd` gives the guest a TCP peer without any external network: QEMU
@@ -899,19 +904,92 @@ while time.time() < end:
                 recv_obj()
                 globals()["scale_sent"] = k + 1
                 log("scale event " + str(k + 1) + " sent")
-        # ADR-0260/0265: two keys (second boot) or six (first boot) after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
+        # ADR-0267: thirty-six key events for the layout stage, after the clock stage: US shift+2, 2, shift+a, shift+;, shift+',
+        # F9 (JIS), shift+2, shift+', [, shift+;, F9 (US). Each waits for the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_LAYOUT_GO" in serial_now and globals().get("layout_sent", 0) < 36:
+            k = globals().get("layout_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_LAYOUT n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                keys = []
+                for mod, q in (("shift", "2"), (None, "2"), ("shift", "a"), ("shift", "semicolon"), ("shift", "apostrophe"),
+                               (None, "f9"), ("shift", "2"), ("shift", "apostrophe"), (None, "bracket_left"),
+                               ("shift", "semicolon"), (None, "f9")):
+                    if mod: keys.append((mod, True))
+                    keys.append((q, True)); keys.append((q, False))
+                    if mod: keys.append((mod, False))
+                qc, dn = keys[k]
+                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["layout_sent"] = k + 1
+                log("layout event " + str(k + 1) + " sent")
+        # ADR-0268: twelve key events for the notification stage, after the layout stage: F8 (dismiss the newest), F7 F7 (open and
+        # close the list), F8, F7 F7, each down then up, each after the guest's line for the one before (the stage's first
+        # three lines are its own frames: the baseline and the two posts).
+        if typing and b"AIUEOS_GUEST_BROWSER_NOTIFY_GO" in serial_now and globals().get("notify_sent", 0) < 12:
+            k = globals().get("notify_sent", 0)
+            if (k == 0 and b"AIUEOS_GUEST_BROWSER_NOTIFY n=3 " in serial_now) or (k > 0 and (b"AIUEOS_GUEST_BROWSER_NOTIFY n=%d " % (k + 3)) in serial_now):
+                time.sleep(0.5)
+                qc = ("f8", "f7", "f7", "f8", "f7", "f7")[k // 2]
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["notify_sent"] = k + 1
+                log("notify event " + str(k + 1) + " sent")
+        # ADR-0272: four key events for the audio stage (when a sound card is attached): the volume-down key twice, down then up, after the
+        # guest has played the first tone burst and each after the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 " in serial_now and globals().get("audio_sent", 0) < 4:
+            k = globals().get("audio_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": "volumedown"}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["audio_sent"] = k + 1
+                log("audio event " + str(k + 1) + " sent")
+        # ADR-0270: ten key events for the passkey stage, after the notification stage: Ctrl+Alt+L (the lock), F3 (a passkey of
+        # another device: refused), F4 (this device's passkey: the session opens), each down then up, each after the guest's line
+        # for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_PASSKEY_GO" in serial_now and globals().get("passkey_sent", 0) < 10:
+            k = globals().get("passkey_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_PASSKEY n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                qc, dn = (("ctrl", True), ("alt", True), ("l", True), ("l", False), ("alt", False), ("ctrl", False),
+                          ("f3", True), ("f3", False), ("f4", True), ("f4", False))[k]
+                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["passkey_sent"] = k + 1
+                log("passkey event " + str(k + 1) + " sent")
+        # ADR-0260/0265/0269: two keys (second boot) or six pointer events (first boot) after the notification stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
         # stored record says so.
         if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (6 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
             k = globals().get("settings_sent", 0)
-            if k == 0 or (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % k) in serial_now:
+            # the stage's first line (n=1) is the window opening by itself; each event waits for the line before it
+            if (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % (k + 1)) in serial_now:
                 time.sleep(0.5)
                 phase = os.environ.get("AIUEOS_SETTINGS_PHASE", "1")
-                # ADR-0265: first boot F10 (high contrast) then Ctrl+= (125 %), both kept on the volume.
-                qc = ("f10", "f10", "ctrl", "equal", "equal", "ctrl")[k] if phase == "1" else "alt"
-                dn = (True, False, True, True, False, False)[k] if phase == "1" else k == 0
-                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                if phase == "1":
+                    # ADR-0269: first boot, three clicks on the lines of the settings window's body, each a press and a release:
+                    # line 1 (contrast) at (200, 131), line 2 (scale) at (200, 151) -- both in the 1280 x 800 viewport -- and, after
+                    # the scale is 125 % (viewport 1024 x 640), line 3 (network) at (200, 171). Absolute values are the pixel times
+                    # 32768 over the viewport, rounded up so the guest's floor lands on the pixel.
+                    pts = ((5120, 5366), (5120, 6185), (6400, 8756))
+                    ax, ay = pts[k // 2]
+                    if k % 2 == 0:
+                        ev = [{"type": "abs", "data": {"axis": "x", "value": ax}},
+                              {"type": "abs", "data": {"axis": "y", "value": ay}},
+                              {"type": "btn", "data": {"down": True, "button": "left"}}]
+                    else:
+                        ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                else:
+                    ev = [{"type": "key", "data": {"down": k == 0, "key": {"type": "qcode", "data": "alt"}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()
@@ -1152,6 +1230,7 @@ PY
     $tpm_args \
     $usb_args \
     $net_args \
+    $audio_args \
     -device virtio-rng-pci \
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \

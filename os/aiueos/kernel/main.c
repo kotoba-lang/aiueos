@@ -2192,8 +2192,8 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
    up on the first boot (the choice goes on and is written), Alt down and up on the second boot of the same
    volume (nothing changes the choice, and the frame is high-contrast because the record said so). The stage
    itself is boot-agnostic; the classifier knows which boot it read. */
-extern int aiueos_settings_read(uint32_t *, uint32_t *);
-extern int aiueos_settings_write(uint32_t, uint32_t);
+extern int aiueos_settings_read(uint32_t *, uint32_t *, uint32_t *);
+extern int aiueos_settings_write(uint32_t, uint32_t, uint32_t);
 
 /* ADR-0261: the UI scale stage. Kotoba chooses the scale (Ctrl+= and Ctrl+-, browser-ime.kotoba) and answers
    200000000 + the percent; C magnifies what it paints (framebuffer.c), sets the logical viewport -- surface words 3
@@ -2416,6 +2416,76 @@ static int browser_edit_stage(uint32_t *surface, const uint8_t *font, uint64_t f
   return 0;
 }
 
+/* ADR-0267: the keyboard layout stage, after the clock stage: US typing, F9 to JIS, JIS typing, F9 back. */
+static int browser_layout_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                              uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_LAYOUT_GO events=36\r\n");
+  while (se < 36 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    (void)kr;
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    {
+      const uint32_t base = 160U + 64U * (surface[2] - 1U);
+      uint32_t n = 0, caret, v = surface[2004], lo = 0, hi = 0;
+      while (n < 64U && surface[base + n]) n++;
+      caret = (v / 128U == surface[2]) ? ((v & 127U) - 1U) : n;
+      if (caret > n) caret = n;
+      if (surface[2036] == surface[2] && surface[2005]) {
+        uint32_t a = surface[2005] - 1U;
+        if (a > n) a = n;
+        lo = a < caret ? a : caret;
+        hi = a < caret ? caret : a;
+      }
+      serial_string("AIUEOS_GUEST_BROWSER_LAYOUT n=");
+      serial_decimal(se);
+      serial_string(" key=");
+      serial_decimal(key);
+      serial_string(" text=");
+      for (uint32_t k = 0; k < n; k++) {
+        uint32_t c = surface[base + k];
+        char ch[2] = {0, 0};
+        ch[0] = c == 32U ? '_' : (c == 10U ? '|' : (c < 128U ? (char)c : '?'));
+        serial_string(ch);
+      }
+      serial_string(" layout=");
+      serial_decimal(surface[1970]);
+      serial_string(" caret=");
+      serial_decimal(caret);
+      serial_string(" sel=");
+      if (hi > lo) { serial_decimal(lo); serial_string(","); serial_decimal(hi); }
+      else serial_string("-");
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+      serial_string(" text-px=");
+      serial_decimal(px);
+      serial_string(" hash=");
+      serial_hex32(hash);
+      serial_string("\r\n");
+    }
+  }
+  if (se == 36) {
+    debug_string("AIUEOS_GUEST_BROWSER_LAYOUT_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_LAYOUT leftover=events-missing\r\n");
+  return 0;
+}
+
 /* ADR-0264: the clock in the launcher row. C reads the machine's real-time clock (CMOS registers 0x00..0x09
    through ports 0x70 / 0x71, BCD or binary, 12 or 24 hour as register B says) and reports the minute of the day + 1
    in surface word 1968; browser-frame2 draws HH:MM at the right end of the launcher row. The stage first sets the clock
@@ -2506,27 +2576,334 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
   return 1;
 }
 
+/* ADR-0268: the notification stage, after the layout stage. The stage plays the apps: it posts "Backup" and "Update"
+   into the notification entries (surface words 1971..2002, four of eight); F8 dismisses the newest one still shown, F7
+   opens and closes the list. Fifteen frames: the baseline, the two posts, then the twelve key events. */
+static void browser_notify_post(uint32_t *surface, const char *text) {
+  for (uint32_t k = 0; k < 4U; k++) {
+    uint32_t base = 1971U + 8U * k;
+    if (surface[base] == 0) {
+      uint32_t i = 0;
+      for (; i < 7U && text[i]; i++) surface[base + 1U + i] = (uint32_t)(uint8_t)text[i];
+      for (; i < 7U; i++) surface[base + 1U + i] = 0;
+      surface[base] = 1U;
+      return;
+    }
+  }
+}
+
+static int browser_notify_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0, shown = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_NOTIFY_GO events=12\r\n");
+  while (shown < 15U && sidle < 60000U) {
+    uint32_t key = 0, px = 0, hash = 0;
+    int64_t fo;
+    if (shown >= 3U) {
+      key = aiueos_keyboard_next_key(1024U);
+      if (!key) { sidle++; continue; }
+      sidle = 0;
+      if ((key >> 2) == 88U) continue;
+      (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    } else if (shown == 1U) browser_notify_post(surface, "Backup");
+    else if (shown == 2U) browser_notify_post(surface, "Update");
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    shown++;
+    if (shown > 3U) se++;
+    serial_string("AIUEOS_GUEST_BROWSER_NOTIFY n=");
+    serial_decimal(shown);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" notes=");
+    for (uint32_t k = 0; k < 4U; k++) serial_decimal(surface[1971U + 8U * k]);
+    serial_string(" panel=");
+    serial_decimal(surface[2003]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string("\r\n");
+  }
+  for (uint32_t i = 1971U; i <= 2003U; i++) surface[i] = 0;
+  if (shown == 15U) {
+    debug_string("AIUEOS_GUEST_BROWSER_NOTIFY_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_NOTIFY_OK events=12\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_NOTIFY leftover=events-missing\r\n");
+  return 0;
+}
+
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0270: at -Os clang lowers struct and array initialisers to calls the freestanding kernel does not otherwise define. The loops are
+   byte-wise and compiled with -fno-builtin, so they are not turned back into the calls they implement. */
+void *memset(void *d, int c, __SIZE_TYPE__ n) { volatile unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
+void *memcpy(void *d, const void *s, __SIZE_TYPE__ n) { volatile unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
+#endif
+
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0270: a device-bound passkey for the lock screen. The device key (an ECDSA P-256 scalar from the virtio-rng) is made the first
+   time it is needed and kept in sector 1035 of this machine's volume with its public point; a passkey made on another device is a
+   different key and does not verify against the registered public point. The ceremony is WebAuthn-shaped, with the key press as the
+   user-presence check: a fresh 32-byte challenge, authenticator data (the SHA-256 of the relying party "aiueos-session" and the
+   user-presence flag), a signature over SHA-256(challenge || authenticator data) with a fresh nonce, and a verification of that
+   signature against the REGISTERED public point. Only a verified signature opens the session; its id is the first eight bytes of
+   SHA-256(challenge || signature). The private scalar sits on the volume in the clear (no data encryption at rest, scorecard G3). */
+extern int aiueos_passkey_sector_read(uint8_t *);
+extern int aiueos_passkey_sector_write(const uint8_t *);
+extern int aiueos_random_bytes(uint8_t *, uint32_t);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sign(const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_public(const uint8_t *, uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint64_t);
+extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *, uint64_t);
+
+/* in .high_bss: the low region is at its budget (qualification/low-region-budget.edn) */
+static uint8_t passkey_ws[2048] __attribute__((section(".high_bss")));
+static uint8_t passkey_d[32] __attribute__((section(".high_bss")));
+static uint8_t passkey_q[64] __attribute__((section(".high_bss")));
+static int passkey_ready, passkey_created;
+
+static int passkey_sha256(const uint8_t *data, uint32_t n, uint8_t out[32]) {
+  static uint8_t ws[512];
+  return kotoba_aiueos_sha256(data, n, out, ws, sizeof(ws)) != 0;
+}
+
+static int passkey_scalar(uint8_t k[32]) {
+  for (unsigned tries = 0; tries < 8; tries++) {
+    uint8_t any = 0;
+    if (!aiueos_random_bytes(k, 32)) return 0;
+    for (unsigned i = 0; i < 32; i++) any |= k[i];
+    if (any && k[0] != 0xffU) return 1;   /* below the group order */
+  }
+  return 0;
+}
+
+static int passkey_load(void) {
+  uint8_t sec[512];
+  if (passkey_ready) return 1;
+  if (!aiueos_passkey_sector_read(sec)) return 0;
+  {
+    static const char magic[8] = {'A','I','U','E','P','K','Y','1'};
+    uint32_t sum = 0, want = 0;
+    int ok = 1;
+    for (unsigned i = 0; i < 8; i++) if ((char)sec[i] != magic[i]) ok = 0;
+    for (unsigned i = 0; i < 4; i++) { sum |= (uint32_t)sec[128 + i] << (8 * i); }
+    want = (uint32_t)kotoba_aiueos_fnv1a(sec, 128);
+    if (ok && sum == want) {
+      for (unsigned i = 0; i < 32; i++) passkey_d[i] = sec[16 + i];
+      for (unsigned i = 0; i < 64; i++) passkey_q[i] = sec[48 + i];
+      passkey_ready = 1;
+      passkey_created = 0;
+      return 1;
+    }
+  }
+  if (!passkey_scalar(passkey_d)) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_public(passkey_d, passkey_q, passkey_ws)) return 0;
+  for (unsigned i = 0; i < 512; i++) sec[i] = 0;
+  { static const char magic[8] = {'A','I','U','E','P','K','Y','1'};
+    uint32_t sum;
+    for (unsigned i = 0; i < 8; i++) sec[i] = (uint8_t)magic[i];
+    sec[8] = 1;
+    for (unsigned i = 0; i < 32; i++) sec[16 + i] = passkey_d[i];
+    for (unsigned i = 0; i < 64; i++) sec[48 + i] = passkey_q[i];
+    sum = (uint32_t)kotoba_aiueos_fnv1a(sec, 128);
+    for (unsigned i = 0; i < 4; i++) sec[128 + i] = (uint8_t)(sum >> (8 * i));
+  }
+  if (!aiueos_passkey_sector_write(sec)) return 0;
+  passkey_ready = 1;
+  passkey_created = 1;
+  return 1;
+}
+
+/* One ceremony with the signing key `d` (this device's, or another device's) against the registered public point. Returns 1 when the
+   signature verifies; `session` gets the session id. */
+static int passkey_ceremony(const uint8_t *d, uint8_t session[8], uint8_t sig_out[64], int *signed_ok) {
+  uint8_t challenge[32], rp[32], msg[65], h[32], k[32], sig[64], sm[96], sd[32];
+  static const uint8_t rp_id[14] = {'a','i','u','e','o','s','-','s','e','s','s','i','o','n'};
+  *signed_ok = 0;
+  if (!aiueos_random_bytes(challenge, 32) || !passkey_scalar(k)) return 0;
+  if (!passkey_sha256(rp_id, 14, rp)) return 0;
+  for (unsigned i = 0; i < 32; i++) { msg[i] = challenge[i]; msg[32 + i] = rp[i]; }
+  msg[64] = 0x01U;                                   /* flags: user present (the key press) */
+  if (!passkey_sha256(msg, 65, h)) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_sign(d, h, k, sig, passkey_ws)) return 0;
+  *signed_ok = 1;
+  for (unsigned i = 0; i < 64; i++) sig_out[i] = sig[i];
+  for (unsigned i = 0; i < 32; i++) { sm[i] = challenge[i]; }
+  for (unsigned i = 0; i < 64; i++) sm[32 + i] = sig[i];
+  if (!passkey_sha256(sm, 96, sd)) return 0;
+  for (unsigned i = 0; i < 8; i++) session[i] = sd[i];
+  return kotoba_aiueos_ecdsa_p256_sha256_verify(sig, h, passkey_q, passkey_ws, sizeof(passkey_ws)) != 0;
+}
+
+static void passkey_hex(const uint8_t *b, unsigned n) {
+  static const char hx[] = "0123456789abcdef";
+  char c[3] = {0, 0, 0};
+  for (unsigned i = 0; i < n; i++) { c[0] = hx[b[i] >> 4]; c[1] = hx[b[i] & 15U]; serial_string(c); }
+}
+
+/* The stage: lock the screen (Ctrl+Alt+L), try a passkey of another device (F3: refused), then this device's (F4: the session opens).
+   Ten key events, a frame for each. */
+static int browser_passkey_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                 uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0, attempts = 0, accepted = 0;
+  uint8_t qh[32], session[8], sig[64], foreign[32];
+  int ready = passkey_load(), signed_ok = 0;
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=");
+  serial_decimal(ready ? 1U : 0U);
+  serial_string(" created=");
+  serial_decimal(passkey_created ? 1U : 0U);
+  serial_string(" pub=");
+  if (ready && passkey_sha256(passkey_q, 64, qh)) passkey_hex(qh, 8); else serial_string("none");
+  serial_string("\r\n");
+  if (!ready) return 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_GO events=10\r\n");
+  while (se < 10 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    if (kr == 300000001LL || kr == 300000002LL) {
+      int own = kr == 300000001LL, ok;
+      const uint8_t *d = passkey_d;
+      if (!own) {   /* a passkey made on another device: a fresh scalar that is not this device's */
+        if (!passkey_scalar(foreign)) foreign[0] = 1;
+        d = foreign;
+      }
+      ok = passkey_ceremony(d, session, sig, &signed_ok);
+      attempts++;
+      serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_TRY n=");
+      serial_decimal(attempts);
+      serial_string(" key=");
+      serial_string(own ? "device" : "other-device");
+      serial_string(" signed=");
+      serial_decimal(signed_ok ? 1U : 0U);
+      serial_string(" verified=");
+      serial_decimal(ok ? 1U : 0U);
+      serial_string(" session=");
+      if (ok) { passkey_hex(session, 8); accepted++; } else serial_string("none");
+      serial_string("\r\n");
+      (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, ok ? 6U : 10U);
+    }
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    serial_string("AIUEOS_GUEST_BROWSER_PASSKEY n=");
+    serial_decimal(se);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" locked=");
+    serial_decimal(surface[2030]);
+    serial_string(" denied=");
+    serial_decimal(surface[2026]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string("\r\n");
+  }
+  if (se == 10) {
+    debug_string("AIUEOS_GUEST_BROWSER_PASSKEY_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_OK events=10 tries=");
+    serial_decimal(attempts);
+    serial_string(" accepted=");
+    serial_decimal(accepted);
+    serial_string("\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY leftover=events-missing\r\n");
+  return 0;
+}
+
+#else
+/* ADR-0270: the passkey needs the ECDSA sign and public objects, which only the guest-browser build links (and has room for); every
+   other build skips the stage. */
+static int browser_passkey_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                 uint64_t dict, uint64_t dict_length) {
+  (void)surface; (void)font; (void)font_length; (void)dict; (void)dict_length;
+  return 1;
+}
+#endif
+
+/* ADR-0269: the settings window. Window 2 is the settings app: its title slot says "Settings" and its body is rebuilt from the
+   three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. A press on a line of its body flips that setting (contrast, scale 100 -> 125 -> 150 -> 100, network); F10, Ctrl+= / Ctrl+- and F5 do the same
+   from the keyboard. F10 flips the contrast,
+   Ctrl+= and Ctrl+- the scale, F5 the network setting (a flag the stage holds, 1 = off); the status area shows OFFLINE while the network
+   setting is off, whatever the adapter says. The stage opens the window by a press on launcher button 2 through the reducer, the
+   same path a pointer press takes, and keeps all three settings on the volume. */
+static uint32_t settings_put(uint32_t *surface, uint32_t at, const char *text) {
+  while (*text) surface[at++] = (uint32_t)(uint8_t)*text++;
+  return at;
+}
+
+static void settings_body(uint32_t *surface, uint32_t contrast, uint32_t scale, uint32_t netoff) {
+  uint32_t at = 224;
+  at = settings_put(surface, at, contrast ? "Contrast: High" : "Contrast: Normal");
+  surface[at++] = 10U;
+  at = settings_put(surface, at, "Scale: ");
+  if (scale >= 100U) surface[at++] = 48U + scale / 100U;
+  surface[at++] = 48U + (scale / 10U) % 10U;
+  surface[at++] = 48U + scale % 10U;
+  surface[at++] = 37U;
+  surface[at++] = 10U;
+  at = settings_put(surface, at, netoff ? "Network: Off" : "Network: On");
+  while (at < 288U) surface[at++] = 0;
+}
+
+static uint32_t settings_net_state(uint32_t netoff) {
+  if (netoff) return 1U;
+  return aiueos_virtio_net_ready() ? (aiueos_ipv4_ready() ? 3U : 2U) : 1U;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
-  uint32_t stored = 0, stored_scale = 100, last = 0xffffffffU, last_scale = 100, written = 0, se = 0, sidle = 0, want;
+  uint32_t stored = 0, stored_scale = 100, stored_netoff = 0, last = 0, last_scale = 100, last_netoff = 0, have = 0;
+  uint32_t written = 0, se = 0, sidle = 0, want, shown = 0, netoff = 0;
   uint32_t physw = aiueos_desktop_width(), physh = aiueos_desktop_height();
-  int valid = aiueos_settings_read(&stored, &stored_scale);
+  int valid = aiueos_settings_read(&stored, &stored_scale, &stored_netoff);
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=");
   serial_decimal(valid ? 1U : 0U);
   serial_string(" contrast=");
   serial_decimal(valid ? stored : 0U);
   serial_string(" scale=");
   serial_decimal(valid ? stored_scale : 100U);
+  serial_string(" net=");
+  serial_decimal(valid ? stored_netoff : 0U);
   serial_string("\r\n");
   if (valid) {
-    surface[2039] = stored; last = stored; last_scale = stored_scale;
+    surface[2039] = stored; last = stored; last_scale = stored_scale; last_netoff = stored_netoff; have = 1;
+    netoff = stored_netoff;
     if (stored_scale != 100U && aiueos_desktop_set_scale(stored_scale)) {
       surface[3] = physw * 100U / stored_scale;
       surface[4] = physh * 100U / stored_scale;
       (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
     }
   }
+  /* the settings app: title "Settings" in window 2's slot (it is also launcher button 2's label), then the window */
+  for (unsigned i = 64; i < 96; i++) surface[i] = 0;
+  (void)settings_put(surface, 64, "Settings");
+  settings_body(surface, surface[2039], aiueos_desktop_scale(), netoff);
+  surface[1969] = settings_net_state(netoff);
   want = valid ? 2U : 6U;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
@@ -2534,42 +2911,90 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
   serial_decimal(want);
   serial_string("\r\n");
   while (se < want && sidle < 60000U) {
-    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
-    int64_t kr, fo;
-    if (!key) { sidle++; continue; }
-    sidle = 0;
-    if ((key >> 2) == 88U) continue;
-    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
-    if (kr >= 200000000LL && kr < 200000200LL) {
-      uint32_t pct = (uint32_t)(kr - 200000000LL);
-      if (aiueos_desktop_set_scale(pct)) {
-        surface[3] = physw * 100U / pct;
-        surface[4] = physh * 100U / pct;
-        (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+    uint32_t key = 0, px = 0, hash = 0, ax = 0, ay = 0, at_x = 0, at_y = 0, src;
+    int64_t fo;
+    if (shown == 0) {
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, 1, 156, 14);
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, 4, 0, 0);
+    } else if ((src = aiueos_tablet_next(256U, &ax, &ay)) != 0) {
+      /* a pointer event: the press on a line of the settings window's body is that line's control */
+      at_x = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+      at_y = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+      surface[2046] = at_x + 1U;
+      surface[2047] = at_y;
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, src, at_x, at_y);
+      if (src == 1U && surface[1] >= 1U && surface[5 + 5 * (surface[1] - 1U)] == 2U) {
+        const uint32_t *wr = surface + 5 + 5 * (surface[1] - 1U);
+        if (at_x >= wr[1] + 14U && at_x + 14U < wr[1] + wr[3] && at_y >= wr[2] + 42U && at_y < wr[2] + 42U + 60U) {
+          uint32_t line = (at_y - (wr[2] + 42U)) / 20U;
+          if (line == 0) surface[2039] ^= 1U;
+          else if (line == 2) netoff ^= 1U;
+          else {
+            uint32_t pct = aiueos_desktop_scale() == 100U ? 125U : (aiueos_desktop_scale() == 125U ? 150U : 100U);
+            if (aiueos_desktop_set_scale(pct)) {
+              surface[3] = physw * 100U / pct;
+              surface[4] = physh * 100U / pct;
+              (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+            }
+          }
+        }
       }
+      se++;
+      sidle = 0;
+    } else {
+      int64_t kr;
+      key = aiueos_keyboard_next_key(256U);
+      if (!key) { sidle++; continue; }
+      sidle = 0;
+      if ((key >> 2) == 88U) continue;
+      if (key == 253U) netoff ^= 1U; /* F5 down: the network setting, a shell flag held here */
+      kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+      if (kr >= 200000000LL && kr < 200000200LL) {
+        uint32_t pct = (uint32_t)(kr - 200000000LL);
+        if (aiueos_desktop_set_scale(pct)) {
+          surface[3] = physw * 100U / pct;
+          surface[4] = physh * 100U / pct;
+          (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+        }
+      }
+      se++;
     }
+    settings_body(surface, surface[2039], aiueos_desktop_scale(), netoff);
+    surface[1969] = settings_net_state(netoff);
     fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
     if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
       hash = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &px);
       (void)aiueos_desktop_show();
     }
-    if (surface[2039] < 2U && (surface[2039] != last || aiueos_desktop_scale() != last_scale) &&
-        aiueos_settings_write(surface[2039], aiueos_desktop_scale())) {
+    if (surface[2039] < 2U && (surface[2039] != last || aiueos_desktop_scale() != last_scale || netoff != last_netoff) &&
+        aiueos_settings_write(surface[2039], aiueos_desktop_scale(), netoff)) {
       last = surface[2039];
       last_scale = aiueos_desktop_scale();
+      last_netoff = netoff;
+      have = 1;
       written++;
     }
-    se++;
+    shown++;
     serial_string("AIUEOS_GUEST_BROWSER_SETTINGS n=");
-    serial_decimal(se);
+    serial_decimal(shown);
     serial_string(" key=");
     serial_decimal(key);
+    serial_string(" at=");
+    serial_decimal(at_x);
+    serial_string(",");
+    serial_decimal(at_y);
     serial_string(" hc=");
     serial_decimal(surface[2039]);
     serial_string(" ops=");
     serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
     serial_string(" pct=");
     serial_decimal(aiueos_desktop_scale());
+    serial_string(" net=");
+    serial_decimal(netoff);
+    serial_string(" win=");
+    serial_decimal(surface[1]);
+    serial_string(",");
+    serial_decimal(surface[2]);
     serial_string(" text-px=");
     serial_decimal(px);
     serial_string(" hash=");
@@ -2577,9 +3002,10 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     serial_string(" written=");
     serial_decimal(written);
     serial_string(" stored=");
-    if (last > 1U) serial_string("none"); else serial_decimal(last);
+    if (!have) serial_string("none"); else serial_decimal(last);
     serial_string("\r\n");
   }
+  surface[1969] = 0;
   if (se == want) {
     debug_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK\n");
     serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK events=");
@@ -2590,6 +3016,188 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS leftover=events-missing\r\n");
   return 0;
 }
+
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0271: backup and restore of the user's records. After the settings stage both records exist: the settings record (sector 1034)
+   and the passkey record (1035). The stage copies each to its backup sector (1036, 1037) with readback, wipes the originals and checks
+   that the machine now sees no settings and no passkey, restores the copies, and checks that the sectors read back byte for byte
+   (SHA-256 before and after), that the settings read the same, and that the restored key still signs and verifies. */
+extern int aiueos_user_sector_read(uint32_t, uint8_t *);
+extern int aiueos_user_sector_write(uint32_t, const uint8_t *);
+
+static int browser_backup_stage(void) {
+  static uint8_t a[512], b[512], z[512], back[512];
+  uint8_t ha[32], hb[32], hc[32], hd[32], qh0[32], qh1[32], session[8], sig[64];
+  uint32_t contrast = 0, scale = 100, netoff = 0, contrast2 = 0, scale2 = 100, netoff2 = 0;
+  int ok = 1, sok = 0, signed_ok = 0, v0, v1, pk_after;
+  for (unsigned i = 0; i < 512; i++) z[i] = 0;
+  v0 = aiueos_settings_read(&contrast, &scale, &netoff);
+  if (!passkey_load()) ok = 0;
+  if (!v0 || !ok || !passkey_sha256(passkey_q, 64, qh0)) {
+    serial_string("AIUEOS_GUEST_BROWSER_BACKUP leftover=no-records\r\n");
+    return 0;
+  }
+  ok &= aiueos_user_sector_read(1034, a) && aiueos_user_sector_read(1035, b);
+  ok &= passkey_sha256(a, 512, ha) && passkey_sha256(b, 512, hb);
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=");
+  passkey_hex(ha, 8);
+  serial_string(" passkey=");
+  passkey_hex(hb, 8);
+  serial_string("\r\n");
+  ok &= aiueos_user_sector_write(1036, a) && aiueos_user_sector_write(1037, b);
+  /* wipe the originals; the machine must then see neither */
+  ok &= aiueos_user_sector_write(1034, z) && aiueos_user_sector_write(1035, z);
+  passkey_ready = 0;
+  v1 = aiueos_settings_read(&contrast2, &scale2, &netoff2);
+  {
+    uint8_t chk[512];
+    int blank = aiueos_user_sector_read(1035, chk);
+    for (unsigned i = 0; i < 512; i++) if (chk[i]) blank = 0;
+    pk_after = blank;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=");
+  serial_decimal(v1 ? 1U : 0U);
+  serial_string(" passkey-blank=");
+  serial_decimal(pk_after ? 1U : 0U);
+  serial_string("\r\n");
+  /* restore from the copies */
+  ok &= aiueos_user_sector_read(1036, back) && aiueos_user_sector_write(1034, back);
+  ok &= aiueos_user_sector_read(1037, back) && aiueos_user_sector_write(1035, back);
+  ok &= aiueos_user_sector_read(1034, a) && aiueos_user_sector_read(1035, b);
+  ok &= passkey_sha256(a, 512, hc) && passkey_sha256(b, 512, hd);
+  {
+    uint8_t same = 1;
+    for (unsigned i = 0; i < 32; i++) if (ha[i] != hc[i] || hb[i] != hd[i]) same = 0;
+    ok &= same;
+  }
+  v1 = aiueos_settings_read(&contrast2, &scale2, &netoff2);
+  passkey_created = 0;
+  ok &= passkey_load() && !passkey_created && passkey_sha256(passkey_q, 64, qh1);
+  {
+    uint8_t same = 1;
+    for (unsigned i = 0; i < 32; i++) if (qh0[i] != qh1[i]) same = 0;
+    ok &= same;
+  }
+  sok = passkey_ceremony(passkey_d, session, sig, &signed_ok);
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=");
+  passkey_hex(hc, 8);
+  serial_string(" passkey=");
+  passkey_hex(hd, 8);
+  serial_string(" settings-valid=");
+  serial_decimal(v1 ? 1U : 0U);
+  serial_string(" contrast=");
+  serial_decimal(contrast2);
+  serial_string(" scale=");
+  serial_decimal(scale2);
+  serial_string(" net=");
+  serial_decimal(netoff2);
+  serial_string(" pub=");
+  passkey_hex(qh1, 8);
+  serial_string(" key-signs=");
+  serial_decimal(sok ? 1U : 0U);
+  serial_string("\r\n");
+  if (ok && v1 && contrast2 == contrast && scale2 == scale && netoff2 == netoff && sok) {
+    serial_string("AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP leftover=restore-differs\r\n");
+  return 0;
+}
+
+#else
+static int browser_backup_stage(void) { return 0; }
+#endif
+
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0272: sound. With a virtio sound card attached (QEMU writes its output to a WAV file the host can measure) the stage plays a 440 Hz
+   tone burst at the set volume, waits for the volume-down key twice (100 -> 75 -> 50), and plays the burst again. The volume is a
+   software gain on the samples, kept here; KEY_VOLUMEDOWN is evdev 114, KEY_VOLUMEUP 115. Each burst is 0.1 s of silence, 0.4 s of tone
+   and 0.1 s of silence at 44100 Hz stereo S16, so the host can find the two tones by their levels. */
+extern int aiueos_audio_ready(void);
+extern uint32_t aiueos_audio_streams(void);
+extern int aiueos_audio_play(const int16_t *, uint32_t);
+#define AUDIO_RATE 44100U
+#define AUDIO_FRAMES (AUDIO_RATE * 6U / 10U)
+static int16_t audio_pcm[AUDIO_FRAMES * 2U] __attribute__((section(".high_bss")));
+
+static void audio_fill(uint32_t volume) {
+  static const int16_t q[17] = {0, 3212, 6393, 9512, 12539, 15446, 18204, 20787, 23170, 25329, 27245, 28898, 30273, 31356, 32137, 32609, 32767};
+  uint32_t phase = 0, step = (uint32_t)(((uint64_t)440U << 32) / AUDIO_RATE);
+  for (uint32_t n = 0; n < AUDIO_FRAMES; n++) {
+    int32_t v = 0;
+    if (n >= AUDIO_RATE / 10U && n < AUDIO_RATE / 10U + AUDIO_RATE * 4U / 10U) {
+      uint32_t idx = phase >> 26, quarter = idx & 15U, half = idx & 32U;   /* 64 steps per period */
+      int32_t m = (idx & 16U) ? q[16U - quarter] : q[quarter];
+      v = half ? -m : m;
+      v = v * (int32_t)volume / 100;
+      phase += step;
+    }
+    audio_pcm[2U * n] = (int16_t)v;
+    audio_pcm[2U * n + 1U] = (int16_t)v;
+  }
+}
+
+static int browser_audio_stage(void) {
+  uint32_t volume = 100, presses = 0, idle = 0, played = 0;
+  int ok;
+  int ready = aiueos_audio_ready();
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_REG ready=");
+  serial_decimal(ready ? 1U : 0U);
+  serial_string(" streams=");
+  serial_decimal(aiueos_audio_streams());
+  serial_string("\r\n");
+  if (!ready) return 0;
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_GO events=4\r\n");
+  audio_fill(volume);
+  ok = aiueos_audio_play(audio_pcm, AUDIO_FRAMES);
+  played++;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 vol=");
+  serial_decimal(volume);
+  serial_string(" frames=");
+  serial_decimal(AUDIO_FRAMES);
+  serial_string(" accepted=");
+  serial_decimal(ok ? 1U : 0U);
+  serial_string("\r\n");
+  if (!ok) return 0;
+  while (presses < 4U && idle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    if (!key) { idle++; continue; }
+    idle = 0;
+    presses++;
+    if (key == 114U * 4U + 1U) volume = volume >= 25U ? volume - 25U : 0U;
+    else if (key == 115U * 4U + 1U) volume = volume <= 75U ? volume + 25U : 100U;
+    serial_string("AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=");
+    serial_decimal(presses);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" vol=");
+    serial_decimal(volume);
+    serial_string("\r\n");
+  }
+  if (presses < 4U) { serial_string("AIUEOS_GUEST_BROWSER_AUDIO leftover=keys-missing\r\n"); return 0; }
+  audio_fill(volume);
+  ok = aiueos_audio_play(audio_pcm, AUDIO_FRAMES);
+  played++;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=2 vol=");
+  serial_decimal(volume);
+  serial_string(" frames=");
+  serial_decimal(AUDIO_FRAMES);
+  serial_string(" accepted=");
+  serial_decimal(ok ? 1U : 0U);
+  serial_string("\r\n");
+  if (!ok) return 0;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_OK plays=");
+  serial_decimal(played);
+  serial_string(" volumes=100,");
+  serial_decimal(volume);
+  serial_string("\r\n");
+  return 1;
+}
+#else
+static int browser_audio_stage(void) { return 0; }
+#endif
+
 
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
@@ -6230,7 +6838,11 @@ qwen_runtime_boot_complete:
                                                         if (browser_ring_stage(surface, font, font_length, dict, dict_length))
                                                           if (browser_edit_stage(surface, font, font_length, dict, dict_length))
                                                             if (browser_clock_stage(surface, font, font_length))
-                                                              browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                              if (browser_layout_stage(surface, font, font_length, dict, dict_length))
+                                                                if (browser_notify_stage(surface, font, font_length, dict, dict_length))
+                                                                  if (browser_passkey_stage(surface, font, font_length, dict, dict_length))
+                                                                    if (browser_settings_stage(surface, font, font_length, dict, dict_length))
+                                                                      if (browser_backup_stage()) (void)browser_audio_stage();
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

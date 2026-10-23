@@ -5,6 +5,34 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### audio: a virtio-sound driver and a volume key (ADR-0272)
+- A polled virtio-sound output driver (guest-browser build) plays a 440 Hz burst at a volume held in C; the volume-down key lowers it; QEMU's WAV
+  output is measured on the host (two 440 Hz bursts, the second at half the level). `guest-browser-audio` gates it.
+
+### storage: backup and restore of the user's records (ADR-0271)
+- A four-sector door (1034..1037) and a stage that copies the settings and passkey records to backup sectors, wipes the originals, restores
+  them and checks them byte for byte (SHA-256), the settings and the key's public point. `guest-browser-backup` gates it.
+
+### desktop: a device-bound passkey opens the lock (ADR-0270)
+- A P-256 device key (from the virtio-rng, kept with its public point in sector 1035) signs a fresh challenge on the lock screen and the
+  signature is verified against the registered public point; F4 is this device's passkey (the session opens), F3 a passkey of another
+  device (refused). `guest-browser-passkey` checks the ceremony and the ten frames against the frame model.
+
+### desktop: the settings window (ADR-0269)
+- Window 2 is the settings app (Contrast / Scale / Network), opened from launcher button 2 and rebuilt after every key; a press on its Contrast / Scale / Network lines changes that setting (F10, Ctrl+= and F5 still do); F5 flips the
+  network setting (a flag the settings stage holds), which the status area follows (OFFLINE while it is off). The settings record keeps all three across a
+  reboot. `guest-browser-settings` attaches a NIC and checks both boots' frames against the frame model.
+
+### desktop: notifications, toasts and a list (ADR-0268)
+- Surface words 1971..2003 carry four notification entries and a list flag; browser-frame2 draws toasts (or the list) above the windows;
+  F8 dismisses the newest toast, F7 opens and closes the list, a dismissed notification stays listed. `guest-browser-notify` raises two,
+  dismisses and lists them, every frame checked against the frame model.
+
+### desktop: keyboard layouts US and JIS (ADR-0267)
+- F9 flips surface word 1970 between US and JIS; with the input method off the digit row and punctuation keys type, Shift picks the
+  second character of a key and makes letters upper case. `guest-browser-layout` types the same physical keys on both layouts and
+  checks every frame against the frame model.
+
 ### desktop: the launcher row shows the network state (ADR-0266)
 - Surface word 1969 carries OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange (which runs before the
   desktop stages, contrary to ADR-0264); browser-frame2 draws it left of the clock. `guest-browser-clock` now attaches a SLIRP NIC

@@ -575,7 +575,7 @@ int aiueos_crash_receipt_write(uint32_t reason) {
 }
 
 /* ADR-0260: the desktop's settings record. One bounded record in a dedicated sector above the crash
-   receipt's: magic, version, the high-contrast choice, the UI scale in percent (ADR-0265; 0 in an older record means 100) and a Kotoba FNV checksum over the
+   receipt's: magic, version, the high-contrast choice, the UI scale in percent (ADR-0265; 0 in an older record means 100) plus 256 when the network setting is off (ADR-0269) and a Kotoba FNV checksum over the
    preceding 20 bytes. The write requires readback; a sector that is empty, torn or foreign reads as "no
    settings". Like the crash receipt it runs from the boot flow, before user processes, on the standard
    interrupt-driven sector path with no lock. */
@@ -597,35 +597,85 @@ static uint32_t settings_record_checksum(void) {
 static int settings_record_valid(void) {
   struct aiueos_settings_record *record=(void *)blk_backend.sector;
   for (unsigned i=0;i<8;i++) if (record->magic[i]!=settings_magic[i]) return 0;
-  return record->version==1 && record->contrast<2 && (record->reserved==0||record->reserved==100||record->reserved==125||record->reserved==150) && record->checksum==settings_record_checksum();
+  return record->version==1 && record->contrast<2 && ((record->reserved&255u)==0||(record->reserved&255u)==100||(record->reserved&255u)==125||(record->reserved&255u)==150) && (record->reserved>>8)<2u && record->checksum==settings_record_checksum();
 }
 
 /* Returns 1 and the stored choice when a valid record exists, 0 when there is none. */
-int aiueos_settings_read(uint32_t *contrast, uint32_t *scale) {
-  if (!blk_backend.ready || !contrast || !scale || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
+int aiueos_settings_read(uint32_t *contrast, uint32_t *scale, uint32_t *netoff) {
+  if (!blk_backend.ready || !contrast || !scale || !netoff || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   if (!settings_sector_io(VIRTIO_BLK_T_IN)) return 0;
   if (!settings_record_valid()) return 0;
   *contrast=((struct aiueos_settings_record *)(void *)blk_backend.sector)->contrast;
-  *scale=((struct aiueos_settings_record *)(void *)blk_backend.sector)->reserved;
+  *scale=((struct aiueos_settings_record *)(void *)blk_backend.sector)->reserved&255u;
+  *netoff=((struct aiueos_settings_record *)(void *)blk_backend.sector)->reserved>>8;
   if (*scale==0) *scale=100;
   return 1;
 }
 
 /* Writes the record and reads it back; 1 only when the readback is the record written. */
-int aiueos_settings_write(uint32_t contrast, uint32_t scale) {
-  if (!blk_backend.ready || contrast>1 || (scale!=100&&scale!=125&&scale!=150) || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
+int aiueos_settings_write(uint32_t contrast, uint32_t scale, uint32_t netoff) {
+  if (!blk_backend.ready || contrast>1 || netoff>1 || (scale!=100&&scale!=125&&scale!=150) || AIUEOS_SETTINGS_SECTOR >= blk_backend.capacity) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   struct aiueos_settings_record *record=(void *)blk_backend.sector;
   for (unsigned i=0;i<8;i++) record->magic[i]=settings_magic[i];
-  record->version=1; record->contrast=contrast; record->reserved=scale;
+  record->version=1; record->contrast=contrast; record->reserved=scale|(netoff<<8);
   record->checksum=settings_record_checksum();
   uint32_t wanted=record->checksum;
   if (!settings_sector_io(VIRTIO_BLK_T_OUT)) return 0;
   for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
   if (!settings_sector_io(VIRTIO_BLK_T_IN)) return 0;
   record=(void *)blk_backend.sector;
-  return settings_record_valid() && record->contrast==contrast && record->reserved==scale && record->checksum==wanted;
+  return settings_record_valid() && record->contrast==contrast && record->reserved==(scale|(netoff<<8)) && record->checksum==wanted;
+}
+
+/* ADR-0270: the device-bound passkey record, one sector above the settings record's. The caller (main.c) builds and checks the record;
+   this is the sector transport: read it, and write it with readback. Same interrupt-driven path, boot flow, no lock. */
+#define AIUEOS_PASSKEY_SECTOR 1035u
+static int passkey_sector_io(uint32_t type) {
+  return virtio_blk_sector_io(blk_backend.request,blk_backend.sector,
+      blk_backend.status,blk_backend.desc,blk_backend.avail,blk_backend.used,
+      blk_backend.doorbell,&blk_backend.submitted,type,AIUEOS_PASSKEY_SECTOR);
+}
+int aiueos_passkey_sector_read(uint8_t *out) {
+  if (!blk_backend.ready || !out || AIUEOS_PASSKEY_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!passkey_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  for (unsigned i=0;i<512;i++) out[i]=blk_backend.sector[i];
+  return 1;
+}
+int aiueos_passkey_sector_write(const uint8_t *in) {
+  if (!blk_backend.ready || !in || AIUEOS_PASSKEY_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=in[i];
+  if (!passkey_sector_io(VIRTIO_BLK_T_OUT)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!passkey_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  for (unsigned i=0;i<512;i++) if (blk_backend.sector[i]!=in[i]) return 0;
+  return 1;
+}
+
+/* ADR-0271: backup and restore of the user's records. The user data of this machine is the settings record (sector 1034) and the passkey
+   record (1035); their backup copies live in 1036 and 1037. Only these four sectors can be reached through this door; a read is a read, a
+   write is read back and compared. */
+static int user_sector_ok(uint32_t sector) { return sector >= 1034u && sector <= 1037u; }
+int aiueos_user_sector_read(uint32_t sector, uint8_t *out) {
+  if (!blk_backend.ready || !out || !user_sector_ok(sector) || sector >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_IN,sector)) return 0;
+  for (unsigned i=0;i<512;i++) out[i]=blk_backend.sector[i];
+  return 1;
+}
+int aiueos_user_sector_write(uint32_t sector, const uint8_t *in) {
+  if (!blk_backend.ready || !in || !user_sector_ok(sector) || sector >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=in[i];
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_OUT,sector)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_IN,sector)) return 0;
+  for (unsigned i=0;i<512;i++) if (blk_backend.sector[i]!=in[i]) return 0;
+  return 1;
 }
 
 /* Fault-context variant: never sleeps on an interrupt and never blocks on
@@ -4469,6 +4519,142 @@ static int net_tcp_cloud_probe(struct net_ring *rx, struct net_ring *tx,
   return 1;
 }
 
+/* ADR-0272: virtio-sound output. A polled driver for one PCM output stream: control queue 0 (set-params / prepare / start / stop /
+   release) and the tx queue 2 (4096-byte pages: stream id, then interleaved S16 frames, then the device's status). 44100 Hz, stereo,
+   signed 16 bit. The rings here are 16 entries (the shared virtq structs above hold four). Compiled only for the guest-browser build
+   (AIUEOS_AUDIO); every other build carries the two stubs at the end. */
+#ifdef AIUEOS_AUDIO
+#define VIRTIO_SND_MODERN_ID 0x1059
+struct snd_avail { uint16_t flags, index, ring[16], used_event; } __attribute__((packed));
+struct snd_used { uint16_t flags, index; struct virtq_used_element ring[16]; uint16_t avail_event; } __attribute__((packed));
+static struct {
+  int ready; uint32_t streams;
+  struct virtq_desc *cdesc, *tdesc; struct snd_avail *cav, *tav; struct snd_used *cu, *tu;
+  volatile uint16_t *cdb, *tdb; uint16_t cposted, tposted, tdone;
+  uint8_t *cpage; uint8_t *tpage[4];
+} snd;
+#define SND_PCM_SET_PARAMS 0x0101u
+#define SND_PCM_PREPARE 0x0102u
+#define SND_PCM_RELEASE 0x0103u
+#define SND_PCM_START 0x0104u
+#define SND_PCM_STOP 0x0105u
+#define SND_S_OK 0x8000u
+#define SND_DATA_BYTES 3072u
+
+static int snd_ctl(const void *req, uint32_t req_len, uint32_t *status) {
+  const uint8_t *r = req;
+  uint8_t *p = snd.cpage;
+  for (uint32_t i = 0; i < req_len; i++) p[i] = r[i];
+  for (uint32_t i = 0; i < 16; i++) p[256 + i] = 0;
+  snd.cdesc[0].address = (uint64_t)(uintptr_t)p; snd.cdesc[0].length = req_len;
+  snd.cdesc[0].flags = VIRTQ_DESC_F_NEXT; snd.cdesc[0].next = 1;
+  snd.cdesc[1].address = (uint64_t)(uintptr_t)(p + 256); snd.cdesc[1].length = 64;
+  snd.cdesc[1].flags = VIRTQ_DESC_F_WRITE; snd.cdesc[1].next = 0;
+  snd.cav->ring[snd.cposted % 16] = 0;
+  __asm__ volatile("" ::: "memory");
+  snd.cav->index = (uint16_t)(snd.cposted + 1);
+  snd.cposted++;
+  *snd.cdb = 0;
+  for (uint32_t budget = 0; budget < 400000000U; budget++) {
+    __asm__ volatile("" ::: "memory");
+    if (snd.cu->index >= snd.cposted) {
+      *status = *(volatile uint32_t *)(p + 256);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int snd_simple(uint32_t code) {
+  uint32_t req[2] = {code, 0}, st = 0;
+  return snd_ctl(req, sizeof(req), &st) && st == SND_S_OK;
+}
+
+static int virtio_sound(uint8_t b, uint8_t d, uint8_t f) {
+  struct virtio_caps caps;
+  volatile struct virtio_common_cfg *cfg;
+  uint64_t notify_base, device_bar;
+  if (!find_virtio_caps(b,d,f,&caps) || !caps.have_device || caps.device.length < 12 ||
+      !read_bar(b,d,f,caps.device.bar,&device_bar) ||
+      !aiueos_map_pci_mmio(device_bar + caps.device.offset,caps.device.length) ||
+      !map_transport(b,d,f,&caps,&cfg,&notify_base) || !negotiate(cfg)) return 0;
+  volatile uint32_t *dev = (volatile void *)(uintptr_t)(device_bar + caps.device.offset);
+  snd.streams = dev[1];           /* config: jacks, streams, chmaps */
+  if (snd.streams < 1 || cfg->num_queues < 3) return 0;
+  snd.cdesc = aiueos_allocate_physical_page(); snd.cav = aiueos_allocate_physical_page(); snd.cu = aiueos_allocate_physical_page();
+  snd.tdesc = aiueos_allocate_physical_page(); snd.tav = aiueos_allocate_physical_page(); snd.tu = aiueos_allocate_physical_page();
+  snd.cpage = aiueos_allocate_physical_page();
+  for (unsigned i = 0; i < 4; i++) snd.tpage[i] = aiueos_allocate_physical_page();
+  if (!snd.cdesc || !snd.cav || !snd.cu || !snd.tdesc || !snd.tav || !snd.tu || !snd.cpage ||
+      !snd.tpage[0] || !snd.tpage[1] || !snd.tpage[2] || !snd.tpage[3]) return 0;
+  snd.cdb = prepare_queue_index(cfg,&caps,notify_base,0,16,snd.cdesc,(void *)snd.cav,(void *)snd.cu);
+  snd.tdb = prepare_queue_index(cfg,&caps,notify_base,2,16,snd.tdesc,(void *)snd.tav,(void *)snd.tu);
+  if (!snd.cdb || !snd.tdb) return 0;
+  cfg->device_status |= VIRTIO_STATUS_DRIVER_OK;
+  snd.cposted = snd.tposted = snd.tdone = 0;
+  snd.ready = 1;
+  return 1;
+}
+
+int aiueos_audio_ready(void) { return snd.ready; }
+uint32_t aiueos_audio_streams(void) { return snd.streams; }
+
+/* Plays `frames` interleaved S16 stereo frames (4 bytes each) and returns 1 when the device accepted every buffer. */
+int aiueos_audio_play(const int16_t *pcm, uint32_t frames) {
+  struct { uint32_t code, stream, buffer, period, features; uint8_t channels, format, rate, pad; } __attribute__((packed))
+    params = {SND_PCM_SET_PARAMS, 0, 4 * SND_DATA_BYTES, SND_DATA_BYTES, 0, 2, 5 /* S16 */, 6 /* 44100 */, 0};
+  uint32_t st = 0, total = frames * 4, sent = 0, inflight = 0, ok = 1;
+  const uint8_t *bytes = (const uint8_t *)pcm;
+  if (!snd.ready) return 0;
+  if (!snd_ctl(&params, sizeof(params), &st) || st != SND_S_OK) return 0;
+  if (!snd_simple(SND_PCM_PREPARE) || !snd_simple(SND_PCM_START)) return 0;
+  while ((sent < total || inflight) && ok) {
+    while (inflight < 4 && sent < total) {
+      uint32_t slot = snd.tposted % 4, take = total - sent;
+      uint8_t *pg = snd.tpage[slot];
+      if (take > SND_DATA_BYTES) take = SND_DATA_BYTES;
+      *(uint32_t *)(void *)pg = 0;                       /* stream id */
+      for (uint32_t i = 0; i < 16; i++) pg[8 + i] = 0xff;  /* status, device-written */
+      for (uint32_t i = 0; i < take; i++) pg[64 + i] = bytes[sent + i];
+      for (uint32_t i = take; i < SND_DATA_BYTES; i++) pg[64 + i] = 0;
+      snd.tdesc[3 * slot].address = (uint64_t)(uintptr_t)pg; snd.tdesc[3 * slot].length = 4;
+      snd.tdesc[3 * slot].flags = VIRTQ_DESC_F_NEXT; snd.tdesc[3 * slot].next = (uint16_t)(3 * slot + 1);
+      snd.tdesc[3 * slot + 1].address = (uint64_t)(uintptr_t)(pg + 64); snd.tdesc[3 * slot + 1].length = SND_DATA_BYTES;
+      snd.tdesc[3 * slot + 1].flags = VIRTQ_DESC_F_NEXT; snd.tdesc[3 * slot + 1].next = (uint16_t)(3 * slot + 2);
+      snd.tdesc[3 * slot + 2].address = (uint64_t)(uintptr_t)(pg + 8); snd.tdesc[3 * slot + 2].length = 8;
+      snd.tdesc[3 * slot + 2].flags = VIRTQ_DESC_F_WRITE; snd.tdesc[3 * slot + 2].next = 0;
+      snd.tav->ring[snd.tposted % 16] = (uint16_t)(3 * slot);
+      __asm__ volatile("" ::: "memory");
+      snd.tav->index = (uint16_t)(snd.tposted + 1);
+      snd.tposted++;
+      *snd.tdb = 2;
+      sent += take; inflight++;
+    }
+    {
+      int got = 0;
+      for (uint32_t budget = 0; budget < 600000000U; budget++) {
+        __asm__ volatile("" ::: "memory");
+        if (snd.tu->index != snd.tdone) { got = 1; break; }
+      }
+      if (!got) { ok = 0; break; }
+      {
+        uint32_t head = snd.tu->ring[snd.tdone % 16].id, slot = head / 3;
+        uint32_t status = *(volatile uint32_t *)(void *)(snd.tpage[slot % 4] + 8);
+        snd.tdone++; inflight--;
+        if (status != SND_S_OK) ok = 0;
+      }
+    }
+  }
+  (void)snd_simple(SND_PCM_STOP);
+  (void)snd_simple(SND_PCM_RELEASE);
+  return ok;
+}
+#else
+int aiueos_audio_ready(void) { return 0; }
+uint32_t aiueos_audio_streams(void) { return 0; }
+int aiueos_audio_play(const int16_t *pcm, uint32_t frames) { (void)pcm; (void)frames; return 0; }
+#endif
+
 static int virtio_net(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
@@ -6105,6 +6291,9 @@ int aiueos_pci_enumerate(void) {
            boots without one start failing. */
         if (device_id == VIRTIO_NET_MODERN_ID || device_id == VIRTIO_NET_TRANSITIONAL_ID)
           virtio_net((uint8_t)bus,dev,fn);
+#ifdef AIUEOS_AUDIO
+        if (device_id == VIRTIO_SND_MODERN_ID) (void)virtio_sound((uint8_t)bus,dev,fn);
+#endif
       }
     }
   }

@@ -68,6 +68,17 @@
    ;; source must serve both the hosted engine and the kernel. The measurements
    ;; below are from 2026-09-25; remeasure them against current Browser/Amu
    ;; sources before treating any listed wall as current.
+   ;; Remeasured 2026-10-24 with scripts/measure-browser-component.py (amu 74ca4aa6 with its nbb engine, browser/cssom/text/dom-gpu
+   ;; copied into a scratch root): browser.surface and browser.text-edit LOCK and LINK as a 11-module graph once kotoba.lang.text
+   ;; and kotoba.string are the guest twins of kotoba-lang/lang/compat (the host-regex text library cannot be admitted) and
+   ;; kotoba.string.join is added. The kernel target then stops at the first wall: a host regex literal in cssom.core (line 1613).
+   ;; cssom.core carries ~59 and cssom.layout ~68 `#"..."` literals, many with groups, alternation and lazy/optional parts, which the
+   ;; group-free linear kotoba.lang.bounded-regex cannot take. The wall is therefore a port of cssom's parsing off regex (or a richer
+   ;; bounded matcher), not an amu defect; surface/text-edit themselves are clean.
+   ;; CORRECTION (same day): the cssom copy measured was the UNCOMMITTED working tree of the owner's cssom checkout (src/cssom/core.cljk
+   ;; and layout.cljk, modified since 2026-10-17: about +1750/-775 lines with 143 added #?(:kotoba ...) branches), i.e. a port of cssom
+   ;; off host regex is already under way there; the ~127 literals are what that work-in-progress still has outside a :kotoba branch.
+   ;; Re-measure against the committed HEAD or the finished port; do not start a second port.
    ;; Remeasured 2026-10-17 with the available native Amu selfhost image
    ;; (SHA-256 b65fcaf7cab41841249d87369cc6e7396ac40a3fa7a146fbf5abe6162688ee42)
    ;; and a scratch source root containing the current Browser, CSSOM, DOM and
