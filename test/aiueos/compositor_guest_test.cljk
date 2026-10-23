@@ -1573,6 +1573,49 @@
       (is (= :guest-browser-settings-absent (:reason (run {:serial through-sign-out :serial1 boot1}))))
       (is (= 3 (:exit (run {:serial boot2 :serial1 boot1 :qemu-unmeasured? true})))))))
 
+(deftest guest-browser-backup-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        w1 @#'guest/settings-want-1
+        w2 @#'guest/settings-want-2
+        s1 (str through-sign-out
+                (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0 scale=100 net=0\r\n" w1)
+                "AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=1 pub=aabbccddeeff0011\r\n")
+        s1 (.replace s1 "SETTINGS_OK events=6" "SETTINGS_OK events=6")
+        cycle (str "AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=1111111111111111 passkey=2222222222222222\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=0 passkey-blank=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=1111111111111111 passkey=2222222222222222 settings-valid=1 contrast=1 scale=125 net=1 pub=aabbccddeeff0011 key-signs=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\r\n")
+        good (str s1 cycle)
+        run (fn [serial] (guest/classify "guest-browser-backup" {:serial serial}))]
+    (testing "backed up, wiped, restored byte for byte, same settings, same key: green"
+      (let [r (run good)]
+        (is (= :guest-browser-backup (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a wipe that left the settings is red"
+      (is (= :wipe-did-not-remove-the-data (:reason (run (.replace good "settings-valid=0 passkey-blank=1" "settings-valid=1 passkey-blank=1"))))))
+    (testing "restored bytes that differ are red"
+      (is (= :restored-bytes-differ (:reason (run (.replace good "RESTORE settings=1111111111111111" "RESTORE settings=1111111111111112"))))))
+    (testing "restored settings that differ are red"
+      (is (= :restored-settings-differ (:reason (run (.replace good "contrast=1 scale=125 net=1" "contrast=0 scale=125 net=1"))))))
+    (testing "a restored key that is another key is red"
+      (is (= :restored-key-differs (:reason (run (.replace good "pub=aabbccddeeff0011 key-signs" "pub=aabbccddeeff0012 key-signs"))))))
+    (testing "a restored key that does not sign is red"
+      (is (= :restored-key-differs (:reason (run (.replace good "key-signs=1" "key-signs=0"))))))
+    (testing "no OK line is not green; no cycle is absent; unmeasured is exit 3"
+      (is (= :backup-ok-missing (:reason (run (.replace good "AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\r\n" "")))))
+      (is (= :guest-browser-backup-absent (:reason (run s1))))
+      (is (= 3 (:exit (guest/classify "guest-browser-backup" {:serial good :qemu-unmeasured? true})))))))
+
 (def ^:private scale-rows
   ;; n key pct vw vh win ops text-px hash
   [[1 349 100 1280 800 "0,28,1280,720" 71 582 "25c93f77"]

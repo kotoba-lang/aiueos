@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -2074,6 +2074,44 @@
        :leftover [:private-key-in-the-clear-on-the-volume :no-secure-element :the-other-device-is-a-test-key :user-presence-is-the-key-press-only
                   :no-counter-no-attestation :draw-list-not-pixels]})))
 
+;; Guest browser backup and restore of the user's records (ADR-0271): after the settings stage (first boot of the settings gate's script: the three
+;; settings changed by clicks, the passkey registered) the stage copies the settings record (sector 1034) and the passkey record (1035) to
+;; their backup sectors, wipes the originals, checks the machine sees neither, restores them, and checks the sectors read back byte for byte
+;; (SHA-256 before and after), the settings read the same, and the restored key still signs and verifies against the registered point. The
+;; kernel prints AIUEOS_GUEST_BROWSER_BACKUP_TAKE / _WIPE / _RESTORE / _OK. Green needs the sign-out gate green on the same serial, the
+;; settings stage's seven frames equal to the model's first boot (the data is what the clicks made), and every line of the cycle.
+
+(defn guest-browser-backup-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        take (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=([0-9a-f]{16}) passkey=([0-9a-f]{16})\s*$" s)
+        wipe (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=(\d) passkey-blank=(\d)\s*$" s)
+        rest (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=([0-9a-f]{16}) passkey=([0-9a-f]{16}) settings-valid=(\d) contrast=(\d) scale=(\d+) net=(\d) pub=([0-9a-f]{16}) key-signs=(\d)\s*$" s)
+        reg (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=\d pub=([0-9a-f]{16})\s*$" s)
+        sign-out (guest-browser-sign-out-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? sign-out))
+      (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6\s*$" s))
+      {:green? false :exit 1 :reason :no-settings-stage :leftover [:no-settings-stage]}
+      (not= (settings-lines s) settings-want-1)
+      {:green? false :exit 1 :reason :settings-differ-from-model :leftover [:settings-differ-from-model]}
+      (not (and take wipe rest reg)) {:green? false :exit 1 :reason :guest-browser-backup-absent :leftover [:guest-browser-backup-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\s*$" s))
+      {:green? false :exit 1 :reason :backup-ok-missing :leftover [:backup-ok-missing]}
+      (not= ["0" "1"] (subvec wipe 1))
+      {:green? false :exit 1 :reason :wipe-did-not-remove-the-data :leftover [:wipe-did-not-remove-the-data]}
+      (not= (subvec take 1) [(nth rest 1) (nth rest 2)])
+      {:green? false :exit 1 :reason :restored-bytes-differ :leftover [:restored-bytes-differ]}
+      (not= ["1" "1" "125" "1"] (subvec rest 3 7))
+      {:green? false :exit 1 :reason :restored-settings-differ :leftover [:restored-settings-differ]}
+      (not (and (= (nth rest 7) (second reg)) (= "1" (nth rest 8))))
+      {:green? false :exit 1 :reason :restored-key-differs :leftover [:restored-key-differs]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-backup
+       :leftover [:the-user-data-is-two-records :the-backup-is-on-the-same-volume :no-user-interface :no-off-device-copy]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2548,6 +2586,10 @@
     "guest-browser-passkey" {"AIUEOS_GUEST_BROWSER" "1"
                              "AIUEOS_TEST_NET" "1"
                              "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0271: the backup stage follows the settings stage (one boot: the settings script's first-boot clicks, then the cycle).
+    "guest-browser-backup" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2600,6 +2642,7 @@
     "guest-browser-layout" (guest-browser-layout-result opts)
     "guest-browser-notify" (guest-browser-notify-result opts)
     "guest-browser-passkey" (guest-browser-passkey-result opts)
+    "guest-browser-backup" (guest-browser-backup-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2653,6 +2696,7 @@
     "guest-browser-layout" "AIUEOS_GUEST_BROWSER_LAYOUT"
     "guest-browser-notify" "AIUEOS_GUEST_BROWSER_NOTIFY"
     "guest-browser-passkey" "AIUEOS_GUEST_BROWSER_PASSKEY"
+    "guest-browser-backup" "AIUEOS_GUEST_BROWSER_BACKUP"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2706,6 +2750,7 @@
     "guest-browser-layout" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAYOUT_OK"
     "guest-browser-notify" "AIUEOS_COMPOSITOR_GUEST_BROWSER_NOTIFY_OK"
     "guest-browser-passkey" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PASSKEY_OK"
+    "guest-browser-backup" "AIUEOS_COMPOSITOR_GUEST_BROWSER_BACKUP_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

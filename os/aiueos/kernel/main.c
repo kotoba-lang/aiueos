@@ -3006,6 +3006,92 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
   return 0;
 }
 
+/* ADR-0271: backup and restore of the user's records. After the settings stage both records exist: the settings record (sector 1034)
+   and the passkey record (1035). The stage copies each to its backup sector (1036, 1037) with readback, wipes the originals and checks
+   that the machine now sees no settings and no passkey, restores the copies, and checks that the sectors read back byte for byte
+   (SHA-256 before and after), that the settings read the same, and that the restored key still signs and verifies. */
+extern int aiueos_user_sector_read(uint32_t, uint8_t *);
+extern int aiueos_user_sector_write(uint32_t, const uint8_t *);
+
+static int browser_backup_stage(void) {
+  static uint8_t a[512], b[512], z[512], back[512];
+  uint8_t ha[32], hb[32], hc[32], hd[32], qh0[32], qh1[32], session[8], sig[64];
+  uint32_t contrast = 0, scale = 100, netoff = 0, contrast2 = 0, scale2 = 100, netoff2 = 0;
+  int ok = 1, sok = 0, signed_ok = 0, v0, v1, pk_after;
+  for (unsigned i = 0; i < 512; i++) z[i] = 0;
+  v0 = aiueos_settings_read(&contrast, &scale, &netoff);
+  if (!passkey_load()) ok = 0;
+  if (!v0 || !ok || !passkey_sha256(passkey_q, 64, qh0)) {
+    serial_string("AIUEOS_GUEST_BROWSER_BACKUP leftover=no-records\r\n");
+    return 0;
+  }
+  ok &= aiueos_user_sector_read(1034, a) && aiueos_user_sector_read(1035, b);
+  ok &= passkey_sha256(a, 512, ha) && passkey_sha256(b, 512, hb);
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=");
+  passkey_hex(ha, 8);
+  serial_string(" passkey=");
+  passkey_hex(hb, 8);
+  serial_string("\r\n");
+  ok &= aiueos_user_sector_write(1036, a) && aiueos_user_sector_write(1037, b);
+  /* wipe the originals; the machine must then see neither */
+  ok &= aiueos_user_sector_write(1034, z) && aiueos_user_sector_write(1035, z);
+  passkey_ready = 0;
+  v1 = aiueos_settings_read(&contrast2, &scale2, &netoff2);
+  {
+    uint8_t chk[512];
+    int blank = aiueos_user_sector_read(1035, chk);
+    for (unsigned i = 0; i < 512; i++) if (chk[i]) blank = 0;
+    pk_after = blank;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=");
+  serial_decimal(v1 ? 1U : 0U);
+  serial_string(" passkey-blank=");
+  serial_decimal(pk_after ? 1U : 0U);
+  serial_string("\r\n");
+  /* restore from the copies */
+  ok &= aiueos_user_sector_read(1036, back) && aiueos_user_sector_write(1034, back);
+  ok &= aiueos_user_sector_read(1037, back) && aiueos_user_sector_write(1035, back);
+  ok &= aiueos_user_sector_read(1034, a) && aiueos_user_sector_read(1035, b);
+  ok &= passkey_sha256(a, 512, hc) && passkey_sha256(b, 512, hd);
+  {
+    uint8_t same = 1;
+    for (unsigned i = 0; i < 32; i++) if (ha[i] != hc[i] || hb[i] != hd[i]) same = 0;
+    ok &= same;
+  }
+  v1 = aiueos_settings_read(&contrast2, &scale2, &netoff2);
+  passkey_created = 0;
+  ok &= passkey_load() && !passkey_created && passkey_sha256(passkey_q, 64, qh1);
+  {
+    uint8_t same = 1;
+    for (unsigned i = 0; i < 32; i++) if (qh0[i] != qh1[i]) same = 0;
+    ok &= same;
+  }
+  sok = passkey_ceremony(passkey_d, session, sig, &signed_ok);
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=");
+  passkey_hex(hc, 8);
+  serial_string(" passkey=");
+  passkey_hex(hd, 8);
+  serial_string(" settings-valid=");
+  serial_decimal(v1 ? 1U : 0U);
+  serial_string(" contrast=");
+  serial_decimal(contrast2);
+  serial_string(" scale=");
+  serial_decimal(scale2);
+  serial_string(" net=");
+  serial_decimal(netoff2);
+  serial_string(" pub=");
+  passkey_hex(qh1, 8);
+  serial_string(" key-signs=");
+  serial_decimal(sok ? 1U : 0U);
+  serial_string("\r\n");
+  if (ok && v1 && contrast2 == contrast && scale2 == scale && netoff2 == netoff && sok) {
+    serial_string("AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_BACKUP leftover=restore-differs\r\n");
+  return 0;
+}
+
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
@@ -6648,7 +6734,8 @@ qwen_runtime_boot_complete:
                                                               if (browser_layout_stage(surface, font, font_length, dict, dict_length))
                                                                 if (browser_notify_stage(surface, font, font_length, dict, dict_length))
                                                                   if (browser_passkey_stage(surface, font, font_length, dict, dict_length))
-                                                                    browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                                    if (browser_settings_stage(surface, font, font_length, dict, dict_length))
+                                                                      (void)browser_backup_stage();
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

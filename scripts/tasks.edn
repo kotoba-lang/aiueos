@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-backup
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-backup"]
+  :doc "Guest browser backup and restore (ADR-0271) on KERNEL.ELF under QEMU, after the settings stage: the settings and passkey records are copied to backup sectors, wiped (the machine sees neither), restored, and read back byte for byte (SHA-256), with the same settings and the same signing key."}
  :browser-desktop-passkey
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-passkey"]
   :doc "Guest browser device-bound passkey (ADR-0270) on KERNEL.ELF under QEMU, after the notification stage: Ctrl+Alt+L locks; F3 offers a passkey of another device (signed, not verified against this device's registered public point: refused); F4 offers this device's (verified: the session opens); every frame equals browser-frame-model.cljk's."}
