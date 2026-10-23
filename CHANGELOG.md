@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: keyboard layouts US and JIS (ADR-0267)
+- F9 flips surface word 1970 between US and JIS; with the input method off the digit row and punctuation keys type, Shift picks the
+  second character of a key and makes letters upper case. `guest-browser-layout` types the same physical keys on both layouts and
+  checks every frame against the frame model.
+
 ### desktop: the launcher row shows the network state (ADR-0266)
 - Surface word 1969 carries OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange (which runs before the
   desktop stages, contrary to ADR-0264); browser-frame2 draws it left of the clock. `guest-browser-clock` now attaches a SLIRP NIC

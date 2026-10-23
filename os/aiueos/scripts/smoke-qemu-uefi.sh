@@ -899,6 +899,26 @@ while time.time() < end:
                 recv_obj()
                 globals()["scale_sent"] = k + 1
                 log("scale event " + str(k + 1) + " sent")
+        # ADR-0267: thirty-six key events for the layout stage, after the clock stage: US shift+2, 2, shift+a, shift+;, shift+',
+        # F9 (JIS), shift+2, shift+', [, shift+;, F9 (US). Each waits for the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_LAYOUT_GO" in serial_now and globals().get("layout_sent", 0) < 36:
+            k = globals().get("layout_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_LAYOUT n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                keys = []
+                for mod, q in (("shift", "2"), (None, "2"), ("shift", "a"), ("shift", "semicolon"), ("shift", "apostrophe"),
+                               (None, "f9"), ("shift", "2"), ("shift", "apostrophe"), (None, "bracket_left"),
+                               ("shift", "semicolon"), (None, "f9")):
+                    if mod: keys.append((mod, True))
+                    keys.append((q, True)); keys.append((q, False))
+                    if mod: keys.append((mod, False))
+                qc, dn = keys[k]
+                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["layout_sent"] = k + 1
+                log("layout event " + str(k + 1) + " sent")
         # ADR-0260/0265: two keys (second boot) or six (first boot) after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
