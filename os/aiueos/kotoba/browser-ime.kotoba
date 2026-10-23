@@ -805,6 +805,30 @@
       (clear-state s)
       0))
 
+;; ADR-0259: sign out. Ctrl+Alt+Q (evdev 16) ends the session: every window body (words 160..415), scroll
+;; offset, saved maximize rect, double-press bookkeeping, selection and the minimized register is zeroed, the
+;; stack is one fresh window 1 at the default rect with focus, and the screen is locked (the next session
+;; starts clean and needs the PIN). The titles are the apps', not the session's, and stay.
+(defn signout-chord [s code]
+  (if (= code 16) (if (= (w s 2038) 1) (if (= (w s 431) 1) 1 0) 0) 0))
+
+(defn zero-run [s from n]
+  (if (= n 0) 0
+    (do (wp s from 0) (zero-run s (+ from 1) (- n 1)))))
+
+(defn zero-body [s k]
+  (if (= k 4) 0
+    (do (zero-run s (+ 160 (* 64 k)) 64) (zero-body s (+ k 1)))))
+
+(defn sign-out-now [s]
+  (do (zero-body s 0)
+      (zero-run s 2010 16) (zero-run s 2027 3) (zero-run s 2036 2) (zero-run s 2040 4)
+      (zero-run s 10 15)
+      (wp s 5 1) (wp s 6 80) (wp s 7 80) (wp s 8 520) (wp s 9 360)
+      (wp s 1 1) (wp s 2 1)
+      (wp s 31 (bit-and (w s 31) 15))
+      (lock-now s)))
+
 (defn pin-digit [code]
   (if (< code 2) -1 (if (> code 11) -1 (if (= code 11) 0 (- code 1)))))
 
@@ -840,6 +864,7 @@
     (if (= (ctrl-code (quot ev 4)) 1) (hold-ctrl s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
       (if (= (w s 2030) 1) (locked-key s (quot ev 4))
+      (if (= (signout-chord s (quot ev 4)) 1) (sign-out-now s)
       (if (= (lock-chord s (quot ev 4)) 1) (lock-now s)
       (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (quot ev 4) 64) (ring-move s)
@@ -850,7 +875,7 @@
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r))))))))))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

@@ -25,7 +25,7 @@
    "guest-browser-keyboard-activate"
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
-   "guest-browser-minimize" "guest-browser-screen-lock"])
+   "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1008,6 +1008,9 @@
   (let [e (fn [n src at red rect ops px hash]
             {:n n :src src :at at :reduce red :windows 3 :focus 1 :stack "341" :rect rect
              :ops ops :px px :hash hash})
+        m2 (fn [n src at red windows focus stack rect ops px hash]
+             {:n n :src src :at at :reduce red :windows windows :focus focus :stack stack
+              :rect rect :ops ops :px px :hash hash})
         m (fn [n src at red focus stack ops px hash]
             {:n n :src src :at at :reduce red :windows 3 :focus focus :stack stack
              :rect "272,132,240,200" :ops ops :px px :hash hash})]
@@ -1089,7 +1092,24 @@
      (m 87 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
      (m 88 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
      (m 89 0 "456,146" "none" 4 "314" 187 1080 "f1860b60")
-     (m 90 0 "456,146" "none" 4 "314" 187 1080 "f1860b60")]))
+     (m 90 0 "456,146" "none" 4 "314" 187 1080 "f1860b60")
+     ;; ADR-0259: sign out and in again
+     (m2 91 0 "456,146" "none" 3 4 "314" "272,132,240,200" 187 1080 "f1860b60")
+     (m2 92 0 "456,146" "none" 3 4 "314" "272,132,240,200" 187 1080 "f1860b60")
+     (m2 93 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 94 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 95 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 96 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 97 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 98 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 99 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 100 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 101 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 102 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 103 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 104 0 "456,146" "none" 1 1 "1" "80,80,520,360" 30 33 "921cb55f")
+     (m2 105 0 "456,146" "none" 1 1 "1" "80,80,520,360" 72 582 "60620c8b")
+     (m2 106 0 "456,146" "none" 1 1 "1" "80,80,520,360" 72 582 "60620c8b")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1355,10 +1375,11 @@
                  :ops (parse-long ops) :px (parse-long px) :hash hash})
         all (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|refused|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
                  (mapv parse))
-        got (filterv #(>= (:n %) 61) all)
+        got (filterv #(<= 61 (:n %) 90) all)
         by-n (into {} (map (juxt :n identity) all))
-        lks (mapv (fn [[_ & xs]] (mapv parse-long xs))
-                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOCK n=(\d+) locked=(\d+) bars=(\d+) dots=(\d+) denied=(\d+)\s*$" s))
+        lks (filterv #(<= (first %) 90)
+                     (mapv (fn [[_ & xs]] (mapv parse-long xs))
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOCK n=(\d+) locked=(\d+) bars=(\d+) dots=(\d+) denied=(\d+)\s*$" s)))
         minimize (guest-browser-minimize-result opts)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1390,6 +1411,62 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-screen-lock
        :leftover [:test-pin-hash-in-the-image :four-digit-pin :no-attempt-limit :draw-list-not-pixels :no-first-run-provisioning]})))
+
+;; Guest browser sign out (ADR-0259): after the lock events the host sends Ctrl+Alt+Q and then the PIN 4 2 4 2
+;; and Enter. Kotoba zeroes the session (every window body, scroll offset, saved maximize rect, selection and the
+;; minimized register), leaves one fresh window 1 at the default rect and locks; the PIN signs in to that clean
+;; session. The kernel prints AIUEOS_GUEST_BROWSER_MAX for the sixteen events, AIUEOS_GUEST_BROWSER_LOCK from the
+;; draw list and AIUEOS_GUEST_BROWSER_SIGNOUT n=<90..106> body= scroll= maxrect= minreg= windows= focus= -- the
+;; non-zero words it reads back out of the surface's session areas. Green needs the screen-lock gate green on the
+;; same serial, the MAX and LOCK lines equal to browser-frame-model.cljk's, and, apart from the model: the session
+;; has data before the sign-out (body words non-zero at n=90..92) and none after it (body, scroll, maximize
+;; rects and the minimized register all 0 from n=93 to the end), with one window, focused.
+
+(def ^:private sign-out-lock-want
+  [[91 0 7 0 0] [92 0 7 0 0] [93 1 0 0 0] [94 1 0 0 0] [95 1 0 0 0] [96 1 0 0 0] [97 1 0 1 0] [98 1 0 1 0] [99 1 0 2 0] [100 1 0 2 0] [101 1 0 3 0] [102 1 0 3 0] [103 1 0 4 0] [104 1 0 4 0] [105 0 3 0 0] [106 0 3 0 0]])
+
+(defn guest-browser-sign-out-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        want (subvec max-want 72 88)
+        parse (fn [[_ n src at red windows focus stack rect ops px hash]]
+                {:n (parse-long n) :src (parse-long src) :at at
+                 :reduce (if (#{"none" "refused"} red) red (parse-long red))
+                 :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                 :ops (parse-long ops) :px (parse-long px) :hash hash})
+        got (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|refused|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+                 (mapv parse) (filterv #(>= (:n %) 91)))
+        lks (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOCK n=(\d+) locked=(\d+) bars=(\d+) dots=(\d+) denied=(\d+)\s*$" s)
+                 (mapv (fn [[_ & xs]] (mapv parse-long xs))) (filterv #(>= (first %) 91)))
+        outs (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SIGNOUT n=(\d+) body=(\d+) scroll=(\d+) maxrect=(\d+) minreg=(\d+) windows=(\d+) focus=(\d+)\s*$" s)
+                  (mapv (fn [[_ & xs]] (mapv parse-long xs))))
+        before (filter #(<= 90 (first %) 92) outs)
+        after (filter #(>= (first %) 93) outs)
+        lock (guest-browser-screen-lock-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? lock))
+      (assoc lock :reason :no-screen-lock :leftover (into [:no-screen-lock] (:leftover lock)))
+      (and (empty? got) (empty? outs)) {:green? false :exit 1 :reason :guest-browser-sign-out-absent
+                                        :leftover [:guest-browser-sign-out-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SIGN_OUT_OK events=16 session=zeroed locked=1 pin=signed-in clean=windows-1" s))
+      {:green? false :exit 1 :reason :sign-out-ok-missing :leftover [:sign-out-ok-missing]}
+      (not= got want)
+      {:green? false :exit 1 :reason :sign-out-differs-from-model :leftover [:sign-out-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      (not= lks sign-out-lock-want)
+      {:green? false :exit 1 :reason :sign-out-lock-differs-from-model :leftover [:sign-out-lock-differs-from-model]}
+      (or (empty? before) (some #(zero? (nth % 1)) before))
+      {:green? false :exit 1 :reason :no-session-data-before-sign-out :leftover [:no-session-data-before-sign-out]}
+      (or (< (count after) 14)
+          (some (fn [[_ body scrl mrect minreg windows focus]]
+                  (not (and (zero? body) (zero? scrl) (zero? mrect) (zero? minreg) (= 1 windows) (= 1 focus))))
+                after))
+      {:green? false :exit 1 :reason :session-not-zeroed :leftover [:session-not-zeroed]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-sign-out
+       :leftover [:memory-read-from-the-surface-not-the-ram :clipboard-not-cleared :test-pin-hash-in-the-image :draw-list-not-pixels]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -1831,6 +1908,9 @@
     ;; ADR-0258: the lock, the swallowed input and the two PIN attempts come after the minimize events.
     "guest-browser-screen-lock" {"AIUEOS_GUEST_BROWSER" "1"
                                  "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0259: the sign-out chord and the second sign-in come after the lock events.
+    "guest-browser-sign-out" {"AIUEOS_GUEST_BROWSER" "1"
+                              "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1874,6 +1954,7 @@
     "guest-browser-pressed-state" (guest-browser-pressed-state-result opts)
     "guest-browser-minimize" (guest-browser-minimize-result opts)
     "guest-browser-screen-lock" (guest-browser-screen-lock-result opts)
+    "guest-browser-sign-out" (guest-browser-sign-out-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1918,6 +1999,7 @@
     "guest-browser-pressed-state" "AIUEOS_GUEST_BROWSER_PRESS"
     "guest-browser-minimize" "AIUEOS_GUEST_BROWSER_MIN"
     "guest-browser-screen-lock" "AIUEOS_GUEST_BROWSER_LOCK"
+    "guest-browser-sign-out" "AIUEOS_GUEST_BROWSER_SIGNOUT"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1962,6 +2044,7 @@
     "guest-browser-pressed-state" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PRESSED_STATE_OK"
     "guest-browser-minimize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MINIMIZE_OK"
     "guest-browser-screen-lock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCREEN_LOCK_OK"
+    "guest-browser-sign-out" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SIGN_OUT_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: signing out zeroes the session (ADR-0259)
+- Ctrl+Alt+Q zeroes the session words, leaves one fresh window 1 and locks; the PIN signs in to the clean session.
+  `guest-browser-sign-out` gates it (16 more events) and reads the zeroed words back.
+
 ### desktop: the screen locks and a PIN unlocks it (ADR-0258)
 - Ctrl+Alt+L locks: only the lock screen is drawn, pointer and keys are swallowed; a four-digit PIN (SHA-256 checked by C against
   the test PIN\'s hash) unlocks and the session is as it was. `guest-browser-screen-lock` gates it (30 more events).

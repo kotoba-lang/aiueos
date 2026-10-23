@@ -751,7 +751,11 @@
           mn3 (assoc base :minimized #{1 4} :focus 3 :stack [(nth others 0) w1 (nth others 1)])
           mn4 (assoc base :minimized #{4} :focus 1 :stack others)
           mn5 (assoc base :focus 4 :stack [(nth others 0) w1 (nth others 1)])
-          lk (fn [pin denied p] (assoc mn5 :locked true :pin pin :denied denied :pointer p))]
+          lk (fn [pin denied p] (assoc mn5 :locked true :pin pin :denied denied :pointer p))
+          ;; ADR-0259: the signed-out session: one window 1 at the default rect with an empty body
+          clean (assoc base :ring 0 :focus 1 :minimized #{}
+                       :stack [(assoc w1 :x 80 :y 80 :w 520 :h 360 :body [])])
+          lk2 (fn [pin p] (assoc clean :locked true :pin pin :denied false :pointer p))]
       [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
        ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]
        ;; ADR-0251: a press on the maximize control at (476, 146) maximizes, F11 on
@@ -805,7 +809,15 @@
        ["4" (lk 3 false [456 146])] ["4-up" (lk 3 false [456 146])]
        ["2" (lk 4 false [456 146])] ["2-up" (lk 4 false [456 146])]
        ;; the lock cleared the keyboard focus ring (it is transient), so the unlocked frame has no ring
-       ["enter-accepted" (at (assoc mn5 :ring 0) [456 146])] ["enter-up" (at (assoc mn5 :ring 0) [456 146])]])))
+       ["enter-accepted" (at (assoc mn5 :ring 0) [456 146])] ["enter-up" (at (assoc mn5 :ring 0) [456 146])]
+       ;; ADR-0259: Ctrl, Alt, Q down (the session ends: one fresh window 1 at the default rect, empty body,
+       ;; and the screen locked), Q, Alt, Ctrl up; the PIN 4 2 4 2 and Enter sign in to the clean session
+       ["ctrl" (at (assoc mn5 :ring 0) [456 146])] ["alt" (at (assoc mn5 :ring 0) [456 146])]
+       ["sign-out" (lk2 0 [456 146])] ["q-up" (lk2 0 [456 146])] ["alt-up" (lk2 0 [456 146])]
+       ["ctrl-up" (lk2 0 [456 146])]
+       ["4" (lk2 1 [456 146])] ["4-up" (lk2 1 [456 146])] ["2" (lk2 2 [456 146])] ["2-up" (lk2 2 [456 146])]
+       ["4" (lk2 3 [456 146])] ["4-up" (lk2 3 [456 146])] ["2" (lk2 4 [456 146])] ["2-up" (lk2 4 [456 146])]
+       ["enter-signed-in" (at clean [456 146])] ["enter-up" (at clean [456 146])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
