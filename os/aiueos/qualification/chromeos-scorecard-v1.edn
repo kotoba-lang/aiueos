@@ -1,0 +1,587 @@
+;; ChromeOS-grade scorecard, version 1 -- the fixed measure behind "AIUEOS is N% of ChromeOS"
+;; (Linear JUN-90, JUN-89, JUN-140).
+;;
+;; WHAT 100% IS. The sum of the weights of the REQUIRED rows is 100. A row counts, in full, only when
+;; its :status is :pass at its :required-level, with evidence a person other than the author can
+;; read back (a receipt, a log, a screenshot, a release artifact). Nothing counts in part. A row
+;; nobody has verified is :unachieved, and that is the same as failed ("unverified = unachieved").
+;; The score is the weight of the :pass rows over 100. Optional rows (weight 0) are listed, never
+;; counted. Design text, code size, QEMU-only success and the old os-coverage marker share are not
+;; product readiness and are not on this scale.
+;;
+;; EVIDENCE LEVELS, in order: :design < :qemu (a gate on QEMU/OVMF) < :device (the reference machine) <
+;; :release (a signed release artifact, installed, on the reference machine) < :user (a person's
+;; acceptance run). :required-level is the lowest level at which the row may be :pass. A QEMU run
+;; never stands in for :device; a hosted run never stands in for either.
+;;
+;; THE :qemu-progress FIELD is NOT part of the score. It records where the QEMU-level work stands
+;; (:pass / :partial / :none) so that progress is visible before any machine exists. It is shown
+;; beside the score, never added to it.
+;;
+;; WHAT IS NOT FIXED BY THIS FILE: the reference machine's model and firmware, the ChromeOS device it
+;; is compared with, and the exclusions. Those are the owner's to confirm (JUN-90 acceptance). Until
+;; they are, the rows are fixed but the machine they run on is not, and no row can be :pass.
+{:format :aiueos.scorecard/v1
+ :date "2026-10-23"
+ :issue ["JUN-90" "JUN-89" "JUN-140"]
+ :reference-machine {:target "K16" :model :owner-to-confirm :firmware :owner-to-confirm
+                     :chromeos-device :owner-to-confirm :exclusions :owner-to-confirm
+                     :confirmed-by-owner false}
+ :levels [:design :qemu :device :release :user]
+ :categories {
+   :boot "Boot and first run"
+   :identity "Identity and login"
+   :shell "Desktop shell and windowing"
+   :input "Input and text"
+   :web "Browser and apps"
+   :storage "Storage and network"
+   :security "Security and data"
+   :update "Update and recovery"
+   :power "Power, hardware, accessibility"
+  }
+ :rows [
+  {:id :A1 :category :boot :title "Firmware to desktop on the reference machine"
+   :weight 3 :required true :required-level :device
+   :procedure "Power on the reference machine with the release image; read back the display and the serial log."
+   :expected "A usable desktop within 60 s of power-on; no evidence-job exit (the kernel does not qemu_exit on a failed stage); the serial log carries the boot markers."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["README.md capability table" "gate guest-session" "ADR-0220"]
+   :note "OVMF boots to ring 0 and to the guest desktop under QEMU; on this boot a failed stage ends the run (JUN-140). No physical boot has been run (README: P5 is :spec)."
+   }
+  {:id :A2 :category :boot :title "Desktop survives a display change"
+   :weight 2 :required true :required-level :device
+   :procedure "Change the display mode / resize the window of the reference display; read back the frame."
+   :expected "The desktop redraws at the new size with no blank or blue screen."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   :note "JUN-140: the virtio-gpu scanout binding is weak against display-info changes (zoom-to-fit gives a blue screen)."
+   }
+  {:id :A3 :category :boot :title "Install from USB"
+   :weight 3 :required true :required-level :release
+   :procedure "Boot the release USB on the reference machine, take the guided install to the internal disk, reboot from it."
+   :expected "The machine boots the installed system from its disk; the install receipt reads back."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["ADR-0239" "ADR-0240" "JUN-65" "JUN-70"]
+   :note "The install chain is selfhost and its gate is green under QEMU; no physical install."
+   }
+  {:id :A4 :category :boot :title "A second install is refused"
+   :weight 1 :required true :required-level :release
+   :procedure "Run the installer again on the installed disk."
+   :expected "The installer refuses and names why; the disk is unchanged."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["ADR-0239" "JUN-65"]
+   :note "Gate: guided console, install, receipt, repeat refused."
+   }
+  {:id :A5 :category :boot :title "First-run setup"
+   :weight 1 :required true :required-level :release
+   :procedure "Boot a clean install; complete the setup (name, device, account link)."
+   :expected "Setup completes; the choices read back after a reboot."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["ADR-0240" "ADR-0239"]
+   :note "Guided defaults and the QR account link are gated under QEMU."
+   }
+  {:id :B1 :category :identity :title "Sign in with a device-bound passkey"
+   :weight 3 :required true :required-level :device
+   :procedure "Sign in on the reference machine with a passkey bound to it; read back the session."
+   :expected "The session opens; a passkey for another device is refused."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["apps/session/README.md" "ADR-0113"]
+   :note "The authority flow and its refusals are tested with an injected authority; no human passkey ceremony on the machine."
+   }
+  {:id :B2 :category :identity :title "Lock and unlock the screen"
+   :weight 2 :required true :required-level :device
+   :procedure "Lock; try to use the machine; unlock."
+   :expected "Nothing is reachable while locked; unlock restores the session."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :B3 :category :identity :title "Sign out"
+   :weight 1 :required true :required-level :device
+   :procedure "Sign out; sign in again."
+   :expected "Windows and data of the session are gone from memory; the next session starts clean."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :B4 :category :identity :title "Several accounts on one machine"
+   :weight 0 :required false :required-level :device
+   :procedure "Create a second account; switch."
+   :expected "Each account's data stays its own."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C1 :category :shell :title "Launch an app from the launcher and the dock"
+   :weight 2 :required true :required-level :device
+   :procedure "Press each launcher button and dock tile with the pointer."
+   :expected "The app's window opens, once; pressing again raises it."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-launch" "ADR-0233"]
+   :note "Gated under QEMU for four apps."
+   }
+  {:id :C2 :category :shell :title "Move, resize, focus and raise windows"
+   :weight 4 :required true :required-level :device
+   :procedure "Drag a titlebar, drag the resize handle, click a window behind another."
+   :expected "The window follows the pointer, keeps its minimum size, and the clicked window is focused and raised."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-drag" "gate guest-browser-resize" "gate guest-browser-input" "ADR-0229" "ADR-0230"]
+   }
+  {:id :C3 :category :shell :title "Switch windows from the keyboard"
+   :weight 1 :required true :required-level :device
+   :procedure "Alt+Tab with two or more windows."
+   :expected "Focus and stacking move through the windows in order."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-focus-cycle" "ADR-0237"]
+   }
+  {:id :C4 :category :shell :title "Maximize and restore"
+   :weight 1 :required true :required-level :device
+   :procedure "Double-press the titlebar, press the control, press F11, twice each."
+   :expected "The window fills the work area and returns to the exact rect."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-window-maximize" "gate guest-browser-maximize-control" "ADR-0250" "ADR-0251"]
+   }
+  {:id :C5 :category :shell :title "Minimize, and a list of open windows"
+   :weight 2 :required true :required-level :device
+   :procedure "Minimize a window; open it again from the window list."
+   :expected "The window disappears and returns with its state."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C6 :category :shell :title "Snap windows to halves of the screen"
+   :weight 0 :required false :required-level :device
+   :procedure "Drag a window to a screen edge."
+   :expected "It snaps to half the work area."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C7 :category :shell :title "Notifications"
+   :weight 1 :required true :required-level :device
+   :procedure "Raise a notification from an app."
+   :expected "It appears, can be dismissed, and is listed."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C8 :category :shell :title "Settings"
+   :weight 1 :required true :required-level :device
+   :procedure "Change contrast, scale and network settings in the settings window."
+   :expected "The change applies and is kept across a reboot."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C9 :category :shell :title "Status area: network, power, clock"
+   :weight 1 :required true :required-level :device
+   :procedure "Read the status area on battery and on AC, online and offline."
+   :expected "Each shows its current state."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C10 :category :shell :title "Interaction states and feedback"
+   :weight 2 :required true :required-level :device
+   :procedure "Hover, press, focus by keyboard, hit a disabled control, reach the resize handle."
+   :expected "Hover, pressed, focus ring, disabled and cursor shape each differ from the resting state."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-hover" "gate guest-browser-focus-ring" "gate guest-browser-title-active" "gate guest-browser-cursor-shape" "ADR-0246" "ADR-0248" "ADR-0252"]
+   :note "Hover, focus ring, active titlebar and the resize cursor are gated under QEMU; pressed state is in flight; disabled and tooltips are absent."
+   }
+  {:id :C11 :category :shell :title "Animations and transitions"
+   :weight 0 :required false :required-level :device
+   :procedure "Open, close, move windows."
+   :expected "State changes are eased, within a stated time."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :C12 :category :shell :title "Dark mode and theming"
+   :weight 0 :required false :required-level :device
+   :procedure "Switch the theme."
+   :expected "All surfaces follow it with the contrast kept."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :D1 :category :input :title "Keyboard"
+   :weight 2 :required true :required-level :device
+   :procedure "Type in a window; use F6, Enter, Escape, F10, F11."
+   :expected "Keys reach the focused window and the shell actions."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-type" "gate guest-browser-keyboard-activate" "ADR-0225" "ADR-0249"]
+   }
+  {:id :D2 :category :input :title "Pointer and wheel"
+   :weight 1 :required true :required-level :device
+   :procedure "Move, press, drag, scroll with a pointer."
+   :expected "Each is followed exactly."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-cursor" "gate guest-browser-scroll" "ADR-0236" "ADR-0238"]
+   }
+  {:id :D3 :category :input :title "Touchpad gestures"
+   :weight 2 :required true :required-level :device
+   :procedure "Two-finger scroll, tap-to-click, pinch, three-finger swipe on the reference touchpad."
+   :expected "Each gesture does its ChromeOS action."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :D4 :category :input :title "Japanese input"
+   :weight 3 :required true :required-level :device
+   :procedure "Type romaji; convert with Space; commit; use Hankaku/Zenkaku."
+   :expected "Kana and kanji appear as the IME composes; the candidate order is stable."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-preedit" "gate guest-browser-dictionary" "ADR-0235" "ADR-0227" "ADR-0228"]
+   :note "Dictionary generated from Unihan; coverage of the font only."
+   }
+  {:id :D5 :category :input :title "Other layouts and input methods"
+   :weight 1 :required true :required-level :device
+   :procedure "Switch to another layout (US, JIS) and another language."
+   :expected "The layout changes the characters produced."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :D6 :category :input :title "Text editing"
+   :weight 1 :required true :required-level :device
+   :procedure "Caret, selection, delete, word movement, line start/end, undo."
+   :expected "Each edits as in a text field."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-caret" "gate guest-browser-selection" "ADR-0232" "ADR-0240"]
+   :note "Caret, selection and delete are gated; word movement and undo are not."
+   }
+  {:id :D7 :category :input :title "Copy and paste with permission"
+   :weight 1 :required true :required-level :device
+   :procedure "Ctrl+C, Ctrl+V between windows; refuse the permission once."
+   :expected "Copy and paste work when admitted and do nothing when refused."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-clipboard" "ADR-0241" "ADR-0096"]
+   }
+  {:id :D8 :category :input :title "Drag and drop"
+   :weight 1 :required true :required-level :device
+   :procedure "Drag text and a file between windows."
+   :expected "The drop lands where released."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :D9 :category :input :title "On-screen keyboard"
+   :weight 0 :required false :required-level :device
+   :procedure "Open it with no physical keyboard."
+   :expected "Keys type into the focused field."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :D10 :category :input :title "Undo and redo across the desktop"
+   :weight 0 :required false :required-level :device
+   :procedure "Ctrl+Z / Ctrl+Shift+Z in a text field."
+   :expected "The edit is undone and redone."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :E1 :category :web :title "Render a web page with the shared Browser/CSSOM"
+   :weight 7 :required true :required-level :device
+   :procedure "Open a page from the release set of pages on the reference machine; read back the frame."
+   :expected "Layout and text match the hosted engine for the same page."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-flow-parity" "ADR-0234" "amu PR 1489"]
+   :note "The kernel desktop carries a behavioural mirror of the Browser's surface and flow; the real Browser/CSSOM graph is not compiled for the kernel (floor :browser-component is open)."
+   }
+  {:id :E2 :category :web :title "HTTPS pages"
+   :weight 3 :required true :required-level :device
+   :procedure "Load an HTTPS page; load one with a bad certificate."
+   :expected "The good page loads; the bad one is refused with a reason."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["README.md TLS evidence"]
+   :note "Hosted cryptographic evidence for TLS 1.3 and the relay; not direct from the machine."
+   }
+  {:id :E3 :category :web :title "JavaScript execution"
+   :weight 3 :required true :required-level :device
+   :procedure "Open a page whose behaviour needs script."
+   :expected "The script runs bounded; a runaway script is stopped."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   :note "quickjs exists as a repo; not integrated on the kernel."
+   }
+  {:id :E4 :category :web :title "Tabs, history and bookmarks"
+   :weight 1 :required true :required-level :device
+   :procedure "Open tabs, navigate back and forward, bookmark and reopen."
+   :expected "Each works and survives a restart."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :E5 :category :web :title "Download, upload and file picker"
+   :weight 2 :required true :required-level :device
+   :procedure "Download a file; upload one chosen in the picker."
+   :expected "The file is stored and read back; the picker is permission-gated."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["ADR-0096"]
+   :note "The permission broker admits a file-picker operation; there is no picker UI."
+   }
+  {:id :E6 :category :web :title "Audio and video playback"
+   :weight 1 :required true :required-level :device
+   :procedure "Play a short video with sound."
+   :expected "Picture and sound are in step."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :E7 :category :web :title "Run an Itonami dapp from the launcher"
+   :weight 3 :required true :required-level :device
+   :procedure "Press the dapp's launcher button; use it."
+   :expected "The dapp starts and does its job."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence ["JUN-116"]
+   :note "JUN-140: the kaikei dapp exceeds the user-ELF region and does not start."
+   }
+  {:id :E8 :category :web :title "Printing"
+   :weight 0 :required false :required-level :device
+   :procedure "Print a page."
+   :expected "A job reaches a printer."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :E9 :category :web :title "Install a web app"
+   :weight 0 :required false :required-level :device
+   :procedure "Install a PWA."
+   :expected "It opens in its own window and survives a restart."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :F1 :category :storage :title "Internal storage (NVMe)"
+   :weight 2 :required true :required-level :device
+   :procedure "Write and read back files on the internal disk across a reboot."
+   :expected "Contents are intact; a power cut does not corrupt the disk."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["README.md capability table"]
+   :note "NVMe boot and read under QEMU; no physical disk."
+   }
+  {:id :F2 :category :storage :title "A durable file system"
+   :weight 1 :required true :required-level :device
+   :procedure "Create, rename, delete, fill the disk."
+   :expected "Operations are atomic; a full disk is reported, not corrupted."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["kotoba journal objects (os/aiueos/kotoba/journal-record-build.kotoba)"]
+   :note "A Kotoba journal exists; no file-system semantics gated."
+   }
+  {:id :F3 :category :storage :title "Wi-Fi"
+   :weight 3 :required true :required-level :device
+   :procedure "Join a WPA2/3 network; roam; reconnect after sleep."
+   :expected "Traffic flows; credentials are stored sealed."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["ADR-0243"]
+   :note "Credential delivery by sound is gated; the radio driver on the reference machine is not."
+   }
+  {:id :F4 :category :storage :title "Ethernet and DHCP"
+   :weight 1 :required true :required-level :device
+   :procedure "Plug a cable; read the lease."
+   :expected "An address and a route come up."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["smoke-qemu-dhcp.sh" "ADR-0140"]
+   :note "DHCP in QEMU and an RTL8125 driver; not the reference machine's NIC."
+   }
+  {:id :F5 :category :storage :title "USB storage"
+   :weight 1 :required true :required-level :device
+   :procedure "Plug a USB disk; copy a file."
+   :expected "The file reads back."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["README.md capability table"]
+   }
+  {:id :F6 :category :storage :title "Bluetooth"
+   :weight 1 :required true :required-level :device
+   :procedure "Pair a keyboard and a headset."
+   :expected "Both work."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :F7 :category :storage :title "Cloud sync of settings and files"
+   :weight 0 :required false :required-level :device
+   :procedure "Sign in on a second device."
+   :expected "Settings follow."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :G1 :category :security :title "Verified boot and signed images"
+   :weight 3 :required true :required-level :release
+   :procedure "Boot a release image; boot one with a flipped byte."
+   :expected "The good image boots; the altered one is refused before it runs."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["ADR-0220" "ADR-0222"]
+   :note "Signed ELF and loader admission under QEMU; no firmware-rooted chain on the machine."
+   }
+  {:id :G2 :category :security :title "Per-app isolation"
+   :weight 2 :required true :required-level :device
+   :procedure "Run two apps; make one read the other's memory."
+   :expected "The access faults; the other app is unaffected."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["task plc-rt-qemu-smoke" "AGENTS.md note 2"]
+   :note "Ring 3 and per-process address spaces are gated under QEMU."
+   }
+  {:id :G3 :category :security :title "Data encrypted at rest"
+   :weight 2 :required true :required-level :device
+   :procedure "Read the disk from outside the OS."
+   :expected "Only ciphertext is readable."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :G4 :category :security :title "Permission broker"
+   :weight 1 :required true :required-level :device
+   :procedure "Request clipboard and file access; grant one, refuse one."
+   :expected "Granted works, refused does nothing, both are recorded."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["ADR-0096" "gate guest-broker"]
+   }
+  {:id :G5 :category :security :title "Key lifecycle and revocation"
+   :weight 1 :required true :required-level :release
+   :procedure "Rotate a signing key; revoke a signer."
+   :expected "Objects of a revoked signer are refused."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["docs/key-lifecycle.md"]
+   }
+  {:id :H1 :category :update :title "Signed update download and apply"
+   :weight 3 :required true :required-level :release
+   :procedure "Publish an update; the machine fetches, verifies and applies it."
+   :expected "The new version runs; an unsigned update is refused."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :H2 :category :update :title "Rollback after a bad update"
+   :weight 3 :required true :required-level :release
+   :procedure "Apply an update that fails to boot."
+   :expected "The machine returns to the previous version by itself."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :H3 :category :update :title "Recovery mode and recovery image"
+   :weight 2 :required true :required-level :release
+   :procedure "Boot the recovery image after destroying the system partition."
+   :expected "The system is reinstalled with the user's data intact."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :H4 :category :update :title "Backup and restore of user data"
+   :weight 1 :required true :required-level :release
+   :procedure "Back up; wipe; restore."
+   :expected "The data reads back byte for byte."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I1 :category :power :title "Suspend and resume"
+   :weight 2 :required true :required-level :device
+   :procedure "Close the lid; open it."
+   :expected "The session resumes in under 3 s with state intact."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I2 :category :power :title "Battery and power management"
+   :weight 1 :required true :required-level :device
+   :procedure "Run on battery; read the level; hit low battery."
+   :expected "The level is right and the machine warns and sleeps."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I3 :category :power :title "Display scaling and external displays"
+   :weight 2 :required true :required-level :device
+   :procedure "Change the scale; attach an external display."
+   :expected "Text and controls scale; the second display works."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   :note "The desktop is fixed at 1280 x 800."
+   }
+  {:id :I4 :category :power :title "Audio output"
+   :weight 1 :required true :required-level :device
+   :procedure "Play a sound; change the volume."
+   :expected "Sound plays at the set level."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I5 :category :power :title "High-contrast mode"
+   :weight 1 :required true :required-level :device
+   :procedure "Toggle high contrast; read the ratios."
+   :expected "Text and bars are at least 7:1 and the choice holds."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :pass
+   :evidence ["gate guest-browser-high-contrast" "ADR-0247"]
+   :note "Palette and ratio gated under QEMU; the dock keeps its colours."
+   }
+  {:id :I6 :category :power :title "Screen reader"
+   :weight 1 :required true :required-level :device
+   :procedure "Navigate the desktop with a screen reader."
+   :expected "Every control is announced with its role and state."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I7 :category :power :title "Text and UI scaling for low vision"
+   :weight 1 :required true :required-level :device
+   :procedure "Increase the text size."
+   :expected "Text and layout grow without clipping."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+  {:id :I8 :category :power :title "Everything reachable by keyboard alone"
+   :weight 1 :required true :required-level :device
+   :procedure "Use the shell without a pointer."
+   :expected "Every shell control can be reached and activated."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-focus-ring" "gate guest-browser-keyboard-activate" "ADR-0248" "ADR-0249"]
+   :note "The launcher and the window controls are reachable; window contents are not traversable."
+   }
+  {:id :I9 :category :power :title "Camera"
+   :weight 0 :required false :required-level :device
+   :procedure "Open the camera."
+   :expected "Video appears."
+   :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
+   :status :unachieved :qemu-progress :none
+   :evidence []
+   }
+ ]}
