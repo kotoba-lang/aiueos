@@ -112,3 +112,10 @@ weights that do not sum to 100.
 | I8 | Everything reachable by keyboard alone | 1 | device | partial |
 
 (Each row's procedure, expected result, required evidence, current note and links are in the EDN.)
+
+## Reference machine (owner, 2026-10-23)
+
+The owner's answer: the reference is a VM on the Mac the agent works on, and the ChromeOS it is compared with is the
+latest ChromeOS in a VM on the same Mac. Still to be confirmed: the hypervisor and firmware, what is excluded, and
+whether a run in that VM counts as `:device`-level evidence. Until the owner confirms, the file keeps
+`confirmed-by-owner false` and no row can be `:pass`; the QEMU gates stay `:qemu`-level.

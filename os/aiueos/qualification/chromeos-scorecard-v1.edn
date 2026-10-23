@@ -24,8 +24,13 @@
 {:format :aiueos.scorecard/v1
  :date "2026-10-23"
  :issue ["JUN-90" "JUN-89" "JUN-140"]
- :reference-machine {:target "K16" :model :owner-to-confirm :firmware :owner-to-confirm
-                     :chromeos-device :owner-to-confirm :exclusions :owner-to-confirm
+ ;; 2026-10-23, owner: the reference is a VM on this Mac (the host the agent works on), and the ChromeOS
+ ;; it is compared with is the latest ChromeOS in a VM on the same Mac. Still open: which hypervisor and
+ ;; firmware, what is excluded, and whether a run in that VM counts as :device-level evidence (until the owner
+ ;; says so, nothing is :pass and the QEMU gates stay :qemu-level).
+ :reference-machine {:target "VM on the owner's Mac" :model "this Mac (the VM host)" :firmware :owner-to-confirm
+                     :chromeos-device "latest ChromeOS in a VM on the same Mac" :exclusions :owner-to-confirm
+                     :vm-counts-as-device :owner-to-confirm
                      :confirmed-by-owner false}
  :levels [:design :qemu :device :release :user]
  :categories {
