@@ -24,7 +24,7 @@
    "guest-browser-high-contrast" "guest-browser-focus-ring"
    "guest-browser-keyboard-activate"
    "guest-browser-window-maximize" "guest-browser-maximize-control"
-   "guest-browser-cursor-shape"])
+   "guest-browser-cursor-shape" "guest-browser-pressed-state"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1020,7 +1020,9 @@
      (e 29 0 "476,146" 1 "272,132,240,200" 186 2330 "7c707d0d")
      (e 30 0 "476,146" "none" "272,132,240,200" 186 2330 "7c707d0d")
      (e 31 3 "500,320" 0 "272,132,240,200" 179 2343 "c2fbd1ab")
-     (e 32 3 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929")]))
+     (e 32 3 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929")
+     (e 33 1 "54,14" 1 "272,132,240,200" 186 2322 "d3d22b31")
+     (e 34 4 "54,14" 0 "272,132,240,200" 186 2322 "d3d22b31")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1119,7 +1121,7 @@
                  :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
                  :ops (parse-long ops) :px (parse-long px) :hash hash})
         all (mapv parse lines)
-        got (filterv #(>= (:n %) 31) all)
+        got (filterv #(<= 31 (:n %) 32) all)
         f19 (first (filter #(= 19 (:n %)) all))
         ctl (guest-browser-maximize-control-result opts)]
     (cond
@@ -1141,6 +1143,51 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-cursor-shape
        :leftover [:resize-handle-only :one-shape-no-hotspot-fine-tuning :cursor-in-op-list-not-pixels]})))
+
+;; Guest browser pressed state (ADR-0253): the host puts the button down on launcher button 1 at
+;; (54, 14) and lets it up. While it is down the hot control under the pointer is drawn pressed
+;; (#bfbfbf), after it hot again (#d9d9d9): Kotoba (browser-frame2) decides from surface word 2033,
+;; which C sets on a tablet press and clears on a release. The kernel prints AIUEOS_GUEST_BROWSER_PRESS
+;; n=<33|34> pressed=<#bfbfbf rects> hot=<#d9d9d9 rects>. Green needs the cursor-shape gate green on
+;; the same serial, the two MAX lines (the press launches nothing new: app 1's window is raised) and
+;; the two PRESS lines equal to browser-frame-model.cljk's ("max-frame" 33, 34 and "press-frame"):
+;; pressed=1 hot=0 while down, pressed=0 hot=1 after.
+
+(def ^:private press-want [[33 1 0] [34 0 1]])
+
+(defn guest-browser-pressed-state-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        want (subvec max-want 14 16)
+        parse (fn [[_ n src at red windows focus stack rect ops px hash]]
+                {:n (parse-long n) :src (parse-long src) :at at
+                 :reduce (if (= red "none") "none" (parse-long red))
+                 :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                 :ops (parse-long ops) :px (parse-long px) :hash hash})
+        got (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+                 (mapv parse) (filterv #(>= (:n %) 33)))
+        press (mapv (fn [[_ n p h]] [(parse-long n) (parse-long p) (parse-long h)])
+                    (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_PRESS n=(\d+) pressed=(\d+) hot=(\d+)\s*$" s))
+        shape (guest-browser-cursor-shape-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? shape))
+      (assoc shape :reason :no-cursor-shape :leftover (into [:no-cursor-shape] (:leftover shape)))
+      (and (empty? got) (empty? press)) {:green? false :exit 1 :reason :guest-browser-pressed-state-absent
+                                         :leftover [:guest-browser-pressed-state-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PRESSED_OK events=2 down=pressed up=hot" s))
+      {:green? false :exit 1 :reason :pressed-ok-missing :leftover [:pressed-ok-missing]}
+      (not= got want)
+      {:green? false :exit 1 :reason :pressed-state-differs-from-model :leftover [:pressed-state-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      (not= press press-want)
+      {:green? false :exit 1 :reason :pressed-colour-differs-from-model :leftover [:pressed-colour-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat press (repeat nil)) press-want)))}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-pressed-state
+       :leftover [:colour-in-op-list-not-pixels :launcher-close-maximize-only :no-disabled-state]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -1573,6 +1620,9 @@
     ;; ADR-0252: the two pointer moves come after F11.
     "guest-browser-cursor-shape" {"AIUEOS_GUEST_BROWSER" "1"
                                   "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0253: the launcher press comes after the pointer moves.
+    "guest-browser-pressed-state" {"AIUEOS_GUEST_BROWSER" "1"
+                                   "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1613,6 +1663,7 @@
     "guest-browser-window-maximize" (guest-browser-window-maximize-result opts)
     "guest-browser-maximize-control" (guest-browser-maximize-control-result opts)
     "guest-browser-cursor-shape" (guest-browser-cursor-shape-result opts)
+    "guest-browser-pressed-state" (guest-browser-pressed-state-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1654,6 +1705,7 @@
     "guest-browser-window-maximize" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-maximize-control" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-cursor-shape" "AIUEOS_GUEST_BROWSER_MAX"
+    "guest-browser-pressed-state" "AIUEOS_GUEST_BROWSER_PRESS"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1695,6 +1747,7 @@
     "guest-browser-window-maximize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_WINDOW_MAXIMIZE_OK"
     "guest-browser-maximize-control" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MAXIMIZE_CONTROL_OK"
     "guest-browser-cursor-shape" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_SHAPE_OK"
+    "guest-browser-pressed-state" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PRESSED_STATE_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

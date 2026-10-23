@@ -167,5 +167,8 @@
   {:id :cursor-shape :gate "guest-browser-cursor-shape" :adr "0252"
    :goal "over a window's resize handle the pointer is a resize cursor (a diagonal with an L at each end) instead of the arrow, decided by Kotoba from the same handle rule browser-reduce uses, and the arrow comes back exactly when it leaves"
    :why "the pointer is one arrow whatever is under it; nothing says that an edge can be dragged"}
+  {:id :pressed-state :gate "guest-browser-pressed-state" :adr "0253"
+   :goal "a hot control is drawn pressed while the pointer's button is down over it and hot again after, decided by Kotoba from the button state C keeps in surface word 2033"
+   :why "a press gave no sign until it took effect (scorecard row C10)"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}
