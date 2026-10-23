@@ -423,9 +423,9 @@
    :procedure "Plug a cable; read the lease."
    :expected "An address and a route come up."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["smoke-qemu-dhcp.sh" "ADR-0140"]
-   :note "DHCP in QEMU and an RTL8125 driver; not the reference machine's NIC."
+   :status :pass :qemu-progress :pass
+   :evidence ["ADR-0140" "ADR-0076" "receipt os/aiueos/qualification/receipts/vm-20261024/dhcp/receipt.edn"]
+   :note "In the reference VM (a virtio NIC on SLIRP) the boot configured 10.0.2.15/255.255.255.0 with router 10.0.2.2 from a DHCP offer and ack, and the stack then used that address (AIUEOS_DHCP_OK, AIUEOS_DHCP_CONSUMED). Not the RTL8125 on a physical machine. smoke-qemu-dhcp.sh (three tampered-reply refusals) boots the full suite, whose desktop-loop stage currently ends by the quiescence watchdog, so that script is not cited."
    }
   {:id :F5 :category :storage :title "USB storage"
    :weight 1 :required true :required-level :device

@@ -4,6 +4,8 @@
 ;; run left. A scorecard row may name the receipt as evidence; the checker reads it back.
 ;;
 ;;   kbb --backend sci --classpath src scripts/vm-receipt.cljk --serial F --out DIR --profiles a,b,c [--shots DIR]
+;;       [--require name=REGEX ...]  a verdict that is green when REGEX matches a line of the serial (for a gate that is
+;;                                   not a compositor profile, e.g. the DHCP lease marker); --profiles may then be empty
 ;; Exit 0 when every named profile is green on the serial, 1 otherwise.
 
 (ns vm-receipt
@@ -20,12 +22,18 @@
 (defn- sha [buf] (-> (.createHash crypto "sha256") (.update buf) (.digest "hex")))
 
 (let [serial-path (opt "--serial") out (opt "--out")
-      profiles (str/split (opt "--profiles") #",")
+      profiles (remove str/blank? (str/split (or (opt "--profiles") "") #","))
+      requires (for [i (range (count args)) :when (= "--require" (nth args i))
+                     :let [kv (nth args (inc i))
+                           [k re] (let [j (.indexOf kv "=")] [(subs kv 0 j) (subs kv (inc j))])]]
+                 [k re])
       shots (opt "--shots")
       serial (str (.readFileSync fs serial-path "utf8"))
-      verdicts (into {} (for [p profiles]
-                          (let [r (g/classify p {:serial serial})]
-                            [p {:green? (boolean (:green? r)) :reason (:reason r)}])))
+      verdicts (into (into {} (for [p profiles]
+                                (let [r (g/classify p {:serial serial})]
+                                  [p {:green? (boolean (:green? r)) :reason (:reason r)}])))
+                     (for [[k re] requires]
+                       [k {:green? (boolean (re-find (re-pattern (str "(?m)^" re)) serial)) :reason :marker :marker re}]))
       shot-hashes (when shots
                     (into (sorted-map)
                           (for [f (sort (js->clj (.readdirSync fs shots)))
@@ -41,5 +49,5 @@
   (.mkdirSync fs out #js {:recursive true})
   (.writeFileSync fs (.join path out "kernel-serial.log") serial)
   (.writeFileSync fs (.join path out "receipt.edn") (str (pr-str receipt) "\n"))
-  (println (str "RECEIPT " out " profiles=" (count profiles) " green=" (count (filter :green? (vals verdicts)))))
+  (println (str "RECEIPT " out " profiles=" (+ (count profiles) (count requires)) " green=" (count (filter :green? (vals verdicts)))))
   (when-not (every? :green? (vals verdicts)) (.exit js/process 1)))
