@@ -25,7 +25,7 @@
    "guest-browser-keyboard-activate"
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
-   "guest-browser-minimize"])
+   "guest-browser-minimize" "guest-browser-screen-lock"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1058,7 +1058,38 @@
      (m 57 1 "60,780" 1 1 "341" 154 2365 "ef498861")
      (m 58 4 "60,780" 0 1 "341" 154 2365 "ef498861")
      (m 59 1 "60,780" 4 4 "314" 191 1080 "6585b838")
-     (m 60 4 "60,780" 0 4 "314" 191 1080 "6585b838")]))
+     (m 60 4 "60,780" 0 4 "314" 191 1080 "6585b838")
+     ;; ADR-0258: the screen lock
+     (m 61 0 "60,780" "none" 4 "314" 191 1080 "6585b838")
+     (m 62 0 "60,780" "none" 4 "314" 191 1080 "6585b838")
+     (m 63 0 "60,780" "none" 4 "314" 30 33 "7799e563")
+     (m 64 0 "60,780" "none" 4 "314" 30 33 "7799e563")
+     (m 65 0 "60,780" "none" 4 "314" 30 33 "7799e563")
+     (m 66 0 "60,780" "none" 4 "314" 30 33 "7799e563")
+     (m 67 1 "456,146" 0 4 "314" 30 33 "921cb55f")
+     (m 68 4 "456,146" 0 4 "314" 30 33 "921cb55f")
+     (m 69 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 70 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 71 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 72 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 73 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 74 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 75 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 76 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 77 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 78 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 79 0 "456,146" "none" 4 "314" 31 33 "921cb55f")
+     (m 80 0 "456,146" "none" 4 "314" 31 33 "921cb55f")
+     (m 81 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 82 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 83 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 84 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 85 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 86 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 87 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 88 0 "456,146" "none" 4 "314" 30 33 "921cb55f")
+     (m 89 0 "456,146" "none" 4 "314" 187 1080 "f1860b60")
+     (m 90 0 "456,146" "none" 4 "314" 187 1080 "f1860b60")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1261,7 +1292,7 @@
                  :ops (parse-long ops) :px (parse-long px) :hash hash})
         all (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|refused|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
                  (mapv parse))
-        got (filterv #(>= (:n %) 35) all)
+        got (filterv #(<= 35 (:n %) 60) all)
         by-n (into {} (map (juxt :n identity) all))
         mins (mapv (fn [[_ n r c d t x]] [(parse-long n) (parse-long r) (parse-long c) (parse-long d) (parse-long t) (parse-long x)])
                    (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MIN n=(\d+) reg=(\d+) minctl=(\d+) dockbar=(\d+) tray=(\d+) dis=(\d+)\s*$" s))
@@ -1293,6 +1324,72 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-minimize
        :leftover [:tray-lists-minimized-only :no-minimize-animation :alt-minus-only :control-hidden-with-one-window]})))
+
+;; Guest browser screen lock (ADR-0258): after the minimize events the host sends Ctrl+Alt+L (the screen
+;; locks), a press at (456, 146) and a key (x), a wrong PIN (4 2 4 3, Enter) and the right one (4 2 4 2,
+;; Enter). Kotoba decides what locked means (browser-ime collects the digits and swallows every other key,
+;; browser-reduce ignores the pointer, browser-frame2 draws only the lock screen); C only checks the PIN
+;; against its SHA-256 and sends the verdict back. The kernel prints AIUEOS_GUEST_BROWSER_MAX for the thirty
+;; events and AIUEOS_GUEST_BROWSER_LOCK n=<61..90> locked= bars= dots= denied= from the draw list. Green
+;; needs the minimize gate green on the same serial, the MAX lines equal to browser-frame-model.cljk's
+;; and the LOCK lines equal to its "lock-frame", and, apart from the model: no window is drawn while
+;; locked (bars=0 from the first lock frame to the last refusal), the session after the right PIN has the
+;; windows, focus, stack and rect it had before the lock (and its op count less the 4 rects of the cleared focus ring), and the wrong PIN leaves it locked.
+
+(def ^:private lock-want
+  [[61 0 7 0 0] [62 0 7 0 0] [63 1 0 0 0] [64 1 0 0 0] [65 1 0 0 0]
+   [66 1 0 0 0] [67 1 0 0 0] [68 1 0 0 0] [69 1 0 0 0] [70 1 0 0 0]
+   [71 1 0 1 0] [72 1 0 1 0] [73 1 0 2 0] [74 1 0 2 0] [75 1 0 3 0]
+   [76 1 0 3 0] [77 1 0 4 0] [78 1 0 4 0] [79 1 0 0 1] [80 1 0 0 1]
+   [81 1 0 1 0] [82 1 0 1 0] [83 1 0 2 0] [84 1 0 2 0] [85 1 0 3 0]
+   [86 1 0 3 0] [87 1 0 4 0] [88 1 0 4 0] [89 0 7 0 0] [90 0 7 0 0]])
+
+(defn guest-browser-screen-lock-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        want (subvec max-want 42 72)
+        parse (fn [[_ n src at red windows focus stack rect ops px hash]]
+                {:n (parse-long n) :src (parse-long src) :at at
+                 :reduce (if (#{"none" "refused"} red) red (parse-long red))
+                 :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                 :ops (parse-long ops) :px (parse-long px) :hash hash})
+        all (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|refused|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+                 (mapv parse))
+        got (filterv #(>= (:n %) 61) all)
+        by-n (into {} (map (juxt :n identity) all))
+        lks (mapv (fn [[_ & xs]] (mapv parse-long xs))
+                  (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LOCK n=(\d+) locked=(\d+) bars=(\d+) dots=(\d+) denied=(\d+)\s*$" s))
+        minimize (guest-browser-minimize-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? minimize))
+      (assoc minimize :reason :no-minimize :leftover (into [:no-minimize] (:leftover minimize)))
+      (and (empty? got) (empty? lks)) {:green? false :exit 1 :reason :guest-browser-screen-lock-absent
+                                       :leftover [:guest-browser-screen-lock-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SCREEN_LOCK_OK events=30 locked=1 swallowed=press,key wrong-pin=refused right-pin=unlocked session=restored" s))
+      {:green? false :exit 1 :reason :screen-lock-ok-missing :leftover [:screen-lock-ok-missing]}
+      (not= got want)
+      {:green? false :exit 1 :reason :screen-lock-differs-from-model :leftover [:screen-lock-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      (not= lks lock-want)
+      {:green? false :exit 1 :reason :lock-state-differs-from-model :leftover [:lock-state-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat lks (repeat nil)) lock-want)))}
+      (some #(and (<= 63 (first %) 88) (not (zero? (nth % 2)))) lks)
+      {:green? false :exit 1 :reason :window-drawn-while-locked :leftover [:window-drawn-while-locked]}
+      (not (every? #(= 1 (second %)) (filter #(<= 63 (first %) 88) lks)))
+      {:green? false :exit 1 :reason :wrong-pin-unlocked :leftover [:wrong-pin-unlocked]}
+      (not (every? zero? (map second (filter #(>= (first %) 89) lks))))
+      {:green? false :exit 1 :reason :right-pin-did-not-unlock :leftover [:right-pin-did-not-unlock]}
+      ;; the lock clears the keyboard focus ring (4 rects), nothing else of the session
+      (or (not= (select-keys (by-n 89) [:windows :focus :stack :rect])
+                (select-keys (by-n 60) [:windows :focus :stack :rect]))
+          (not= (:ops (by-n 89)) (- (:ops (by-n 60)) 4)))
+      {:green? false :exit 1 :reason :session-not-restored :leftover [:session-not-restored]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-screen-lock
+       :leftover [:test-pin-hash-in-the-image :four-digit-pin :no-attempt-limit :draw-list-not-pixels :no-first-run-provisioning]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -1731,6 +1828,9 @@
     ;; ADR-0254: the minimize, hit-through and restore presses come after the launcher press.
     "guest-browser-minimize" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0258: the lock, the swallowed input and the two PIN attempts come after the minimize events.
+    "guest-browser-screen-lock" {"AIUEOS_GUEST_BROWSER" "1"
+                                 "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1773,6 +1873,7 @@
     "guest-browser-cursor-shape" (guest-browser-cursor-shape-result opts)
     "guest-browser-pressed-state" (guest-browser-pressed-state-result opts)
     "guest-browser-minimize" (guest-browser-minimize-result opts)
+    "guest-browser-screen-lock" (guest-browser-screen-lock-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1816,6 +1917,7 @@
     "guest-browser-cursor-shape" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-pressed-state" "AIUEOS_GUEST_BROWSER_PRESS"
     "guest-browser-minimize" "AIUEOS_GUEST_BROWSER_MIN"
+    "guest-browser-screen-lock" "AIUEOS_GUEST_BROWSER_LOCK"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1859,6 +1961,7 @@
     "guest-browser-cursor-shape" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_SHAPE_OK"
     "guest-browser-pressed-state" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PRESSED_STATE_OK"
     "guest-browser-minimize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MINIMIZE_OK"
+    "guest-browser-screen-lock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCREEN_LOCK_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

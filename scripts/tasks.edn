@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-screen-lock
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-screen-lock"]
+  :doc "Guest browser screen lock (ADR-0258) on KERNEL.ELF under QEMU, after the minimize events: Ctrl+Alt+L locks, a pointer press and a key are swallowed, a wrong PIN is refused, the right one unlocks and the session is as it was; Kotoba decides, C checks the PIN's SHA-256; the frames and the lock state equal browser-frame-model.cljk's."}
  :browser-desktop-minimize
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-minimize"]
   :doc "Guest browser minimize (ADR-0254) on KERNEL.ELF under QEMU, after the pressed-state events: a press on window 1's minimize control removes it from the draw list and gives the focus to the topmost visible window, a press where it was lands on the window under it, a press on app 1's dock icon restores it raised and focused; decided by Kotoba in browser-reduce and browser-frame2; the six frames and the minimized register equal browser-frame-model.cljk's."}

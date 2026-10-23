@@ -764,7 +764,7 @@ while time.time() < end:
         # titlebar at (380, 142) -- press, release, press, release -- and one at
         # (380, 40), a press on the maximize control at (476, 146), F11 down and up --
         # each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 60:
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 90:
             k = globals().get("uiux_sent", 0)
             seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
                     (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
@@ -808,6 +808,24 @@ while time.time() < end:
                     ev = [{"type": "abs", "data": {"axis": "x", "value": 1383}},
                           {"type": "abs", "data": {"axis": "y", "value": 574}},
                           {"type": "btn", "data": {"down": True, "button": "left"}}]
+                elif k >= 60:
+                    # ADR-0258: Ctrl+Alt+L locks; a press at (456, 146) and a key (x) are swallowed; a
+                    # wrong PIN (4 2 4 3, Enter) is refused; the right one (4 2 4 2, Enter) unlocks
+                    j = k - 60
+                    if j < 6:
+                        qc, dn = (("ctrl", True), ("alt", True), ("l", True), ("l", False), ("alt", False), ("ctrl", False))[j]
+                        ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                    elif j == 6:
+                        ev = [{"type": "abs", "data": {"axis": "x", "value": 11674}},
+                              {"type": "abs", "data": {"axis": "y", "value": 5981}},
+                              {"type": "btn", "data": {"down": True, "button": "left"}}]
+                    elif j == 7:
+                        ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                    else:
+                        seq = ["x", "x", "4", "4", "2", "2", "4", "4", "3", "3", "ret", "ret",
+                               "4", "4", "2", "2", "4", "4", "2", "2", "ret", "ret"]
+                        qc = seq[j - 8]
+                        ev = [{"type": "key", "data": {"down": (j - 8) % 2 == 0, "key": {"type": "qcode", "data": qc}}}]
                 elif 44 <= k < 48:
                     # ADR-0256: Alt down, '-' down, '-' up, Alt up
                     qc = ("alt", "minus", "minus", "alt")[k - 44]

@@ -293,6 +293,24 @@
                                          (take 32 (get titles k)))))))
                (range) (sort minimized))))
 
+(defn- lock-frame
+  "ADR-0258: the lock screen: a dark background, ロック中 in white from (vw/2 - 32, vh/2 - 48), four
+  dots (the PIN digits typed so far white, the rest grey) at (vw/2 - 44 + 24 i, vh/2), a red bar
+  under them after a refusal, and the arrow."
+  [{:keys [vw vh hc pin denied] :as scene}]
+  (let [x0 (- (quot vw 2) 32) y0 (- (quot vh 2) 48)
+        glyphs (loop [cps [12525 12483 12463 20013] x x0 out []]
+                 (if (empty? cps) out
+                   (let [[gi gw] (glyph (first cps))]
+                     (recur (rest cps) (+ x gw) (conj out [:glyph x y0 gi gw 0xffffff])))))]
+    (-> [[:rect 0 0 vw vh (if hc 0x000000 0x1f2430)]]
+        (into glyphs)
+        (into (for [i (range 4)]
+                [:rect (+ (- (quot vw 2) 44) (* 24 i)) (quot vh 2) 12 12
+                 (if (< i (or pin 0)) 0xffffff (if hc 0x808080 0x555a66))]))
+        (into (when denied [[:rect (- (quot vw 2) 44) (+ (quot vh 2) 24) 84 4 0xd93025]]))
+        (into (pointer-sprite (assoc scene :stack []))))))
+
 (defn- hc-ink
   "ADR-0247: under the high-contrast palette the text colour is black: every
   glyph that names no colour, and every rect the model draws in the ink, is
@@ -306,10 +324,17 @@
                   :else o))
           ops)))
 
+(declare frame*)
+
 (defn frame
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
   :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]
   :selection [id k]} (stack bottom first)."
+  [{:keys [vw vh focus composition apps selection hc minimized locked] :as scene0}]
+  (if locked (lock-frame scene0)
+  (frame* scene0)))
+
+(defn frame*
   [{:keys [vw vh focus composition apps selection hc minimized] :as scene0}]
   ;; ADR-0254: a minimized window (its id in :minimized) is neither drawn nor hit; the minimize
   ;; control shows on a window at least 200 wide while two or more windows are visible.
@@ -725,7 +750,8 @@
           ;; ADR-0257 states: windows 1 and 4 minimized (3 alone), 1 restored, both restored
           mn3 (assoc base :minimized #{1 4} :focus 3 :stack [(nth others 0) w1 (nth others 1)])
           mn4 (assoc base :minimized #{4} :focus 1 :stack others)
-          mn5 (assoc base :focus 4 :stack [(nth others 0) w1 (nth others 1)])]
+          mn5 (assoc base :focus 4 :stack [(nth others 0) w1 (nth others 1)])
+          lk (fn [pin denied p] (assoc mn5 :locked true :pin pin :denied denied :pointer p))]
       [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
        ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]
        ;; ADR-0251: a press on the maximize control at (476, 146) maximizes, F11 on
@@ -760,7 +786,26 @@
        ["min-4" (assoc (at mn3 [544 94]) :down true)] ["release" (at mn3 [544 94])]
        ["close-refused" (assoc (at mn3 [584 94]) :down true)] ["release" (at mn3 [584 94])]
        ["restore-1" (assoc (at mn4 [60 780]) :down true)] ["release" (at mn4 [60 780])]
-       ["restore-4" (assoc (at mn5 [60 780]) :down true)] ["release" (at mn5 [60 780])]])))
+       ["restore-4" (assoc (at mn5 [60 780]) :down true)] ["release" (at mn5 [60 780])]
+       ;; ADR-0258: Ctrl, Alt, L down (the screen locks), L, Alt, Ctrl up; a press at (456, 146) and a
+       ;; key (x) are swallowed; a wrong PIN (4 2 4 3, Enter) is refused, the right one (4 2 4 2, Enter)
+       ;; unlocks and the session is as it was
+       ["ctrl" (at mn5 [60 780])] ["alt" (at mn5 [60 780])]
+       ["lock" (lk 0 false [60 780])] ["l-up" (lk 0 false [60 780])] ["alt-up" (lk 0 false [60 780])]
+       ["ctrl-up" (lk 0 false [60 780])]
+       ["locked-press" (assoc (lk 0 false [456 146]) :down true)] ["release" (lk 0 false [456 146])]
+       ["locked-x" (lk 0 false [456 146])] ["x-up" (lk 0 false [456 146])]
+       ["4" (lk 1 false [456 146])] ["4-up" (lk 1 false [456 146])]
+       ["2" (lk 2 false [456 146])] ["2-up" (lk 2 false [456 146])]
+       ["4" (lk 3 false [456 146])] ["4-up" (lk 3 false [456 146])]
+       ["3" (lk 4 false [456 146])] ["3-up" (lk 4 false [456 146])]
+       ["enter-refused" (lk 0 true [456 146])] ["enter-up" (lk 0 true [456 146])]
+       ["4" (lk 1 false [456 146])] ["4-up" (lk 1 false [456 146])]
+       ["2" (lk 2 false [456 146])] ["2-up" (lk 2 false [456 146])]
+       ["4" (lk 3 false [456 146])] ["4-up" (lk 3 false [456 146])]
+       ["2" (lk 4 false [456 146])] ["2-up" (lk 4 false [456 146])]
+       ;; the lock cleared the keyboard focus ring (it is transient), so the unlocked frame has no ring
+       ["enter-accepted" (at (assoc mn5 :ring 0) [456 146])] ["enter-up" (at (assoc mn5 :ring 0) [456 146])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
@@ -1037,7 +1082,7 @@
                   " rect=" (:x w) "," (:y w) "," (:w w) "," (:h w)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector max-frames)
-          :when (>= i 16)
+          :when (<= 16 i 41)
           :let [ops (frame scene)
                 cnt (fn [a b col] (count (filter (fn [[k _ _ w h c]] (and (= k :rect) (= w a) (= h b) (= c col))) ops)))]]
     (println (str "min-frame n=" (+ 19 i) " " ev
@@ -1046,7 +1091,15 @@
                   " tray=" (count (filter (fn [[k _ _ w h _]] (and (= k :rect) (= w 120) (= h 24))) ops))
                   " dis=" (count (filter (fn [[k _ _ _ _ c]] (and (= k :glyph) (= c 0x9e9e9e))) ops)))))
   (doseq [[i [ev scene]] (map-indexed vector max-frames)
-          :when (>= i 14)
+          :when (>= i 42)
+          :let [ops (frame scene)
+                n (count (filter (fn [[k _ _ a b c]] (and (= k :rect) (= a 12) (= b 12) (= c 0xffffff))) ops))]]
+    (println (str "lock-frame n=" (+ 19 i) " " ev " locked=" (if (:locked scene) 1 0)
+                  " bars=" (count (filter (fn [[k _ _ _ b _]] (and (= k :rect) (= b 28))) ops))
+                  " dots=" n
+                  " denied=" (count (filter (fn [[k _ _ a b _]] (and (= k :rect) (= a 84) (= b 4))) ops)))))
+  (doseq [[i [ev scene]] (map-indexed vector max-frames)
+          :when (<= 14 i 41)
           :let [ops (frame scene)
                 cnt #(count (filter (fn [[k _ _ _ _ c]] (and (= k :rect) (= c %))) ops))]]
     (println (str "press-frame n=" (+ 19 i) " " ev " pressed=" (cnt 0xbfbfbf) " hot=" (cnt hot-colour))))

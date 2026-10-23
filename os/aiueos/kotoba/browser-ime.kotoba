@@ -790,11 +790,57 @@
 (defn kbd-answer [s code]
   (if (= code 1) (close-press s) (ring-press s)))
 
+;; ADR-0258: the screen lock. Ctrl+Alt+L (evdev 38) sets word 2030; while it is 1 the only keys
+;; taken are the PIN's: digits (evdev 2..11) fill word 2031 (7 bits: count in bits 0..2, the number in
+;; the rest), Backspace takes one back, Enter with four digits answers 100000000 + the number for C to
+;; check against the PIN's hash and send back as a verdict event (value 2, code 1 accepted, 2 refused).
+;; Everything else, the shell actions and typing included, is swallowed. Word 2026 is 1 after a refusal
+;; until the next digit.
+(defn lock-chord [s code]
+  (if (= code 38) (if (= (w s 2038) 1) (if (= (w s 431) 1) 1 0) 0) 0))
+
+(defn lock-now [s]
+  (do (wp s 2030 1) (wp s 2031 0) (wp s 2026 0) (wp s 2032 0)
+      (wp s 25 0) (wp s 26 0) (wp s 27 0) (wp s 28 0) (wp s 29 0) (wp s 30 0)
+      (clear-state s)
+      0))
+
+(defn pin-digit [code]
+  (if (< code 2) -1 (if (> code 11) -1 (if (= code 11) 0 (- code 1)))))
+
+(defn pin-count [s] (bit-and (w s 2031) 7))
+
+(defn pin-add [s dg]
+  (if (< (pin-count s) 4)
+    (do (wp s 2031 (+ (* (+ (* (quot (w s 2031) 8) 10) dg) 8) (+ (pin-count s) 1)))
+        (wp s 2026 0)
+        0)
+    0))
+
+(defn pin-back [s]
+  (if (= (pin-count s) 0) 0
+    (do (wp s 2031 (+ (* (quot (quot (w s 2031) 8) 10) 8) (- (pin-count s) 1)))
+        0)))
+
+(defn locked-key [s code]
+  (if (> (pin-digit code) -1) (pin-add s (pin-digit code))
+    (if (= code 14) (pin-back s)
+      (if (= code 28) (if (= (pin-count s) 4) (+ 100000000 (quot (w s 2031) 8)) 0) 0))))
+
+(defn verdict [s code]
+  (if (= (w s 2030) 0) 0
+    (do (wp s 2031 0)
+        (if (= code 1) (do (wp s 2030 0) (wp s 2026 0)) (wp s 2026 1))
+        0)))
+
 (defn press [s d ev]
+  (if (= (bit-and ev 3) 2) (verdict s (quot ev 4))
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
     (if (= (shift-code (quot ev 4)) 1) (hold-shift s (bit-and ev 3))
     (if (= (ctrl-code (quot ev 4)) 1) (hold-ctrl s (bit-and ev 3))
     (if (not (= (bit-and ev 3) 1)) 0
+      (if (= (w s 2030) 1) (locked-key s (quot ev 4))
+      (if (= (lock-chord s (quot ev 4)) 1) (lock-now s)
       (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (quot ev 4) 64) (ring-move s)
       (if (= (quot ev 4) 87) (if (= (max-key-ok s) 1) (max-key-press s) 0)
@@ -804,7 +850,7 @@
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r)))))))))))))))
+                (if (= (w s 478) 1) -8 r))))))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

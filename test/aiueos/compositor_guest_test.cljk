@@ -1312,3 +1312,115 @@
       (is (= :minimize-ok-missing (:reason (guest/classify "guest-browser-minimize" {:serial (str base mn min-reg-lines)}))))
       (is (= :guest-browser-minimize-absent (:reason (guest/classify "guest-browser-minimize" {:serial (str base minimize-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-minimize" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private lock-rows
+  ;; n src at reduce ops text-px hash (focus 4, stack 314, window 1 at 272,132,240,200)
+  [[61 0 "60,780" "none" 191 1080 "6585b838"]
+   [62 0 "60,780" "none" 191 1080 "6585b838"]
+   [63 0 "60,780" "none" 30 33 "7799e563"]
+   [64 0 "60,780" "none" 30 33 "7799e563"]
+   [65 0 "60,780" "none" 30 33 "7799e563"]
+   [66 0 "60,780" "none" 30 33 "7799e563"]
+   [67 1 "456,146" 0 30 33 "921cb55f"]
+   [68 4 "456,146" 0 30 33 "921cb55f"]
+   [69 0 "456,146" "none" 30 33 "921cb55f"]
+   [70 0 "456,146" "none" 30 33 "921cb55f"]
+   [71 0 "456,146" "none" 30 33 "921cb55f"]
+   [72 0 "456,146" "none" 30 33 "921cb55f"]
+   [73 0 "456,146" "none" 30 33 "921cb55f"]
+   [74 0 "456,146" "none" 30 33 "921cb55f"]
+   [75 0 "456,146" "none" 30 33 "921cb55f"]
+   [76 0 "456,146" "none" 30 33 "921cb55f"]
+   [77 0 "456,146" "none" 30 33 "921cb55f"]
+   [78 0 "456,146" "none" 30 33 "921cb55f"]
+   [79 0 "456,146" "none" 31 33 "921cb55f"]
+   [80 0 "456,146" "none" 31 33 "921cb55f"]
+   [81 0 "456,146" "none" 30 33 "921cb55f"]
+   [82 0 "456,146" "none" 30 33 "921cb55f"]
+   [83 0 "456,146" "none" 30 33 "921cb55f"]
+   [84 0 "456,146" "none" 30 33 "921cb55f"]
+   [85 0 "456,146" "none" 30 33 "921cb55f"]
+   [86 0 "456,146" "none" 30 33 "921cb55f"]
+   [87 0 "456,146" "none" 30 33 "921cb55f"]
+   [88 0 "456,146" "none" 30 33 "921cb55f"]
+   [89 0 "456,146" "none" 187 1080 "f1860b60"]
+   [90 0 "456,146" "none" 187 1080 "f1860b60"]])
+
+(defn- lock-line [[n src at red ops px hash]]
+  (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=" src " at=" at " reduce=" red
+       " windows=3 focus=4 stack=314 rect=272,132,240,200 ops=" ops " text-px=" px " hash=" hash "\r\n"))
+
+(def ^:private lock-state-rows
+  ;; n locked bars dots denied
+  [[61 0 7 0 0]
+   [62 0 7 0 0]
+   [63 1 0 0 0]
+   [64 1 0 0 0]
+   [65 1 0 0 0]
+   [66 1 0 0 0]
+   [67 1 0 0 0]
+   [68 1 0 0 0]
+   [69 1 0 0 0]
+   [70 1 0 0 0]
+   [71 1 0 1 0]
+   [72 1 0 1 0]
+   [73 1 0 2 0]
+   [74 1 0 2 0]
+   [75 1 0 3 0]
+   [76 1 0 3 0]
+   [77 1 0 4 0]
+   [78 1 0 4 0]
+   [79 1 0 0 1]
+   [80 1 0 0 1]
+   [81 1 0 1 0]
+   [82 1 0 1 0]
+   [83 1 0 2 0]
+   [84 1 0 2 0]
+   [85 1 0 3 0]
+   [86 1 0 3 0]
+   [87 1 0 4 0]
+   [88 1 0 4 0]
+   [89 0 7 0 0]
+   [90 0 7 0 0]])
+
+(defn- lock-state-line [[n l b d x]]
+  (str "AIUEOS_GUEST_BROWSER_LOCK n=" n " locked=" l " bars=" b " dots=" d " denied=" x "\r\n"))
+
+(def ^:private screen-lock-ok
+  "AIUEOS_GUEST_BROWSER_SCREEN_LOCK_OK events=30 locked=1 swallowed=press,key wrong-pin=refused right-pin=unlocked session=restored\r\n")
+
+(deftest guest-browser-screen-lock-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        ok (str pre lines states screen-lock-ok)]
+    (testing "locked, swallowed, refused, unlocked, session restored: green"
+      (let [r (guest/classify "guest-browser-screen-lock" {:serial ok})]
+        (is (= :guest-browser-screen-lock (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "the minimize gate still reads its own lines with the lock lines present"
+      (is (= :guest-browser-minimize (:reason (guest/classify "guest-browser-minimize" {:serial ok})))))
+    (testing "a window drawn while locked is red"
+      (let [bad (.replace states "n=70 locked=1 bars=0" "n=70 locked=1 bars=3")]
+        (is (not (:green? (guest/classify "guest-browser-screen-lock" {:serial (str pre lines bad screen-lock-ok)}))))))
+    (testing "a wrong PIN that unlocks is red"
+      (let [bad (.replace states "n=79 locked=1 bars=0 dots=0 denied=1" "n=79 locked=0 bars=0 dots=0 denied=0")]
+        (is (not (:green? (guest/classify "guest-browser-screen-lock" {:serial (str pre lines bad screen-lock-ok)}))))))
+    (testing "a right PIN that does not unlock is red"
+      (let [bad (.replace states "n=89 locked=0" "n=89 locked=1")]
+        (is (not (:green? (guest/classify "guest-browser-screen-lock" {:serial (str pre lines bad screen-lock-ok)}))))))
+    (testing "a pointer press that changed the session while locked is red, and says which frame"
+      (let [bad (.replace lines "n=67 src=1 at=456,146 reduce=0 windows=3 focus=4 stack=314" "n=67 src=1 at=456,146 reduce=0 windows=3 focus=1 stack=341")
+            r (guest/classify "guest-browser-screen-lock" {:serial (str pre bad states screen-lock-ok)})]
+        (is (= :screen-lock-differs-from-model (:reason r)))
+        (is (= 67 (:n (:kernel (:first-difference r)))))))
+    (testing "it needs the minimize gate green first"
+      (is (= :no-minimize (:reason (guest/classify "guest-browser-screen-lock" {:serial (str lines states screen-lock-ok)})))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :screen-lock-ok-missing (:reason (guest/classify "guest-browser-screen-lock" {:serial (str pre lines states)}))))
+      (is (= :guest-browser-screen-lock-absent (:reason (guest/classify "guest-browser-screen-lock" {:serial (str pre screen-lock-ok)}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-screen-lock" {:serial ok :qemu-unmeasured? true})))))))

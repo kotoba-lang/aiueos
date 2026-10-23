@@ -173,5 +173,8 @@
   {:id :minimize :gate "guest-browser-minimize" :adr "0254"
    :goal "a window can be minimized from a control in its titlebar and restored from its dock icon: a minimized window is not drawn and not hit, the focus goes to the topmost window that is not minimized, and the restore raises and focuses it, all decided by Kotoba"
    :why "a window could only be closed or covered; scorecard row C5"}
+  {:id :screen-lock :gate "guest-browser-screen-lock" :adr "0258"
+   :goal "Ctrl+Alt+L locks the screen: nothing of the session is drawn or reachable (pointer, keys, shell actions), a wrong PIN is refused, the right PIN unlocks and the session is as it was, all decided by Kotoba with C only checking the PIN's hash"
+   :why "the desktop could not be locked; scorecard row B2"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}
