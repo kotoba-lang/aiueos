@@ -1164,7 +1164,11 @@
 (defn locked-key [s code]
   (if (> (pin-digit code) -1) (pin-add s (pin-digit code))
     (if (= code 14) (pin-back s)
-      (if (= code 28) (if (= (pin-count s) 4) (+ 100000000 (quot (w s 2031) 8)) 0) 0))))
+;; ADR-0270: on the lock screen F4 (evdev 62) asks C to run the passkey ceremony with this device's key and F3 (61) with a key of another
+;; device; the answers are 300000001 and 300000002, and C sends the verdict back as the PIN attempt's does (value-2 key event).
+      (if (= code 28) (if (= (pin-count s) 4) (+ 100000000 (quot (w s 2031) 8)) 0)
+        (if (= code 62) 300000001
+          (if (= code 61) 300000002 0))))))
 
 (defn verdict [s code]
   (if (= code 3) (fit-windows s 0)

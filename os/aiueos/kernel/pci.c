@@ -629,6 +629,31 @@ int aiueos_settings_write(uint32_t contrast, uint32_t scale, uint32_t netoff) {
   return settings_record_valid() && record->contrast==contrast && record->reserved==(scale|(netoff<<8)) && record->checksum==wanted;
 }
 
+/* ADR-0270: the device-bound passkey record, one sector above the settings record's. The caller (main.c) builds and checks the record;
+   this is the sector transport: read it, and write it with readback. Same interrupt-driven path, boot flow, no lock. */
+#define AIUEOS_PASSKEY_SECTOR 1035u
+static int passkey_sector_io(uint32_t type) {
+  return virtio_blk_sector_io(blk_backend.request,blk_backend.sector,
+      blk_backend.status,blk_backend.desc,blk_backend.avail,blk_backend.used,
+      blk_backend.doorbell,&blk_backend.submitted,type,AIUEOS_PASSKEY_SECTOR);
+}
+int aiueos_passkey_sector_read(uint8_t *out) {
+  if (!blk_backend.ready || !out || AIUEOS_PASSKEY_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!passkey_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  for (unsigned i=0;i<512;i++) out[i]=blk_backend.sector[i];
+  return 1;
+}
+int aiueos_passkey_sector_write(const uint8_t *in) {
+  if (!blk_backend.ready || !in || AIUEOS_PASSKEY_SECTOR >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=in[i];
+  if (!passkey_sector_io(VIRTIO_BLK_T_OUT)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!passkey_sector_io(VIRTIO_BLK_T_IN)) return 0;
+  for (unsigned i=0;i<512;i++) if (blk_backend.sector[i]!=in[i]) return 0;
+  return 1;
+}
+
 /* Fault-context variant: never sleeps on an interrupt and never blocks on
    the queue lock. A faulting kernel cannot assume a live interrupt subsystem,
    so completion is polled from the used ring; if another context holds the

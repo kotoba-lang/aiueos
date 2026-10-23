@@ -250,11 +250,12 @@ device_result_link=
 # signs the exchange hash H with it (ADR-0107). Listener+sign measured at
 # 1,043,688 bytes -- under the 1 MiB ceiling, so ADR-0105's separation is
 # lifted for the SSH build (the KAT keeps its own flag for the KAT code only).
+# ADR-0270: the guest-browser build signs and verifies the lock's passkey ceremony, so it links the sign and public objects too.
 if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ] ||
-   [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
+   [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ] || [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
 fi
-if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] ||
+if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] || [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ] ||
    [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ]; then
   ecdsa_public_link="$kotoba_ecdsa_public_object"
 fi
@@ -1147,7 +1148,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_frame2
   e753f2658573c2c681e60e1c37cd7c802d65925aa055cf01b734f9eefc5b506c \
   kotoba_aiueos_browser_frame2
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_ime_object" \
-  4d71702a08daebfcf02d0aee2db451acd904cf53999e81b7fec64ee2436e0a18 \
+  52ef6924472cded523d80c9f9dd7c2ad533bb58446240028424e08462bdbbba7 \
   kotoba_aiueos_browser_key
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_damage_object" \
   5dc5c33880e39b2a656d701230156963b604f04c765298379c8d479d59745ecc \
@@ -1160,7 +1161,12 @@ if [ -n "${AIUEOS_EXTERNAL_KERNEL_ELF:-}" ]; then
     6d14f1ab0dc8c296a25a3b41a774423a829239eb "$out/native-kernel-receipt.json"
   cp "$AIUEOS_EXTERNAL_KERNEL_ELF" "$kernel"
 else
-zig cc -target x86_64-freestanding-none -std=c11 -O2 \
+# ADR-0270: the low region (kernel/linker.ld, 0x1f4000) has no room for the passkey's ECDSA sign and public objects at -O2; the guest-browser
+# build, which carries the desktop stages, compiles main.c for size. Every other build is unchanged.
+kernel_main_opt=-O2
+# -fno-builtin: -Os turns clear loops into memset/memcpy calls the freestanding kernel does not define.
+if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then kernel_main_opt="-Os -fno-builtin -DAIUEOS_SIZE_BUILD"; fi
+zig cc -target x86_64-freestanding-none -std=c11 $kernel_main_opt \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
   $qwen35_smp_cflags $qwen35_parity_cflags \

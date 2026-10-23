@@ -1074,6 +1074,16 @@
      (fr "f7 down" s4 true) (fr "f7 up" s4 true)
      (fr "f7 down" s4 false) (fr "f7 up" s4 false)]))
 
+;; ADR-0270: the passkey stage, after the notification stage, in the same session. Ctrl+Alt+L locks the screen (the lock screen of ADR-0258);
+;; F3 asks for a passkey of another device -- it does not verify against this device's public point, so the lock stays and the red bar
+;; shows; F4 asks for this device's passkey -- it verifies and the session opens as it was.
+(def passkey-frames
+  (let [base (second (last layout-frames))
+        locked (assoc base :locked true :pin 0)
+        denied (assoc locked :denied true)]
+    [["ctrl down" base] ["alt down" base] ["l down" locked] ["l up" locked] ["alt up" locked] ["ctrl up" locked]
+     ["f3 down" denied] ["f3 up" denied] ["f4 down" base] ["f4 up" base]]))
+
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
 ;; press path as the pointer. F6 F6 puts the ring on launcher button 2 and Enter opens window 2; F6 four times
@@ -1419,6 +1429,11 @@
           :let [ops (frame scene)
                 c (census ops)]]
     (println (str "notify-frame n=" (inc i) " " ev " notes=" notes " panel=" panel
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
+  (doseq [[i [ev scene]] (map-indexed vector passkey-frames)
+          :let [ops (frame scene)
+                c (census ops)]]
+    (println (str "passkey-frame n=" (inc i) " " ev " locked=" (if (:locked scene) 1 0) " denied=" (if (:denied scene) 1 0)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector ring-frames)
           :let [ops (frame scene)

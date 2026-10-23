@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -2010,6 +2010,70 @@
       {:green? true :exit 0 :reason :guest-browser-notify
        :leftover [:raised-by-a-test-hook-not-a-real-app :keyboard-only :four-entries-seven-characters :no-timeout :no-sound :draw-list-not-pixels]})))
 
+;; Guest browser device-bound passkey (ADR-0270): after the notification stage the host locks the screen (Ctrl+Alt+L), presses F3 (a passkey
+;; made on another device) and F4 (this device's passkey). C runs a WebAuthn-shaped ceremony each time -- a fresh challenge, a signature with
+;; the key, a verification against the public point REGISTERED on this device's volume (the key is made the first time it is needed and kept
+;; in sector 1035) -- and the verdict goes back to the lock as the PIN's does. The kernel prints AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=
+;; created= pub=<8 bytes of SHA-256 of the public point>, AIUEOS_GUEST_BROWSER_PASSKEY_TRY n= key= signed= verified= session=, and
+;; AIUEOS_GUEST_BROWSER_PASSKEY n= key= locked= denied= ops= text-px= hash= for the 10 key events. Green needs the notification gate green on
+;; the same serial, every frame equal to browser-frame-model.cljk's ("passkey-frame"), and, apart from it: the other device's passkey
+;; signed but did NOT verify (no session), this device's verified and opened a session (16 hex digits), and the screen is locked
+;; between the two and open after the second.
+
+(def ^:private passkey-want
+  [{:n 1 :key 117 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 2 :key 225 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 3 :key 153 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 4 :key 152 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 5 :key 224 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 6 :key 116 :locked 1 :denied 0 :ops 30 :px 33 :hash "921cb55f"}
+   {:n 7 :key 245 :locked 1 :denied 1 :ops 31 :px 33 :hash "921cb55f"}
+   {:n 8 :key 244 :locked 1 :denied 1 :ops 31 :px 33 :hash "921cb55f"}
+   {:n 9 :key 249 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 10 :key 248 :locked 0 :denied 0 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- passkey-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY n=(\d+) key=(\d+) locked=(\d) denied=(\d) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key locked denied ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :locked (parse-long locked) :denied (parse-long denied)
+                :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn- passkey-tries [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_TRY n=(\d+) key=(device|other-device) signed=(\d) verified=(\d) session=([0-9a-f]{16}|none)\s*$" (or s ""))
+       (mapv (fn [[_ n key signed verified session]]
+               {:n (parse-long n) :key key :signed (parse-long signed) :verified (parse-long verified) :session session}))))
+
+(defn guest-browser-passkey-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (passkey-lines serial)
+        tries (passkey-tries serial)
+        notify (guest-browser-notify-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? notify))
+      (assoc notify :reason :no-notify :leftover (into [:no-notify] (:leftover notify)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-passkey-absent :leftover [:guest-browser-passkey-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=\d pub=[0-9a-f]{16}\s*$" (or serial "")))
+      {:green? false :exit 1 :reason :no-registered-device-key :leftover [:no-registered-device-key]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_PASSKEY_OK events=10 tries=2 accepted=1\s*$" (or serial "")))
+      {:green? false :exit 1 :reason :passkey-ok-missing :leftover [:passkey-ok-missing]}
+      (not= ls passkey-want)
+      {:green? false :exit 1 :reason :passkey-differs-from-model :leftover [:passkey-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) passkey-want)))}
+      ;; the ceremony, by name (independent of the frame table)
+      (not= (mapv (juxt :key :signed :verified) tries) [["other-device" 1 0] ["device" 1 1]])
+      {:green? false :exit 1 :reason :other-device-passkey-not-refused-or-own-not-verified :leftover [:other-device-passkey-not-refused-or-own-not-verified]}
+      (not (and (= "none" (:session (first tries))) (re-matches #"[0-9a-f]{16}" (:session (second tries)))))
+      {:green? false :exit 1 :reason :session-id-wrong :leftover [:session-id-wrong]}
+      (not (and (= [0 0] [(:locked (nth ls 1)) (:denied (nth ls 1))]) (= 1 (:locked (nth ls 5))) (= [1 1] [(:locked (nth ls 7)) (:denied (nth ls 7))])
+                (= [0 0] [(:locked (nth ls 9)) (:denied (nth ls 9))])))
+      {:green? false :exit 1 :reason :lock-state-wrong :leftover [:lock-state-wrong]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-passkey
+       :leftover [:private-key-in-the-clear-on-the-volume :no-secure-element :the-other-device-is-a-test-key :user-presence-is-the-key-press-only
+                  :no-counter-no-attestation :draw-list-not-pixels]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2480,6 +2544,10 @@
     "guest-browser-notify" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_TEST_NET" "1"
                             "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0270: the passkey stage follows the notification stage; its gate needs the notification gate (and so the clock and layout gates).
+    "guest-browser-passkey" {"AIUEOS_GUEST_BROWSER" "1"
+                             "AIUEOS_TEST_NET" "1"
+                             "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2531,6 +2599,7 @@
     "guest-browser-clock" (guest-browser-clock-result opts)
     "guest-browser-layout" (guest-browser-layout-result opts)
     "guest-browser-notify" (guest-browser-notify-result opts)
+    "guest-browser-passkey" (guest-browser-passkey-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2583,6 +2652,7 @@
     "guest-browser-clock" "AIUEOS_GUEST_BROWSER_CLOCK"
     "guest-browser-layout" "AIUEOS_GUEST_BROWSER_LAYOUT"
     "guest-browser-notify" "AIUEOS_GUEST_BROWSER_NOTIFY"
+    "guest-browser-passkey" "AIUEOS_GUEST_BROWSER_PASSKEY"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2635,6 +2705,7 @@
     "guest-browser-clock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLOCK_OK"
     "guest-browser-layout" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAYOUT_OK"
     "guest-browser-notify" "AIUEOS_COMPOSITOR_GUEST_BROWSER_NOTIFY_OK"
+    "guest-browser-passkey" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PASSKEY_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"
