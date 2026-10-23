@@ -760,6 +760,27 @@
         b (+ 5 (* i 5))]
     (press-at (- (+ (w s (+ b 1)) (w s (+ b 3))) 36) (+ (w s (+ b 2)) 14))))
 
+;; ADR-0256: Alt+- (evdev 12) presses the focused window's minimize control as a pointer press at
+;; its centre (x + w - 56, y + 14) through browser-reduce, when the control exists: a window at
+;; least 200 wide with a launcher while two or more windows are visible.
+(defn vis-n [s n k]
+  (if (>= k n) 0
+    (+ (if (= (bit-and (w s 31) (mbit (w s (+ 5 (* k 5))))) 0) 1 0)
+       (vis-n s n (+ k 1)))))
+
+(defn min-key-ok [s]
+  (if (= (w s 431) 0) 0
+    (if (= (w s 31) 0) 0
+      (let [i (idx s (w s 1) 0 (w s 2))]
+        (if (< i 0) 0
+          (if (< (w s (+ 8 (* i 5))) 200) 0
+            (if (< (vis-n s (w s 1) 0) 2) 0 1)))))))
+
+(defn min-key-press [s]
+  (let [i (idx s (w s 1) 0 (w s 2))
+        b (+ 5 (* i 5))]
+    (press-at (- (+ (w s (+ b 1)) (w s (+ b 3))) 56) (+ (w s (+ b 2)) 14))))
+
 (defn kbd-act [s code]
   (if (= (composing s) 1) 0
     (if (= code 28) (if (= (target-ok s (w s 2032)) 1) 1 0)
@@ -777,12 +798,13 @@
       (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (quot ev 4) 64) (ring-move s)
       (if (= (quot ev 4) 87) (if (= (max-key-ok s) 1) (max-key-press s) 0)
+      (if (= (if (= (quot ev 4) 12) (min-key-ok s) 0) 1) (min-key-press s)
       (if (= (kbd-act s (quot ev 4)) 1) (kbd-answer s (quot ev 4))
       (if (= (wm-key s (quot ev 4)) 1) (+ 256 (first-vis s (w s 1) 0))
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r))))))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be
