@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### storage: backup and restore of the user's records (ADR-0271)
+- A four-sector door (1034..1037) and a stage that copies the settings and passkey records to backup sectors, wipes the originals, restores
+  them and checks them byte for byte (SHA-256), the settings and the key's public point. `guest-browser-backup` gates it.
+
 ### desktop: a device-bound passkey opens the lock (ADR-0270)
 - A P-256 device key (from the virtio-rng, kept with its public point in sector 1035) signs a fresh challenge on the lock screen and the
   signature is verified against the registered public point; F4 is this device's passkey (the session opens), F3 a passkey of another

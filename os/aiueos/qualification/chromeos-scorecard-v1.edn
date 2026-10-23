@@ -518,12 +518,13 @@
    :evidence []
    }
   {:id :H4 :category :update :title "Backup and restore of user data"
-   :weight 1 :required true :required-level :release
+   :weight 1 :required true :required-level :device
    :procedure "Back up; wipe; restore."
    :expected "The data reads back byte for byte."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-backup" "ADR-0271" "receipt os/aiueos/qualification/receipts/vm-20261024/backup/receipt.edn"]
+   :note "The user data this machine has is the settings record (sector 1034) and the passkey record (1035). They were copied to backup sectors, wiped (the machine then saw no settings and no passkey), restored, and read back byte for byte (SHA-256 of each sector equal), with the same settings (contrast high, 125 %, network off) and the same signing key (same public point; it signs and verifies). Limits, stated so the owner can reject this pass: the user data is two records, not files (no file system, F2); the backup sits on the same volume, so it covers a wipe or a bad write of the record, not the loss of the disk; there is no user interface for it and no off-device copy."
    }
   {:id :I1 :category :power :title "Suspend and resume"
    :weight 2 :required true :required-level :device

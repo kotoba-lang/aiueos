@@ -654,6 +654,30 @@ int aiueos_passkey_sector_write(const uint8_t *in) {
   return 1;
 }
 
+/* ADR-0271: backup and restore of the user's records. The user data of this machine is the settings record (sector 1034) and the passkey
+   record (1035); their backup copies live in 1036 and 1037. Only these four sectors can be reached through this door; a read is a read, a
+   write is read back and compared. */
+static int user_sector_ok(uint32_t sector) { return sector >= 1034u && sector <= 1037u; }
+int aiueos_user_sector_read(uint32_t sector, uint8_t *out) {
+  if (!blk_backend.ready || !out || !user_sector_ok(sector) || sector >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_IN,sector)) return 0;
+  for (unsigned i=0;i<512;i++) out[i]=blk_backend.sector[i];
+  return 1;
+}
+int aiueos_user_sector_write(uint32_t sector, const uint8_t *in) {
+  if (!blk_backend.ready || !in || !user_sector_ok(sector) || sector >= blk_backend.capacity) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=in[i];
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_OUT,sector)) return 0;
+  for (unsigned i=0;i<512;i++) blk_backend.sector[i]=0;
+  if (!virtio_blk_sector_io(blk_backend.request,blk_backend.sector,blk_backend.status,blk_backend.desc,blk_backend.avail,
+      blk_backend.used,blk_backend.doorbell,&blk_backend.submitted,VIRTIO_BLK_T_IN,sector)) return 0;
+  for (unsigned i=0;i<512;i++) if (blk_backend.sector[i]!=in[i]) return 0;
+  return 1;
+}
+
 /* Fault-context variant: never sleeps on an interrupt and never blocks on
    the queue lock. A faulting kernel cannot assume a live interrupt subsystem,
    so completion is polled from the used ring; if another context holds the
