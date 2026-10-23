@@ -25,7 +25,8 @@
    "guest-browser-keyboard-activate"
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
-   "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"])
+   "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
+   "guest-browser-settings"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1468,6 +1469,63 @@
       {:green? true :exit 0 :reason :guest-browser-sign-out
        :leftover [:memory-read-from-the-surface-not-the-ram :clipboard-not-cleared :test-pin-hash-in-the-image :draw-list-not-pixels]})))
 
+;; Guest browser settings (ADR-0260): the high-contrast choice survives a reboot. The gate boots the SAME volume
+;; twice (the harness keeps the first serial as :serial1). First boot: no record on the volume, the host presses
+;; F10, Kotoba flips the palette (surface word 2039) and C writes the choice to the settings sector with readback.
+;; Second boot: the settings stage reads the record, applies it, and the host sends only Alt -- the frame is
+;; high-contrast because the volume said so. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid= contrast=
+;; and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= text-px= hash= written= stored=. Green needs the sign-out gate
+;; green on the second serial, both boots' frames equal to browser-frame-model.cljk's ("settings-frame"), and, apart
+;; from the model: boot one starts with no record (valid=0) and ends having written the choice (stored=1); boot two
+;; starts with the record (valid=1 contrast=1), its keys are Alt and not F10, it writes nothing, and its frames are
+;; the frames boot one drew.
+
+(def ^:private settings-want
+  [{:n 1 :hc 1 :ops 72 :px 582 :hash "60620c8b"} {:n 2 :hc 1 :ops 72 :px 582 :hash "60620c8b"}])
+
+(defn- settings-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
+       (mapv (fn [[_ n key hc ops px hash written stored]]
+               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :ops (parse-long ops) :px (parse-long px)
+                :hash hash :written (parse-long written) :stored (if (= stored "none") "none" (parse-long stored))}))))
+
+(defn- settings-boot [s]
+  (when-let [[_ v c] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+)" (or s ""))]
+    [(parse-long v) (parse-long c)]))
+
+(defn guest-browser-settings-result
+  [{:keys [serial serial1 qemu-unmeasured?] :as opts}]
+  (let [l1 (settings-lines serial1)
+        l2 (settings-lines serial)
+        shape (fn [ls] (mapv #(select-keys % [:n :hc :ops :px :hash]) ls))
+        sign-out (guest-browser-sign-out-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? sign-out))
+      (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
+      (or (empty? l1) (empty? l2)) {:green? false :exit 1 :reason :guest-browser-settings-absent
+                                    :leftover [:guest-browser-settings-absent]}
+      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial1 ""))
+                (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial ""))))
+      {:green? false :exit 1 :reason :settings-ok-missing :leftover [:settings-ok-missing]}
+      (not= (settings-boot serial1) [0 0])
+      {:green? false :exit 1 :reason :first-boot-had-a-record :leftover [:first-boot-had-a-record]}
+      (not= (settings-boot serial) [1 1])
+      {:green? false :exit 1 :reason :second-boot-did-not-read-the-choice :leftover [:second-boot-did-not-read-the-choice]}
+      (not= (shape l1) settings-want)
+      {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]}
+      (not= (shape l2) settings-want)
+      {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]}
+      (not= (mapv (juxt :written :stored) l1) [[1 1] [1 1]])
+      {:green? false :exit 1 :reason :choice-not-written :leftover [:choice-not-written]}
+      (not= (mapv :key l1) [273 272])
+      {:green? false :exit 1 :reason :first-boot-did-not-press-f10 :leftover [:first-boot-did-not-press-f10]}
+      (or (some #{273 272} (map :key l2)) (not= (mapv (juxt :written :stored) l2) [[0 1] [0 1]]))
+      {:green? false :exit 1 :reason :second-boot-was-told-or-wrote :leftover [:second-boot-was-told-or-wrote]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-settings
+       :leftover [:contrast-only :no-settings-window :no-scale :no-network :restored-at-the-settings-stage-not-at-boot]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -1911,6 +1969,9 @@
     ;; ADR-0259: the sign-out chord and the second sign-in come after the lock events.
     "guest-browser-sign-out" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0260: two boots of the same volume (the runner sets the phase and keeps the volume).
+    "guest-browser-settings" {"AIUEOS_GUEST_BROWSER" "1"
+                              "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1955,6 +2016,7 @@
     "guest-browser-minimize" (guest-browser-minimize-result opts)
     "guest-browser-screen-lock" (guest-browser-screen-lock-result opts)
     "guest-browser-sign-out" (guest-browser-sign-out-result opts)
+    "guest-browser-settings" (guest-browser-settings-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2000,6 +2062,7 @@
     "guest-browser-minimize" "AIUEOS_GUEST_BROWSER_MIN"
     "guest-browser-screen-lock" "AIUEOS_GUEST_BROWSER_LOCK"
     "guest-browser-sign-out" "AIUEOS_GUEST_BROWSER_SIGNOUT"
+    "guest-browser-settings" "AIUEOS_GUEST_BROWSER_SETTINGS"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2045,6 +2108,7 @@
     "guest-browser-minimize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MINIMIZE_OK"
     "guest-browser-screen-lock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCREEN_LOCK_OK"
     "guest-browser-sign-out" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SIGN_OUT_OK"
+    "guest-browser-settings" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SETTINGS_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

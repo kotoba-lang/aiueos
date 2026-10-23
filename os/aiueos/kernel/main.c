@@ -2186,6 +2186,74 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
   return 0;
 }
 
+/* ADR-0260: the desktop's settings persist. The stage reads the settings record (pci.c, one sector on the
+   object-store volume), applies a stored high-contrast choice, and writes the record again whenever Kotoba's
+   choice (surface word 2039) differs from what is stored, with readback. The host sends two keys: F10 down and
+   up on the first boot (the choice goes on and is written), Alt down and up on the second boot of the same
+   volume (nothing changes the choice, and the frame is high-contrast because the record said so). The stage
+   itself is boot-agnostic; the classifier knows which boot it read. */
+extern int aiueos_settings_read(uint32_t *);
+extern int aiueos_settings_write(uint32_t);
+
+static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                  uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t stored = 0, last = 0xffffffffU, written = 0, se = 0, sidle = 0;
+  int valid = aiueos_settings_read(&stored);
+  serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=");
+  serial_decimal(valid ? 1U : 0U);
+  serial_string(" contrast=");
+  serial_decimal(valid ? stored : 0U);
+  serial_string("\r\n");
+  if (valid) { surface[2039] = stored; last = stored; }
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_GO events=2\r\n");
+  while (se < 2 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    (void)kr;
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    if (surface[2039] < 2U && surface[2039] != last && aiueos_settings_write(surface[2039])) {
+      last = surface[2039];
+      written++;
+    }
+    se++;
+    serial_string("AIUEOS_GUEST_BROWSER_SETTINGS n=");
+    serial_decimal(se);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" hc=");
+    serial_decimal(surface[2039]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string(" written=");
+    serial_decimal(written);
+    serial_string(" stored=");
+    if (last > 1U) serial_string("none"); else serial_decimal(last);
+    serial_string("\r\n");
+  }
+  if (se == 2) {
+    debug_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_SETTINGS leftover=events-missing\r\n");
+  return 0;
+}
+
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
@@ -5820,7 +5888,8 @@ qwen_runtime_boot_complete:
                                               if (browser_selection_stage(surface, font, font_length, dict, dict_length))
                                                 if (browser_clipboard_stage(surface, font, font_length, dict, dict_length))
                                                   if (browser_damage_stage(surface, font, font_length, dict, dict_length))
-                                                    browser_uiux_stage(surface, font, font_length, dict, dict_length);
+                                                    if (browser_uiux_stage(surface, font, font_length, dict, dict_length))
+                                                      browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

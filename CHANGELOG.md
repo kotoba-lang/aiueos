@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the contrast choice survives a reboot (ADR-0260)
+- A settings record (sector 1034 of the object-store volume, readback on write) holds the high-contrast choice;
+  `guest-browser-settings` boots the same volume twice to prove it. The first persistent write the desktop makes.
+
 ### desktop: signing out zeroes the session (ADR-0259)
 - Ctrl+Alt+Q zeroes the session words, leaves one fresh window 1 and locks; the PIN signs in to the clean session.
   `guest-browser-sign-out` gates it (16 more events) and reads the zeroed words back.

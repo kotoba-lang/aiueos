@@ -854,6 +854,22 @@ while time.time() < end:
                 recv_obj()
                 globals()["uiux_sent"] = k + 1
                 log("uiux event " + str(k + 1) + " sent")
+        # ADR-0260: two keys after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
+        # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
+        # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
+        # stored record says so.
+        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < 2:
+            k = globals().get("settings_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                phase = os.environ.get("AIUEOS_SETTINGS_PHASE", "1")
+                qc = "f10" if phase == "1" else "alt"
+                ev = [{"type": "key", "data": {"down": k == 0, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["settings_sent"] = k + 1
+                log("settings event " + str(k + 1) + " sent")
         # Wheel scroll (ADR-0238): a press on launcher button 4 at (360, 14),
         # the release, a wheel notch toward the end there (over no window), a
         # move to (300, 300), six notches toward the end, seven toward the

@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-settings
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-settings"]
+  :doc "Guest browser settings (ADR-0260) on KERNEL.ELF under QEMU, two boots of the same volume: F10 turns the high-contrast palette on and C writes the choice to the settings sector with readback; the second boot reads the record and draws the high-contrast frame having been sent only Alt; the frames equal browser-frame-model.cljk's."}
  :browser-desktop-sign-out
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-sign-out"]
   :doc "Guest browser sign out (ADR-0259) on KERNEL.ELF under QEMU, after the lock events: Ctrl+Alt+Q zeroes the session (window bodies, scroll offsets, saved maximize rects, selection, minimized register), leaves one fresh window 1 and locks; the PIN signs in to the clean session; the kernel reads the session words back as zero and the frames equal browser-frame-model.cljk's."}
