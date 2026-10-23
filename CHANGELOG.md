@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: Alt+- minimizes the focused window (ADR-0256)
+- browser-ime answers the minimize control's press for Alt+- when the control exists; the same action path as the pointer.
+  `guest-browser-minimize` grew to sixteen events.
+
 ### desktop: a tray of minimized windows (ADR-0255)
 - While a window is minimized, a titled 120 x 24 button per minimized window sits bottom left;
   a press restores it (browser-reduce `tray-at`, browser-frame2 `tray`). `guest-browser-minimize`

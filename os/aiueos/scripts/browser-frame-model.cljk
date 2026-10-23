@@ -738,7 +738,12 @@
        ;; ADR-0255: minimized again, the tray of minimized windows lists it by title, a press on
        ;; its button at (60, 780) restores it
        ["min-press-2" (assoc (at mn [456 146]) :down true)] ["release" (at mn [456 146])]
-       ["tray-restore" (assoc (at base [60 780]) :down true)] ["release" (at base [60 780])]])))
+       ["tray-restore" (assoc (at base [60 780]) :down true)] ["release" (at base [60 780])]
+       ;; ADR-0256: Alt down, '-' down (Alt+- presses window 1's minimize control: minimized, focus 4),
+       ;; '-' up, Alt up, then the tray button restores it
+       ["alt" (at base [60 780])] ["alt-minus" (at mn [60 780])] ["minus-up" (at mn [60 780])]
+       ["alt-up" (at mn [60 780])]
+       ["tray-restore-2" (assoc (at base [60 780]) :down true)] ["release" (at base [60 780])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct

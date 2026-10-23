@@ -1249,7 +1249,13 @@
    [41 1 "456,146" 4 4 "341" 140 1197 "fb35dcd0"]
    [42 4 "456,146" 0 4 "341" 140 1197 "fb35dcd0"]
    [43 1 "60,780" 1 1 "341" 192 2330 "438d5f21"]
-   [44 4 "60,780" 0 1 "341" 192 2330 "438d5f21"]])
+   [44 4 "60,780" 0 1 "341" 192 2330 "438d5f21"]
+   [45 0 "60,780" "none" 1 "341" 192 2330 "438d5f21"]
+   [46 0 "60,780" 4 4 "341" 140 1197 "6567a294"]
+   [47 0 "60,780" "none" 4 "341" 140 1197 "6567a294"]
+   [48 0 "60,780" "none" 4 "341" 140 1197 "6567a294"]
+   [49 1 "60,780" 1 1 "341" 192 2330 "438d5f21"]
+   [50 4 "60,780" 0 1 "341" 192 2330 "438d5f21"]])
 
 (defn- min-line [[n src at red focus stack ops px hash]]
   (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=" src " at=" at " reduce=" red
@@ -1257,11 +1263,12 @@
 
 (def ^:private min-reg-lines
   (apply str (for [[n r c d y] [[35 1 2 1 1] [36 1 2 1 1] [37 1 2 1 1] [38 1 2 1 1] [39 0 3 0 0] [40 0 3 0 0]
-                                [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]]]
+                                [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]
+                                [45 0 3 0 0] [46 1 2 1 1] [47 1 2 1 1] [48 1 2 1 1] [49 0 3 0 0] [50 0 3 0 0]]]
                (str "AIUEOS_GUEST_BROWSER_MIN n=" n " reg=" r " minctl=" c " dockbar=" d " tray=" y "\r\n"))))
 
 (def ^:private minimize-ok
-  "AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=10 minimized=1 hit-through=4 restored=1 tray=restored\r\n")
+  "AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=16 minimized=1 hit-through=4 restored=1 tray=restored alt-minus=minimized\r\n")
 
 (deftest guest-browser-minimize-classifier
   (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok

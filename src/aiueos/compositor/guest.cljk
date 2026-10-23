@@ -1038,7 +1038,15 @@
      (m 41 1 "456,146" 4 4 "341" 140 1197 "fb35dcd0")
      (m 42 4 "456,146" 0 4 "341" 140 1197 "fb35dcd0")
      (m 43 1 "60,780" 1 1 "341" 192 2330 "438d5f21")
-     (m 44 4 "60,780" 0 1 "341" 192 2330 "438d5f21")]))
+     (m 44 4 "60,780" 0 1 "341" 192 2330 "438d5f21")
+     ;; ADR-0256: Alt+- minimizes from the keyboard (the answer is the press at the control's centre
+     ;; handed to browser-reduce: 4, the window now focused), then the tray restores it
+     (m 45 0 "60,780" "none" 1 "341" 192 2330 "438d5f21")
+     (m 46 0 "60,780" 4 4 "341" 140 1197 "6567a294")
+     (m 47 0 "60,780" "none" 4 "341" 140 1197 "6567a294")
+     (m 48 0 "60,780" "none" 4 "341" 140 1197 "6567a294")
+     (m 49 1 "60,780" 1 1 "341" 192 2330 "438d5f21")
+     (m 50 4 "60,780" 0 1 "341" 192 2330 "438d5f21")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1223,12 +1231,13 @@
 ;; the frame before the minimize had.
 
 (def ^:private min-want [[35 1 2 1 1] [36 1 2 1 1] [37 1 2 1 1] [38 1 2 1 1] [39 0 3 0 0] [40 0 3 0 0]
-                         [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]])
+                         [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]
+                         [45 0 3 0 0] [46 1 2 1 1] [47 1 2 1 1] [48 1 2 1 1] [49 0 3 0 0] [50 0 3 0 0]])
 
 (defn guest-browser-minimize-result
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
-        want (subvec max-want 16 26)
+        want (subvec max-want 16 32)
         parse (fn [[_ n src at red windows focus stack rect ops px hash]]
                 {:n (parse-long n) :src (parse-long src) :at at
                  :reduce (if (= red "none") "none" (parse-long red))
@@ -1247,7 +1256,7 @@
       (assoc pressed :reason :no-pressed-state :leftover (into [:no-pressed-state] (:leftover pressed)))
       (and (empty? got) (empty? mins)) {:green? false :exit 1 :reason :guest-browser-minimize-absent
                                         :leftover [:guest-browser-minimize-absent]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=10 minimized=1 hit-through=4 restored=1 tray=restored" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=16 minimized=1 hit-through=4 restored=1 tray=restored alt-minus=minimized" s))
       {:green? false :exit 1 :reason :minimize-ok-missing :leftover [:minimize-ok-missing]}
       (not= got want)
       {:green? false :exit 1 :reason :minimize-differs-from-model :leftover [:minimize-differs-from-model]
@@ -1267,7 +1276,7 @@
       {:green? false :exit 1 :reason :tray-restore-differs-from-before :leftover [:tray-restore-differs-from-before]}
       :else
       {:green? true :exit 0 :reason :guest-browser-minimize
-       :leftover [:tray-lists-minimized-only :no-minimize-animation :no-keyboard-minimize :control-hidden-with-one-window]})))
+       :leftover [:tray-lists-minimized-only :no-minimize-animation :alt-minus-only :control-hidden-with-one-window]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
