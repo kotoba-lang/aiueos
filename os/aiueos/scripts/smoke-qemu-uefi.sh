@@ -919,6 +919,20 @@ while time.time() < end:
                 recv_obj()
                 globals()["layout_sent"] = k + 1
                 log("layout event " + str(k + 1) + " sent")
+        # ADR-0268: twelve key events for the notification stage, after the layout stage: F8 (dismiss the newest), F7 F7 (open and
+        # close the list), F8, F7 F7, each down then up, each after the guest's line for the one before (the stage's first
+        # three lines are its own frames: the baseline and the two posts).
+        if typing and b"AIUEOS_GUEST_BROWSER_NOTIFY_GO" in serial_now and globals().get("notify_sent", 0) < 12:
+            k = globals().get("notify_sent", 0)
+            if (k == 0 and b"AIUEOS_GUEST_BROWSER_NOTIFY n=3 " in serial_now) or (k > 0 and (b"AIUEOS_GUEST_BROWSER_NOTIFY n=%d " % (k + 3)) in serial_now):
+                time.sleep(0.5)
+                qc = ("f8", "f7", "f7", "f8", "f7", "f7")[k // 2]
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["notify_sent"] = k + 1
+                log("notify event " + str(k + 1) + " sent")
         # ADR-0260/0265: two keys (second boot) or six (first boot) after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the

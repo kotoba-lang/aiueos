@@ -1002,6 +1002,61 @@
           0)
         (if (= (sw s 2046) 0) 0 (arrow s (- (sw s 2046) 1) (sw s 2047) 0)))))
 
+;; ADR-0268: notifications. Words 1971..2002 are four entries of eight words: the state (0 empty, 1 shown as a toast,
+;; 2 dismissed, kept in the list) and up to seven code points of text (0 ends it). Word 2003 is the list panel (0 closed,
+;; 1 open). A toast is a 208 x 26 #fff3c4 box at (vw - 216, 36 + 30 slot) with the text in the ink from (vw - 208, 41 + 30 slot);
+;; the shown entries stack downward in entry order. The open panel replaces the toasts: a white box (vw - 216, 36) 208 wide
+;; and 8 + 22 m high for the m entries that are not empty, each row at y 42 + 22 row, a '*' at vw - 208 for an entry still
+;; shown and the text from vw - 198.
+(defn note-glyph [s f cp x y]
+  (let [gi (glyph-of s f cp)
+        gw (glyph-width s f gi)]
+    (do (put-glyph s x y gi gw) (+ x gw))))
+
+(defn note-text [s f base i x y]
+  (if (>= i 7) 0
+    (let [c (sw s (+ base (+ i 1)))]
+      (if (= c 0) 0
+        (let [x2 (note-glyph s f c x y)]
+          (note-text s f base (+ i 1) x2 y))))))
+
+(defn toast [s f vw slot base]
+  (do (sput s 422 16774084)
+      (put-rect s (- vw 216) (+ 36 (* 30 slot)) 208 26)
+      (sput s 422 (ink s))
+      (note-text s f base 0 (- vw 208) (+ 41 (* 30 slot)))))
+
+(defn toasts [s f vw k slot]
+  (if (>= k 4) 0
+    (let [base (+ 1971 (* 8 k))]
+      (if (= (sw s base) 1)
+        (do (toast s f vw slot base)
+            (toasts s f vw (+ k 1) (+ slot 1)))
+        (toasts s f vw (+ k 1) slot)))))
+
+(defn panel-count [s k]
+  (if (>= k 4) 0
+    (+ (if (= (sw s (+ 1971 (* 8 k))) 0) 0 1) (panel-count s (+ k 1)))))
+
+(defn panel-rows [s f vw k row]
+  (if (>= k 4) 0
+    (let [base (+ 1971 (* 8 k))
+          st (sw s base)]
+      (if (= st 0) (panel-rows s f vw (+ k 1) row)
+        (let [y (+ 42 (* 22 row))]
+          (do (if (= st 1) (note-glyph s f 42 (- vw 208) y) 0)
+              (note-text s f base 0 (- vw 198) y)
+              (panel-rows s f vw (+ k 1) (+ row 1))))))))
+
+(defn notify-layer [s f vw]
+  (if (= (sw s 2003) 1)
+    (let [m (panel-count s 0)]
+      (do (sput s 422 16777215)
+          (put-rect s (- vw 216) 36 208 (+ 8 (* 22 m)))
+          (sput s 422 (ink s))
+          (panel-rows s f vw 0 0)))
+    (toasts s f vw 0 0)))
+
 (defn aiueos-browser-frame2 [s sb f fb]
   (if (= s 0) -1
     (if (= f 0) -1
@@ -1030,6 +1085,7 @@
                                   (emit s f 0)
                                   (dock s f vw vh)
                                   (tray s f 1 0 vh)
+                                  (notify-layer s f vw)
                                   (pointer s)))
                             (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
 

@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: notifications, toasts and a list (ADR-0268)
+- Surface words 1971..2003 carry four notification entries and a list flag; browser-frame2 draws toasts (or the list) above the windows;
+  F8 dismisses the newest toast, F7 opens and closes the list, a dismissed notification stays listed. `guest-browser-notify` raises two,
+  dismisses and lists them, every frame checked against the frame model.
+
 ### desktop: keyboard layouts US and JIS (ADR-0267)
 - F9 flips surface word 1970 between US and JIS; with the input method off the digit row and punctuation keys type, Shift picks the
   second character of a key and makes letters upper case. `guest-browser-layout` types the same physical keys on both layouts and
