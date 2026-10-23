@@ -1046,7 +1046,19 @@
      (m 47 0 "60,780" "none" 4 "341" 140 1197 "6567a294")
      (m 48 0 "60,780" "none" 4 "341" 140 1197 "6567a294")
      (m 49 1 "60,780" 1 1 "341" 192 2330 "438d5f21")
-     (m 50 4 "60,780" 0 1 "341" 192 2330 "438d5f21")]))
+     (m 50 4 "60,780" 0 1 "341" 192 2330 "438d5f21")
+     ;; ADR-0257: window 1 and then window 4 minimized: window 3 alone, its close control disabled;
+     ;; a press on it is refused; two tray presses restore window 1 and window 4
+     (m 51 1 "456,146" 4 4 "341" 140 1197 "fb35dcd0")
+     (m 52 4 "456,146" 0 4 "341" 140 1197 "fb35dcd0")
+     (m 53 1 "544,94" 3 3 "314" 101 1305 "dbbceb01")
+     (m 54 4 "544,94" 0 3 "314" 101 1305 "dbbceb01")
+     (m 55 1 "584,94" "refused" 3 "314" 101 1305 "2a0da509")
+     (m 56 4 "584,94" 0 3 "314" 101 1305 "2a0da509")
+     (m 57 1 "60,780" 1 1 "341" 154 2365 "ef498861")
+     (m 58 4 "60,780" 0 1 "341" 154 2365 "ef498861")
+     (m 59 1 "60,780" 4 4 "314" 191 1080 "6585b838")
+     (m 60 4 "60,780" 0 4 "314" 191 1080 "6585b838")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1230,25 +1242,29 @@
 ;; the window was answers a window that is not window 1, and the restored frame has the op count
 ;; the frame before the minimize had.
 
-(def ^:private min-want [[35 1 2 1 1] [36 1 2 1 1] [37 1 2 1 1] [38 1 2 1 1] [39 0 3 0 0] [40 0 3 0 0]
-                         [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]
-                         [45 0 3 0 0] [46 1 2 1 1] [47 1 2 1 1] [48 1 2 1 1] [49 0 3 0 0] [50 0 3 0 0]])
+(def ^:private min-want
+  [[35 1 2 1 1 0] [36 1 2 1 1 0] [37 1 2 1 1 0] [38 1 2 1 1 0] [39 0 3 0 0 0]
+   [40 0 3 0 0 0] [41 1 2 1 1 0] [42 1 2 1 1 0] [43 0 3 0 0 0] [44 0 3 0 0 0]
+   [45 0 3 0 0 0] [46 1 2 1 1 0] [47 1 2 1 1 0] [48 1 2 1 1 0] [49 0 3 0 0 0]
+   [50 0 3 0 0 0] [51 1 2 1 1 0] [52 1 2 1 1 0] [53 9 0 2 2 1] [54 9 0 2 2 1]
+   [55 9 0 2 2 1] [56 9 0 2 2 1] [57 8 2 1 1 0] [58 8 2 1 1 0] [59 0 3 0 0 0]
+   [60 0 3 0 0 0]])
 
 (defn guest-browser-minimize-result
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
-        want (subvec max-want 16 32)
+        want (subvec max-want 16 42)
         parse (fn [[_ n src at red windows focus stack rect ops px hash]]
                 {:n (parse-long n) :src (parse-long src) :at at
-                 :reduce (if (= red "none") "none" (parse-long red))
+                 :reduce (if (#{"none" "refused"} red) red (parse-long red))
                  :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
                  :ops (parse-long ops) :px (parse-long px) :hash hash})
-        all (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+        all (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|refused|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
                  (mapv parse))
         got (filterv #(>= (:n %) 35) all)
         by-n (into {} (map (juxt :n identity) all))
-        mins (mapv (fn [[_ n r c d t]] [(parse-long n) (parse-long r) (parse-long c) (parse-long d) (parse-long t)])
-                   (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MIN n=(\d+) reg=(\d+) minctl=(\d+) dockbar=(\d+) tray=(\d+)\s*$" s))
+        mins (mapv (fn [[_ n r c d t x]] [(parse-long n) (parse-long r) (parse-long c) (parse-long d) (parse-long t) (parse-long x)])
+                   (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MIN n=(\d+) reg=(\d+) minctl=(\d+) dockbar=(\d+) tray=(\d+) dis=(\d+)\s*$" s))
         pressed (guest-browser-pressed-state-result opts)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1256,7 +1272,7 @@
       (assoc pressed :reason :no-pressed-state :leftover (into [:no-pressed-state] (:leftover pressed)))
       (and (empty? got) (empty? mins)) {:green? false :exit 1 :reason :guest-browser-minimize-absent
                                         :leftover [:guest-browser-minimize-absent]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=16 minimized=1 hit-through=4 restored=1 tray=restored alt-minus=minimized" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=26 minimized=1 hit-through=4 restored=1 tray=restored alt-minus=minimized close-disabled=refused" s))
       {:green? false :exit 1 :reason :minimize-ok-missing :leftover [:minimize-ok-missing]}
       (not= got want)
       {:green? false :exit 1 :reason :minimize-differs-from-model :leftover [:minimize-differs-from-model]

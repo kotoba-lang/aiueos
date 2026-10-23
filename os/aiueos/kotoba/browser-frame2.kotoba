@@ -649,13 +649,20 @@
           (sput s 422 (icon-rgb s))
           (put-glyph s (+ (- (+ x w) 44) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
 
+;; ADR-0257: the close control of the only visible window is disabled (browser-reduce refuses that
+;; close): never hot or pressed, its glyph #9e9e9e (#707070 in the high-contrast palette), not the ink.
+(defn disabled-rgb [s] (if (= (hc s) 1) 7368816 10395294))
+
+(defn close-off [s]
+  (if (< (vis-count s (sw s 1) 0) 2) 1 0))
+
 (defn close-control [s f x y w]
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
           gw (glyph-width s f gi)]
-      (do (sput s 422 (ctl-rgb s (- (+ x w) 24) (+ y 6) 16 16))
+      (do (sput s 422 (if (= (close-off s) 1) (face-rgb s) (ctl-rgb s (- (+ x w) 24) (+ y 6) 16 16)))
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
-          (sput s 422 (ink s))
+          (sput s 422 (if (= (close-off s) 1) (disabled-rgb s) (ink s)))
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
 
 ;; --- pointer (ADR-0236) ---------------------------------------------------------

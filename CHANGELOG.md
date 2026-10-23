@@ -5,6 +5,9 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the close control of the only visible window is disabled (ADR-0257)
+- browser-frame2 draws it greyed and never hot; the refused press is measured. `guest-browser-minimize` is 26 events.
+
 ### desktop: Alt+- minimizes the focused window (ADR-0256)
 - browser-ime answers the minimize control's press for Alt+- when the control exists; the same action path as the pointer.
   `guest-browser-minimize` grew to sixteen events.
