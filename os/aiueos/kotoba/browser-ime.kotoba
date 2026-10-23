@@ -1173,6 +1173,19 @@
         (if (= code 1) (do (wp s 2030 0) (wp s 2026 0)) (wp s 2026 1))
         0))))
 
+;; ADR-0268: F8 (evdev 66) dismisses the newest notification still shown (it stays in the list), F7 (evdev 65) opens and closes
+;; the list. Neither is text; the answer is 0. The entries are surface words 1971..2002, four of eight words (browser-frame2.kotoba).
+(defn newest-shown [s k]
+  (if (< k 0) -1
+    (if (= (w s (+ 1971 (* 8 k))) 1) k (newest-shown s (- k 1)))))
+
+(defn note-dismiss [s]
+  (let [k (newest-shown s 3)]
+    (if (< k 0) 0 (do (wp s (+ 1971 (* 8 k)) 2) 0))))
+
+(defn note-panel [s]
+  (do (wp s 2003 (if (= (w s 2003) 1) 0 1)) 0))
+
 (defn press [s d ev]
   (if (= (bit-and ev 3) 2) (verdict s (quot ev 4))
   (if (= (quot ev 4) 56) (hold-alt s (bit-and ev 3))
@@ -1185,6 +1198,8 @@
       (if (= (lock-chord s (quot ev 4)) 1) (lock-now s)
       (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (quot ev 4) 67) (layout-toggle s)
+      (if (= (quot ev 4) 66) (note-dismiss s)
+      (if (= (quot ev 4) 65) (note-panel s)
       (if (= (quot ev 4) 64) (ring-move s)
       (if (= (quot ev 4) 87) (if (= (max-key-ok s) 1) (max-key-press s) 0)
       (if (= (if (= (quot ev 4) 12) (min-key-ok s) 0) 1) (min-key-press s)
@@ -1193,7 +1208,7 @@
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r)))))))))))))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

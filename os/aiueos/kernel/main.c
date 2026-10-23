@@ -2576,6 +2576,73 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
   return 1;
 }
 
+/* ADR-0268: the notification stage, after the layout stage. The stage plays the apps: it posts "Backup" and "Update"
+   into the notification entries (surface words 1971..2002, four of eight); F8 dismisses the newest one still shown, F7
+   opens and closes the list. Fifteen frames: the baseline, the two posts, then the twelve key events. */
+static void browser_notify_post(uint32_t *surface, const char *text) {
+  for (uint32_t k = 0; k < 4U; k++) {
+    uint32_t base = 1971U + 8U * k;
+    if (surface[base] == 0) {
+      uint32_t i = 0;
+      for (; i < 7U && text[i]; i++) surface[base + 1U + i] = (uint32_t)(uint8_t)text[i];
+      for (; i < 7U; i++) surface[base + 1U + i] = 0;
+      surface[base] = 1U;
+      return;
+    }
+  }
+}
+
+static int browser_notify_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0, shown = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_NOTIFY_GO events=12\r\n");
+  while (shown < 15U && sidle < 60000U) {
+    uint32_t key = 0, px = 0, hash = 0;
+    int64_t fo;
+    if (shown >= 3U) {
+      key = aiueos_keyboard_next_key(1024U);
+      if (!key) { sidle++; continue; }
+      sidle = 0;
+      if ((key >> 2) == 88U) continue;
+      (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    } else if (shown == 1U) browser_notify_post(surface, "Backup");
+    else if (shown == 2U) browser_notify_post(surface, "Update");
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    shown++;
+    if (shown > 3U) se++;
+    serial_string("AIUEOS_GUEST_BROWSER_NOTIFY n=");
+    serial_decimal(shown);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" notes=");
+    for (uint32_t k = 0; k < 4U; k++) serial_decimal(surface[1971U + 8U * k]);
+    serial_string(" panel=");
+    serial_decimal(surface[2003]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string("\r\n");
+  }
+  for (uint32_t i = 1971U; i <= 2003U; i++) surface[i] = 0;
+  if (shown == 15U) {
+    debug_string("AIUEOS_GUEST_BROWSER_NOTIFY_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_NOTIFY_OK events=12\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_NOTIFY leftover=events-missing\r\n");
+  return 0;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
@@ -6301,7 +6368,8 @@ qwen_runtime_boot_complete:
                                                           if (browser_edit_stage(surface, font, font_length, dict, dict_length))
                                                             if (browser_clock_stage(surface, font, font_length))
                                                               if (browser_layout_stage(surface, font, font_length, dict, dict_length))
-                                                                browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                                if (browser_notify_stage(surface, font, font_length, dict, dict_length))
+                                                                  browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

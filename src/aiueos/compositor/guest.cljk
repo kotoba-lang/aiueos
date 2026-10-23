@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1942,6 +1942,67 @@
       {:green? true :exit 0 :reason :guest-browser-layout
        :leftover [:us-and-jis-only :english-mode-only :no-compose-or-dead-keys :draw-list-not-pixels]})))
 
+;; Guest browser notifications (ADR-0268): after the layout stage the stage plays two apps that raise a notification ("Backup", then
+;; "Update"); both show as toasts. The host presses F8 (dismiss the newest shown), F7 (open the list), F7 (close it), F8, F7, F7. The kernel
+;; prints AIUEOS_GUEST_BROWSER_NOTIFY n= key= notes= panel= ops= text-px= hash= for the 15 frames (baseline, two posts, twelve key events),
+;; notes being the four entry states (0 empty, 1 shown, 2 dismissed). Green needs the layout gate green on the same serial and every line
+;; equal to browser-frame-model.cljk's ("notify-frame"), and, apart from the model, the rules by name: a raised notification appears
+;; (ops grow), dismissing removes it from the toasts but not from the list, the list shows both, and it closes.
+
+(def ^:private notify-want
+  [{:n 1 :key 0 :notes "0000" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 2 :key 0 :notes "1000" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 3 :key 0 :notes "1100" :panel 0 :ops 100 :px 1088 :hash "132f00a4"}
+   {:n 4 :key 265 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 5 :key 264 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 6 :key 261 :notes "1200" :panel 1 :ops 100 :px 1105 :hash "b1f973ae"}
+   {:n 7 :key 260 :notes "1200" :panel 1 :ops 100 :px 1105 :hash "b1f973ae"}
+   {:n 8 :key 261 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 9 :key 260 :notes "1200" :panel 0 :ops 93 :px 957 :hash "e9ad9b61"}
+   {:n 10 :key 265 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 11 :key 264 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 12 :key 261 :notes "2200" :panel 1 :ops 99 :px 1088 :hash "4782e143"}
+   {:n 13 :key 260 :notes "2200" :panel 1 :ops 99 :px 1088 :hash "4782e143"}
+   {:n 14 :key 261 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}
+   {:n 15 :key 260 :notes "2200" :panel 0 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- notify-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_NOTIFY n=(\d+) key=(\d+) notes=(\d{4}) panel=(\d) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key notes panel ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :notes notes :panel (parse-long panel) :ops (parse-long ops)
+                :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-notify-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (notify-lines serial)
+        at (fn [n] (nth ls (dec n) nil))
+        layout (guest-browser-layout-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? layout))
+      (assoc layout :reason :no-layout :leftover (into [:no-layout] (:leftover layout)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-notify-absent :leftover [:guest-browser-notify-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_NOTIFY_OK events=12" (or serial "")))
+      {:green? false :exit 1 :reason :notify-ok-missing :leftover [:notify-ok-missing]}
+      (not= ls notify-want)
+      {:green? false :exit 1 :reason :notify-differs-from-model :leftover [:notify-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) notify-want)))}
+      ;; the rules, by name (independent of the table above)
+      (not (and (< (:ops (at 1)) (:ops (at 2)) (:ops (at 3))) (= "1100" (:notes (at 3)))))
+      {:green? false :exit 1 :reason :raised-notifications-do-not-appear :leftover [:raised-notifications-do-not-appear]}
+      (not (and (= "1200" (:notes (at 4))) (< (:ops (at 4)) (:ops (at 3)))))
+      {:green? false :exit 1 :reason :dismiss-did-not-remove-the-toast :leftover [:dismiss-did-not-remove-the-toast]}
+      (not (and (= 1 (:panel (at 6))) (= "1200" (:notes (at 6))) (> (:ops (at 6)) (:ops (at 4)))))
+      {:green? false :exit 1 :reason :list-does-not-show-both :leftover [:list-does-not-show-both]}
+      (not (and (= 0 (:panel (at 8))) (= (:hash (at 8)) (:hash (at 4)))))
+      {:green? false :exit 1 :reason :list-did-not-close :leftover [:list-did-not-close]}
+      (not (and (= "2200" (:notes (at 10))) (= (:hash (at 10)) (:hash (at 1))) (= 1 (:panel (at 12)))))
+      {:green? false :exit 1 :reason :dismissed-notifications-not-listed :leftover [:dismissed-notifications-not-listed]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-notify
+       :leftover [:raised-by-a-test-hook-not-a-real-app :keyboard-only :four-entries-seven-characters :no-timeout :no-sound :draw-list-not-pixels]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2406,6 +2467,10 @@
     "guest-browser-layout" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_TEST_NET" "1"
                             "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0268: the notification stage follows the layout stage; its gate needs the layout (and clock) gates green.
+    "guest-browser-notify" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2456,6 +2521,7 @@
     "guest-browser-text-edit" (guest-browser-text-edit-result opts)
     "guest-browser-clock" (guest-browser-clock-result opts)
     "guest-browser-layout" (guest-browser-layout-result opts)
+    "guest-browser-notify" (guest-browser-notify-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2507,6 +2573,7 @@
     "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
     "guest-browser-clock" "AIUEOS_GUEST_BROWSER_CLOCK"
     "guest-browser-layout" "AIUEOS_GUEST_BROWSER_LAYOUT"
+    "guest-browser-notify" "AIUEOS_GUEST_BROWSER_NOTIFY"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2558,6 +2625,7 @@
     "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
     "guest-browser-clock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLOCK_OK"
     "guest-browser-layout" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAYOUT_OK"
+    "guest-browser-notify" "AIUEOS_COMPOSITOR_GUEST_BROWSER_NOTIFY_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

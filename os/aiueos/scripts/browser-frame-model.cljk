@@ -354,6 +354,28 @@
                   :else o))
           ops)))
 
+;; ADR-0268: notifications. :notes is a vector of up to four [state text], state 1 a toast and 2 dismissed (kept in
+;; the list); :panel opens the list. A toast is a 208 x 26 #fff3c4 box at (vw - 216, 36 + 30 slot) with its text from
+;; (vw - 208, 41 + 30 slot); the open list is a white box (vw - 216, 36) 208 x (8 + 22 m) with a '*' at vw - 208 for an
+;; entry still shown and the text from vw - 198 at y 42 + 22 row.
+(defn- note-text-ops [x y text]
+  (:ops (lay-line {:x x :y y :left x :right 100000 :bottom 100000 :wrap? false}
+                  (map #(.charCodeAt % 0) text))))
+
+(defn- notify-ops [{:keys [vw notes panel]}]
+  (let [live (vec (remove #(zero? (first %)) notes))]
+    (cond
+      panel (into [[:rect (- vw 216) 36 208 (+ 8 (* 22 (count live))) 0xffffff]]
+                  (mapcat (fn [row [st text]]
+                            (let [y (+ 42 (* 22 row))]
+                              (concat (when (= st 1) (note-text-ops (- vw 208) y "*"))
+                                      (note-text-ops (- vw 198) y text))))
+                          (range) live))
+      :else (mapcat (fn [slot [_ text]]
+                      (into [[:rect (- vw 216) (+ 36 (* 30 slot)) 208 26 0xfff3c4]]
+                            (note-text-ops (- vw 208) (+ 41 (* 30 slot)) text)))
+                    (range) (filter #(= 1 (first %)) notes)))))
+
 (declare frame*)
 
 (defn frame
@@ -468,7 +490,7 @@
                        (ring-ops hc (- (+ x w) 64) (+ y 6) 16 16))
                      (:ops b) (:ops c) caret))))
         stack)
-        (concat (dock scene) (tray scene) (pointer-sprite scene))))))
+        (concat (dock scene) (tray scene) (notify-ops scene0) (pointer-sprite scene))))))
 
 ;; --- paint and census -----------------------------------------------------------
 
@@ -1030,6 +1052,28 @@
                    md (conj (fr (str (name md) " up") st2 layout2)))))
         out))))
 
+;; ADR-0268: the notification stage, after the layout stage, in the same session. Two apps raise a notification (the stage
+;; plays the app: "Backup", then "Update"): both show as toasts. F8 dismisses the newest one still shown, F7 opens and closes
+;; the list; a dismissed notification leaves the toasts and stays in the list. A frame is [label scene notes-string], the
+;; notes-string the four states as digits.
+(def notify-frames
+  (let [base (second (last layout-frames))
+        sc (fn [notes panel] (assoc base :notes notes :panel panel))
+        digits (fn [notes] (apply str (concat (map first notes) (repeat (- 4 (count notes)) 0))))
+        s0 []
+        s1 [[1 "Backup"]]
+        s2 [[1 "Backup"] [1 "Update"]]
+        s3 [[1 "Backup"] [2 "Update"]]
+        s4 [[2 "Backup"] [2 "Update"]]
+        fr (fn [label notes panel] [label (sc notes panel) (digits notes) (if panel 1 0)])]
+    [(fr "baseline" s0 false) (fr "raise Backup" s1 false) (fr "raise Update" s2 false)
+     (fr "f8 down" s3 false) (fr "f8 up" s3 false)
+     (fr "f7 down" s3 true) (fr "f7 up" s3 true)
+     (fr "f7 down" s3 false) (fr "f7 up" s3 false)
+     (fr "f8 down" s4 false) (fr "f8 up" s4 false)
+     (fr "f7 down" s4 true) (fr "f7 up" s4 true)
+     (fr "f7 down" s4 false) (fr "f7 up" s4 false)]))
+
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
 ;; press path as the pointer. F6 F6 puts the ring on launcher button 2 and Enter opens window 2; F6 four times
@@ -1354,6 +1398,11 @@
                 [_ ci] (:caret scene)]]
     (println (str "layout-frame n=" (inc i) " " ev " layout=" layout " text=" (ed-text (:body w))
                   " caret=" (if (< ci n) ci n) " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
+  (doseq [[i [ev scene notes panel]] (map-indexed vector notify-frames)
+          :let [ops (frame scene)
+                c (census ops)]]
+    (println (str "notify-frame n=" (inc i) " " ev " notes=" notes " panel=" panel
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector ring-frames)
           :let [ops (frame scene)
                 c (census ops)
