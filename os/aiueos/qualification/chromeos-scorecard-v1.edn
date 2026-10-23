@@ -197,8 +197,8 @@
    :expected "Hover, pressed, focus ring, disabled and cursor shape each differ from the resting state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-hover" "gate guest-browser-focus-ring" "gate guest-browser-title-active" "gate guest-browser-cursor-shape" "ADR-0246" "ADR-0248" "ADR-0252"]
-   :note "Hover, focus ring, active titlebar and the resize cursor are gated under QEMU; pressed state is in flight; disabled and tooltips are absent."
+   :evidence ["gate guest-browser-hover" "gate guest-browser-focus-ring" "gate guest-browser-title-active" "gate guest-browser-cursor-shape" "gate guest-browser-pressed-state" "ADR-0246" "ADR-0248" "ADR-0252" "ADR-0253"]
+   :note "Hover, focus ring, active titlebar, the resize cursor and the pressed state are gated under QEMU; a disabled state and tooltips are absent."
    }
   {:id :C11 :category :shell :title "Animations and transitions"
    :weight 0 :required false :required-level :device
