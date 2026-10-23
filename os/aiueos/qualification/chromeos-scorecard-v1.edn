@@ -268,8 +268,9 @@
    :procedure "Switch to another layout (US, JIS) and another language."
    :expected "The layout changes the characters produced."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-layout" "ADR-0267" "gate guest-browser-ime-toggle" "ADR-0228" "receipt os/aiueos/qualification/receipts/vm-20261024/layout/receipt.edn"]
+   :note "F9 flips US and JIS; the same physical keys type @ 2 A : \" on US and \" * @ + on JIS, every frame equal to a model written apart from the Kotoba. Another language is the Japanese input method (Hankaku/Zenkaku, D4). English mode only; two layouts; not kept across a reboot; no dead keys or compose; no physical JIS yen/ro keys."
    }
   {:id :D6 :category :input :title "Text editing"
    :weight 1 :required true :required-level :device

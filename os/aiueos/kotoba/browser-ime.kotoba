@@ -838,6 +838,50 @@
       (clear-state s)))
 
 
+;; ADR-0267: other layouts. Word 1970 is the keyboard layout (0 = US, 1 = JIS), F9 (evdev 67) flips it. With the input
+;; method off (English mode) the digit row and the punctuation keys type their characters, Shift selects the second
+;; character of a key, and Shift makes a letter upper case. Keys are Linux evdev codes (the physical position), so the
+;; layout is what the physical key means: US and JIS differ in the shifted digit row and in the keys at codes 12, 13, 26,
+;; 27, 39, 40 and 43. The input-method-on mode is unchanged (letters feed the romaji buffer, symbols are not typed).
+(defn layout-toggle [s]
+  (do (wp s 1970 (if (= (w s 1970) 0) 1 0)) 0))
+
+(defn pick [s a b c d]
+  (if (= (w s 1970) 0)
+    (if (= (w s 2035) 1) b a)
+    (if (= (w s 2035) 1) d c)))
+
+;; digit d = 0..9 (the key labelled d): its shifted character in US and in JIS (0 = none)
+(defn us-shifted [d]
+  (if (= d 1) 33 (if (= d 2) 64 (if (= d 3) 35 (if (= d 4) 36 (if (= d 5) 37
+  (if (= d 6) 94 (if (= d 7) 38 (if (= d 8) 42 (if (= d 9) 40 41))))))))))
+
+(defn jis-shifted [d]
+  (if (= d 1) 33 (if (= d 2) 34 (if (= d 3) 35 (if (= d 4) 36 (if (= d 5) 37
+  (if (= d 6) 38 (if (= d 7) 39 (if (= d 8) 40 (if (= d 9) 41 0))))))))))
+
+(defn digit-sym [s code]
+  (let [d (if (= code 11) 0 (- code 1))]
+    (if (= (w s 2035) 0) (+ 48 d)
+      (if (= (w s 1970) 0) (us-shifted d) (jis-shifted d)))))
+
+(defn sym-of [s code]
+  (if (< code 2) 0
+    (if (< code 12) (digit-sym s code)
+      (if (= code 12) (pick s 45 95 45 61)
+      (if (= code 13) (pick s 61 43 94 126)
+      (if (= code 26) (pick s 91 123 64 96)
+      (if (= code 27) (pick s 93 125 91 123)
+      (if (= code 39) (pick s 59 58 59 43)
+      (if (= code 40) (pick s 39 34 58 42)
+      (if (= code 43) (pick s 92 124 93 125)
+      (if (= code 51) (pick s 44 60 44 60)
+      (if (= code 52) (pick s 46 62 46 62)
+      (if (= code 53) (pick s 47 63 47 63) 0)))))))))))))
+
+(defn cased [s c]
+  (if (= (w s 2035) 1) (- c 32) c))
+
 (defn key [s d code]
   (let [c (letter-of code)]
     (if (= code 41) (toggle s)
@@ -847,10 +891,11 @@
     (if (= code 107) (end-key s)
     (if (= code 111) (delete-forward s)
     (if (= (w s 432) 0)
-      (if (> c 0) (off-letter s c)
+      (if (> c 0) (off-letter s (cased s c))
+        (if (> (sym-of s code) 0) (off-letter s (sym-of s code))
         (if (= code 57) (off-letter s 32)
           (if (= code 28) (off-letter s 10)
-            (if (= code 14) (delete-backward s) 0))))
+            (if (= code 14) (delete-backward s) 0)))))
       (if (> c 0) (on-letter s c)
         (if (= code 57) (on-space s d)
           (if (= code 28) (on-enter s)
@@ -1139,6 +1184,7 @@
       (if (= (zoom-chord s (quot ev 4)) 1) (zoom-step s (quot ev 4))
       (if (= (lock-chord s (quot ev 4)) 1) (lock-now s)
       (if (= (quot ev 4) 68) (hc-toggle s)
+      (if (= (quot ev 4) 67) (layout-toggle s)
       (if (= (quot ev 4) 64) (ring-move s)
       (if (= (quot ev 4) 87) (if (= (max-key-ok s) 1) (max-key-press s) 0)
       (if (= (if (= (quot ev 4) 12) (min-key-ok s) 0) 1) (min-key-press s)
@@ -1147,7 +1193,7 @@
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r))))))))))))))))))))
+                (if (= (w s 478) 1) -8 r)))))))))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be

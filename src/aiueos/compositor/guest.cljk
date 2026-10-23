@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1862,6 +1862,86 @@
       {:green? true :exit 0 :reason :guest-browser-clock
        :leftover [:no-power-state :network-state-is-boot-time-not-live :set-by-the-test-hook :not-refreshed-each-minute :draw-list-not-pixels]})))
 
+;; Guest browser keyboard layouts (ADR-0267): after the clock stage the host types, in English mode at the caret the editing stage left,
+;; US shift+2, 2, shift+a, shift+;, shift+', then F9 (JIS), shift+2, shift+', the key right of P, shift+;, then F9 again. Kotoba maps the
+;; physical key and the layout word (surface word 1970) to the character. The kernel prints
+;; AIUEOS_GUEST_BROWSER_LAYOUT n= key= text= layout= caret= ops= text-px= hash= for each of the 36 key events. Green needs the clock gate
+;; green on the same serial and every line equal to browser-frame-model.cljk's ("layout-frame"), and, apart from the model, the
+;; characters by name: US gives @ 2 A : " and JIS gives " * @ +, the same physical keys, and F9 flips the layout word.
+
+(def ^:private layout-want
+  [{:n 1 :key 169 :layout 0 :text "ab_c|e" :caret 5 :ops 77 :px 668 :hash "bed963dd"}
+   {:n 2 :key 13 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 3 :key 12 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 4 :key 168 :layout 0 :text "ab_c|@e" :caret 6 :ops 78 :px 698 :hash "fe843e3c"}
+   {:n 5 :key 13 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 6 :key 12 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 7 :key 169 :layout 0 :text "ab_c|@2e" :caret 7 :ops 79 :px 719 :hash "6e91e322"}
+   {:n 8 :key 121 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 9 :key 120 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 10 :key 168 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 11 :key 169 :layout 0 :text "ab_c|@2Ae" :caret 8 :ops 80 :px 743 :hash "d3792e4a"}
+   {:n 12 :key 157 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 13 :key 156 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 14 :key 168 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 15 :key 169 :layout 0 :text "ab_c|@2A:e" :caret 9 :ops 81 :px 751 :hash "3524f8fa"}
+   {:n 16 :key 161 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 17 :key 160 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 18 :key 168 :layout 0 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 19 :key 269 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 20 :key 268 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 21 :key 169 :layout 1 :text "ab_c|@2A:\"e" :caret 10 :ops 82 :px 759 :hash "596cc4ba"}
+   {:n 22 :key 13 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 23 :key 12 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 24 :key 168 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 25 :key 169 :layout 1 :text "ab_c|@2A:\"\"e" :caret 11 :ops 83 :px 767 :hash "f96e8e7a"}
+   {:n 26 :key 161 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 27 :key 160 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 28 :key 168 :layout 1 :text "ab_c|@2A:\"\"*e" :caret 12 :ops 84 :px 784 :hash "c9373c61"}
+   {:n 29 :key 105 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 30 :key 104 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 31 :key 169 :layout 1 :text "ab_c|@2A:\"\"*@e" :caret 13 :ops 85 :px 814 :hash "f02563d8"}
+   {:n 32 :key 157 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 33 :key 156 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 34 :key 168 :layout 1 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 35 :key 269 :layout 0 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}
+   {:n 36 :key 268 :layout 0 :text "ab_c|@2A:\"\"*@+e" :caret 14 :ops 86 :px 827 :hash "19247745"}])
+
+(defn- layout-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_LAYOUT n=(\d+) key=(\d+) text=(\S*) layout=(\d+) caret=(\d+) sel=- ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key text layout caret ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :layout (parse-long layout) :text text :caret (parse-long caret)
+                :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-layout-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (layout-lines serial)
+        at (fn [n] (nth ls (dec n) nil))
+        clock (guest-browser-clock-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? clock))
+      (assoc clock :reason :no-clock :leftover (into [:no-clock] (:leftover clock)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-layout-absent :leftover [:guest-browser-layout-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36" (or serial "")))
+      {:green? false :exit 1 :reason :layout-ok-missing :leftover [:layout-ok-missing]}
+      (not= ls layout-want)
+      {:green? false :exit 1 :reason :layout-differs-from-model :leftover [:layout-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) layout-want)))}
+      ;; the characters, by name (independent of the table above)
+      (not (and (= "ab_c|@2A:\"e" (:text (at 16))) (= 0 (:layout (at 16)))))
+      {:green? false :exit 1 :reason :us-characters-wrong :leftover [:us-characters-wrong]}
+      (not (and (= 1 (:layout (at 19))) (= 1 (:layout (at 20)))))
+      {:green? false :exit 1 :reason :f9-did-not-switch-to-jis :leftover [:f9-did-not-switch-to-jis]}
+      (not= "ab_c|@2A:\"\"*@+e" (:text (at 34)))
+      {:green? false :exit 1 :reason :jis-characters-wrong :leftover [:jis-characters-wrong]}
+      (not (and (= 0 (:layout (at 35))) (= 0 (:layout (at 36)))))
+      {:green? false :exit 1 :reason :f9-did-not-switch-back :leftover [:f9-did-not-switch-back]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-layout
+       :leftover [:us-and-jis-only :english-mode-only :no-compose-or-dead-keys :draw-list-not-pixels]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2322,6 +2402,10 @@
     "guest-browser-clock" {"AIUEOS_GUEST_BROWSER" "1"
                            "AIUEOS_TEST_NET" "1"
                            "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0267: the layout stage follows the clock stage, and its gate needs the clock gate green (a NIC attached).
+    "guest-browser-layout" {"AIUEOS_GUEST_BROWSER" "1"
+                            "AIUEOS_TEST_NET" "1"
+                            "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2371,6 +2455,7 @@
     "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
     "guest-browser-text-edit" (guest-browser-text-edit-result opts)
     "guest-browser-clock" (guest-browser-clock-result opts)
+    "guest-browser-layout" (guest-browser-layout-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2421,6 +2506,7 @@
     "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
     "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
     "guest-browser-clock" "AIUEOS_GUEST_BROWSER_CLOCK"
+    "guest-browser-layout" "AIUEOS_GUEST_BROWSER_LAYOUT"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2471,6 +2557,7 @@
     "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
     "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
     "guest-browser-clock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLOCK_OK"
+    "guest-browser-layout" "AIUEOS_COMPOSITOR_GUEST_BROWSER_LAYOUT_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

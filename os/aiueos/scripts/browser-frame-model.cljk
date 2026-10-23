@@ -999,6 +999,37 @@
      ["net-1" (assoc last-edit :status 754 :net 1)] ["net-2" (assoc last-edit :status 754 :net 2)]
      ["net-3" (assoc last-edit :status 754 :net 3)]]))
 
+;; ADR-0267: the layout stage, after the clock stage, continues in the session the editing stage left: the keys are
+;; typed at the caret in English mode. [modifier key char]: US shift+2 '@', 2, shift+a 'A', shift+; ':', shift+' '"'; F9 flips
+;; to JIS; shift+2 '"', shift+' '*', the key right of P '@', shift+; '+'; F9 flips back. A char of nil is the F9 key.
+(def layout-keys
+  [[:shift "2" 64] [nil "2" 50] [:shift "a" 65] [:shift "semicolon" 58] [:shift "apostrophe" 34]
+   [nil "f9" nil]
+   [:shift "2" 34] [:shift "apostrophe" 42] [nil "bracket_left" 64] [:shift "semicolon" 43]
+   [nil "f9" nil]])
+
+(def layout-frames
+  (let [clean (second (last max-frames))
+        w1 (first (:stack clean))
+        scene (fn [st layout]
+                (let [rng (ed-sel st)]
+                  (cond-> (assoc clean :stack [(assoc w1 :body (:body st))]
+                                       :caret [1 (:caret st)] :layout layout)
+                    rng (assoc :range [1 (first rng) (second rng)]))))
+        st0 (reduce (fn [st [step]] (ed-step st step)) {:body [] :caret 0 :anchor nil :undo nil} edit-steps)]
+    (loop [ks layout-keys st st0 layout 0 out []]
+      (if-let [[md q ch] (first ks)]
+        (let [st2 (if ch (ed-step st [:type ch]) st)
+              layout2 (if ch layout (- 1 layout))
+              fr (fn [label s l] [label (scene s l) l])]
+          (recur (rest ks) st2 layout2
+                 (cond-> out
+                   md (conj (fr (str (name md) " down") st layout))
+                   true (conj (fr (str q " down") st2 layout2))
+                   true (conj (fr (str q " up") st2 layout2))
+                   md (conj (fr (str (name md) " up") st2 layout2)))))
+        out))))
+
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
 ;; press path as the pointer. F6 F6 puts the ring on launcher button 2 and Enter opens window 2; F6 four times
@@ -1315,6 +1346,14 @@
     (println (str "edit-frame n=" (inc i) " " ev " text=" (ed-text (:body w)) " caret=" (if (< ci n) ci n)
                   " sel=" (if rng (str (first rng) "," (second rng)) "-")
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
+  (doseq [[i [ev scene layout]] (map-indexed vector layout-frames)
+          :let [ops (frame scene)
+                c (census ops)
+                w (first (:stack scene))
+                n (count (:body w))
+                [_ ci] (:caret scene)]]
+    (println (str "layout-frame n=" (inc i) " " ev " layout=" layout " text=" (ed-text (:body w))
+                  " caret=" (if (< ci n) ci n) " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector ring-frames)
           :let [ops (frame scene)
                 c (census ops)

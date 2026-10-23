@@ -1873,3 +1873,49 @@
       (is (= :clock-ok-missing (:reason (run (.replace ok "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3\r\n" "")))))
       (is (= :guest-browser-clock-absent (:reason (run through-edit))))
       (is (= 3 (:exit (guest/classify "guest-browser-clock" {:serial ok :qemu-unmeasured? true})))))))
+
+(deftest guest-browser-layout-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        rg (apply str (map ring-line ring-rows))
+        through-ring (str through-sign-out rg "AIUEOS_GUEST_BROWSER_RING_OK events=28\r\n")
+        ed (apply str (map edit-line edit-rows))
+        through-edit (str through-ring ed "AIUEOS_GUEST_BROWSER_EDIT_OK events=72\r\n")
+        clock (str "AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=12:34\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=1 status=0 net=0 ops=77 text-px=668 hash=bed963dd\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=2 status=755 net=0 ops=82 text-px=755 hash=9eb22e19\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=3 status=755 net=3 ops=88 text-px=892 hash=c9fc0d1c\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3\r\n")
+        ok (str through-edit clock)
+        want @#'guest/layout-want
+        line (fn [{:keys [n key layout text caret ops px hash]}]
+               (str "AIUEOS_GUEST_BROWSER_LAYOUT n=" n " key=" key " text=" text " layout=" layout " caret=" caret " sel=-"
+                    " ops=" ops " text-px=" px " hash=" hash "\r\n"))
+        lay (fn [rows] (str (apply str (map line rows)) "AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36\r\n"))
+        good (str ok (lay want))
+        run (fn [serial] (guest/classify "guest-browser-layout" {:serial serial}))]
+    (testing "US characters, F9, JIS characters, F9 back, all equal to the model: green"
+      (let [r (run good)]
+        (is (= :guest-browser-layout (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a layout that did not switch is red"
+      (is (= :layout-differs-from-model
+             (:reason (run (str ok (lay (map #(if (>= (:n %) 19) (assoc % :layout 0) %) want))))))))
+    (testing "the same characters on the wrong layout are red even if the table were altered to agree"
+      (is (= :layout-differs-from-model
+             (:reason (run (.replace good "text=ab_c|@2A:\"\"*@+e" "text=ab_c|@2A:\"\"*\"+e"))))))
+    (testing "it needs the clock gate green first"
+      (is (= :no-clock (:reason (run (lay want))))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :layout-ok-missing (:reason (run (.replace good "AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36\r\n" "")))))
+      (is (= :guest-browser-layout-absent (:reason (run ok))))
+      (is (= 3 (:exit (guest/classify "guest-browser-layout" {:serial good :qemu-unmeasured? true})))))))

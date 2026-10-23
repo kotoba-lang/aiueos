@@ -2416,6 +2416,76 @@ static int browser_edit_stage(uint32_t *surface, const uint8_t *font, uint64_t f
   return 0;
 }
 
+/* ADR-0267: the keyboard layout stage, after the clock stage: US typing, F9 to JIS, JIS typing, F9 back. */
+static int browser_layout_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                              uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_LAYOUT_GO events=36\r\n");
+  while (se < 36 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    (void)kr;
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    {
+      const uint32_t base = 160U + 64U * (surface[2] - 1U);
+      uint32_t n = 0, caret, v = surface[2004], lo = 0, hi = 0;
+      while (n < 64U && surface[base + n]) n++;
+      caret = (v / 128U == surface[2]) ? ((v & 127U) - 1U) : n;
+      if (caret > n) caret = n;
+      if (surface[2036] == surface[2] && surface[2005]) {
+        uint32_t a = surface[2005] - 1U;
+        if (a > n) a = n;
+        lo = a < caret ? a : caret;
+        hi = a < caret ? caret : a;
+      }
+      serial_string("AIUEOS_GUEST_BROWSER_LAYOUT n=");
+      serial_decimal(se);
+      serial_string(" key=");
+      serial_decimal(key);
+      serial_string(" text=");
+      for (uint32_t k = 0; k < n; k++) {
+        uint32_t c = surface[base + k];
+        char ch[2] = {0, 0};
+        ch[0] = c == 32U ? '_' : (c == 10U ? '|' : (c < 128U ? (char)c : '?'));
+        serial_string(ch);
+      }
+      serial_string(" layout=");
+      serial_decimal(surface[1970]);
+      serial_string(" caret=");
+      serial_decimal(caret);
+      serial_string(" sel=");
+      if (hi > lo) { serial_decimal(lo); serial_string(","); serial_decimal(hi); }
+      else serial_string("-");
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+      serial_string(" text-px=");
+      serial_decimal(px);
+      serial_string(" hash=");
+      serial_hex32(hash);
+      serial_string("\r\n");
+    }
+  }
+  if (se == 36) {
+    debug_string("AIUEOS_GUEST_BROWSER_LAYOUT_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_LAYOUT_OK events=36\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_LAYOUT leftover=events-missing\r\n");
+  return 0;
+}
+
 /* ADR-0264: the clock in the launcher row. C reads the machine's real-time clock (CMOS registers 0x00..0x09
    through ports 0x70 / 0x71, BCD or binary, 12 or 24 hour as register B says) and reports the minute of the day + 1
    in surface word 1968; browser-frame2 draws HH:MM at the right end of the launcher row. The stage first sets the clock
@@ -6230,7 +6300,8 @@ qwen_runtime_boot_complete:
                                                         if (browser_ring_stage(surface, font, font_length, dict, dict_length))
                                                           if (browser_edit_stage(surface, font, font_length, dict, dict_length))
                                                             if (browser_clock_stage(surface, font, font_length))
-                                                              browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                              if (browser_layout_stage(surface, font, font_length, dict, dict_length))
+                                                                browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");
