@@ -165,8 +165,9 @@
    :procedure "Minimize a window; open it again from the window list."
    :expected "The window disappears and returns with its state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-minimize" "ADR-0254"]
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-minimize" "ADR-0254" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "The window leaves the draw list and is not hit, the focus moves on, and it returns on the same rect, raised and focused, from the dock icon, the tray button or Alt+- then the tray (ADR-0254..0256). The list holds minimized windows only; there is no animation."
    }
   {:id :C6 :category :shell :title "Snap windows to halves of the screen"
    :weight 0 :required false :required-level :device
@@ -205,9 +206,9 @@
    :procedure "Hover, press, focus by keyboard, hit a disabled control, reach the resize handle."
    :expected "Hover, pressed, focus ring, disabled and cursor shape each differ from the resting state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-hover" "gate guest-browser-focus-ring" "gate guest-browser-title-active" "gate guest-browser-cursor-shape" "gate guest-browser-pressed-state" "gate guest-browser-minimize" "ADR-0246" "ADR-0248" "ADR-0252" "ADR-0253" "ADR-0257"]
-   :note "Hover, focus ring, active titlebar, the resize cursor, the pressed state and a disabled close control (ADR-0257) are gated under QEMU; tooltips and other disabled controls are absent."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-hover" "gate guest-browser-focus-ring" "gate guest-browser-title-active" "gate guest-browser-cursor-shape" "gate guest-browser-pressed-state" "gate guest-browser-minimize" "ADR-0246" "ADR-0248" "ADR-0252" "ADR-0253" "ADR-0257" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "Hover, pressed, focus ring, disabled (the close control of the only visible window) and the resize cursor each differ from the resting state (ADR-0246/0248/0252/0253/0257); tooltips are absent and are not in the row's expected behaviour."
    }
   {:id :C11 :category :shell :title "Animations and transitions"
    :weight 0 :required false :required-level :device
