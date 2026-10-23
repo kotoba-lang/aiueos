@@ -1240,27 +1240,28 @@
 
 (def ^:private min-rows
   ;; n src at reduce focus stack ops text-px hash
-  [[35 1 "456,146" 4 4 "341" 133 1080 "f1860b60"]
-   [36 4 "456,146" 0 4 "341" 133 1080 "f1860b60"]
-   [37 1 "380,142" 4 4 "314" 133 1080 "53873e00"]
-   [38 4 "380,142" 0 4 "314" 133 1080 "53873e00"]
+  [[35 1 "456,146" 4 4 "341" 140 1197 "fb35dcd0"]
+   [36 4 "456,146" 0 4 "341" 140 1197 "fb35dcd0"]
+   [37 1 "380,142" 4 4 "314" 140 1197 "3d2ce5f0"]
+   [38 4 "380,142" 0 4 "314" 140 1197 "3d2ce5f0"]
    [39 1 "574,772" 1 1 "341" 192 2330 "01d8225d"]
-   [40 4 "574,772" 0 1 "341" 192 2330 "01d8225d"]])
+   [40 4 "574,772" 0 1 "341" 192 2330 "01d8225d"]
+   [41 1 "456,146" 4 4 "341" 140 1197 "fb35dcd0"]
+   [42 4 "456,146" 0 4 "341" 140 1197 "fb35dcd0"]
+   [43 1 "60,780" 1 1 "341" 192 2330 "438d5f21"]
+   [44 4 "60,780" 0 1 "341" 192 2330 "438d5f21"]])
 
 (defn- min-line [[n src at red focus stack ops px hash]]
   (str "AIUEOS_GUEST_BROWSER_MAX n=" n " src=" src " at=" at " reduce=" red
        " windows=3 focus=" focus " stack=" stack " rect=272,132,240,200 ops=" ops " text-px=" px " hash=" hash "\r\n"))
 
 (def ^:private min-reg-lines
-  (str "AIUEOS_GUEST_BROWSER_MIN n=35 reg=1 minctl=2 dockbar=1\r\n"
-       "AIUEOS_GUEST_BROWSER_MIN n=36 reg=1 minctl=2 dockbar=1\r\n"
-       "AIUEOS_GUEST_BROWSER_MIN n=37 reg=1 minctl=2 dockbar=1\r\n"
-       "AIUEOS_GUEST_BROWSER_MIN n=38 reg=1 minctl=2 dockbar=1\r\n"
-       "AIUEOS_GUEST_BROWSER_MIN n=39 reg=0 minctl=3 dockbar=0\r\n"
-       "AIUEOS_GUEST_BROWSER_MIN n=40 reg=0 minctl=3 dockbar=0\r\n"))
+  (apply str (for [[n r c d y] [[35 1 2 1 1] [36 1 2 1 1] [37 1 2 1 1] [38 1 2 1 1] [39 0 3 0 0] [40 0 3 0 0]
+                                [41 1 2 1 1] [42 1 2 1 1] [43 0 3 0 0] [44 0 3 0 0]]]
+               (str "AIUEOS_GUEST_BROWSER_MIN n=" n " reg=" r " minctl=" c " dockbar=" d " tray=" y "\r\n"))))
 
 (def ^:private minimize-ok
-  "AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=6 minimized=1 hit-through=4 restored=1\r\n")
+  "AIUEOS_GUEST_BROWSER_MINIMIZE_OK events=10 minimized=1 hit-through=4 restored=1 tray=restored\r\n")
 
 (deftest guest-browser-minimize-classifier
   (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok

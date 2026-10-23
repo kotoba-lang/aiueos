@@ -587,6 +587,23 @@
                 (put-rect s (+ left 12) (+ top 37) 12 3))
             0)))))
 
+;; ADR-0255: the tray of minimized windows: one 120 x 24 button per minimized window, by id, at
+;; (6 + 126 i, vh - 30), the window's title (the launcher's slot) in the ink clipped at x + 114.
+(defn tray-item [s f k i vh]
+  (let [x (+ 6 (* 126 i))
+        y (- vh 30)]
+    (do (sput s 422 (ctl-rgb s x y 120 24))
+        (put-rect s x y 120 24)
+        (sput s 420 (+ x 114)) (sput s 421 (+ y 26))
+        (sput s 426 0) (sput s 428 32)
+        (text-block s f (+ 32 (* 32 (- k 1))) (+ x 6) (+ y 4)))))
+
+(defn tray [s f k i vh]
+  (if (> k 4) 0
+    (if (= (minimized s k) 1)
+      (do (tray-item s f k i vh) (tray s f (+ k 1) (+ i 1) vh))
+      (tray s f (+ k 1) i vh))))
+
 (defn dock [s f vw vh]
   (if (= (sw s 31) 0) 0
     (let [left (quot (- vw 184) 2)
@@ -867,6 +884,7 @@
                             (launcher s f vw)
                             (emit s f 0)
                             (dock s f vw vh)
+                            (tray s f 1 0 vh)
                             (pointer s)
                             (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
 
