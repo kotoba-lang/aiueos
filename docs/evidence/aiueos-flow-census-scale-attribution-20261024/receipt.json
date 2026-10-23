@@ -1,6 +1,7 @@
 {
- "receipt/format": "aiueos.flow-census-scale-attribution/v1",
+ "receipt/format": "aiueos.flow-census-scale-attribution/v2",
  "recorded-at": "2026-10-24T05:20:00+09:00",
+ "follow-up-recorded-at": "2026-10-24T05:55:00+09:00",
  "issue": "JUN-31",
  "tree": {
   "head": "c76675efd03c6969d056420a24df266dc8d3f205",
@@ -37,8 +38,14 @@
     "vs-pin-ratio": 2.66
    }
   },
-  "B-selfhost-synthetic-profile": {
-   "object": "same selfhost object route",
+  "B-synthetic-profile-pct100": {
+   "CORRECTION (follow-up, 2026-10-24 05:55 JST)": "the first commit of this receipt called B 'same selfhost object route'. Re-measured: the synthetic run in build/aiueos-syn booted KERNEL.ELF 0f85a7be (image receipt 02:31:10 JST, tree 8820d3b2) and a reloc-masked .text search (.text+3..+5 masked = the link-time relocation) finds the COMMITTED object 3f7409bf 35-byte .text at file offset 325792 and no selfhost-0e04108e .text. B is the committed-object pct=100 pass.",
+   "object": "committed os/aiueos/kotoba/kernel-probe.o (3f7409bf) - corrected attribution",
+   "image": {
+    "KERNEL.ELF sha256": "0f85a7be13af4095...",
+    "committed-text-base-file-offset": 325792,
+    "selfhost-text-present": false
+   },
    "profile": "synthetic-input (no scale stage, scale stays pct=100)",
    "flow": {
     "verdict": "FLOW_OK",
@@ -49,17 +56,34 @@
     "matches-pin": true
    }
   },
+  "B2-selfhost-synthetic-profile-pct100": {
+   "source": "docs/evidence/aiueos-kernel-image-selfhost-20261024/kernel-serial.log (committed at 8820d3b2, 2026-10-24 01:53 JST), image KERNEL.ELF 99f908be with the selfhost object .text at file offset 324461 (containment byte-proven at that commit)",
+   "profile": "synthetic-input (no scale stage, scale stays pct=100)",
+   "flow": {
+    "verdict": "FLOW_OK",
+    "windows": 4,
+    "ops": 182,
+    "text-px": 3593,
+    "hash": "a19f95a8",
+    "matches-pin": true
+   },
+   "serial-log-identity": "the full serial log is byte-identical (sha1 feacee9ee27dad36d4042f8a13f808ed8b98b05a) to the committed-object synthetic run's serial log (build/aiueos-syn/kernel-serial.log)"
+  },
   "C-op-stream-identity": {
    "words": "FLOW_OPS n=182 words=<8736 hex chars>",
    "sha1": "42fd9ed630edc8c031119c0106a4a0c9ba510dd5",
    "byte-identical-between": [
     "A",
-    "B"
+    "B",
+    "B2",
+    "E",
+    "aiueos-image-route-node-free-20261022 boot logs"
    ],
-   "meaning": "the drawn op stream is the same in both runs; only the rendered magnification differs"
+   "measured": "sha1 of the words hex string re-computed in the follow-up across build/control-run4.log (E), build/control-syn-run.log (B), docs/evidence/aiueos-kernel-image-selfhost-20261024/kernel-serial.log (B2) and docs/evidence/aiueos-image-route-node-free-20261022/boot/kernel-serial.log - all 42fd9ed6",
+   "meaning": "the drawn op stream is the same in every run; only the rendered magnification differs"
   },
   "D-object-containment": {
-   "method": "ELF .text extracted from each object; base offset located in KERNEL.ELF; byte compare; reloc-masked clean-window uniqueness search (51 B selfhost window, 28 B committed window)",
+   "method": "ELF .text extracted from each object; base offset located in KERNEL.ELF; byte compare; reloc-masked search (.text+3..+5 masked)",
    "selfhost-image-ab5f25d0": {
     "text-base-file-offset": 325888,
     "mismatch-bytes": "exactly .text+3..+5 (41 57 07 = lea r9,[rip+0x75741] displacement)",
@@ -69,7 +93,8 @@
     "text-base-file-offset": 325888,
     "mismatch-bytes": "exactly .text+3..+5",
     "selfhost-text-present": false
-   }
+   },
+   "re-measured-in-follow-up": "A(ab5f25d0) contains only selfhost .text at 325888; E(3e8bdb0e) contains only committed .text at 325888; build/aiueos-syn image (0f85a7be) contains only committed .text at 325792 - this last finding is what corrects B"
   },
   "E-control-cell": {
    "object": {
@@ -80,18 +105,37 @@
    "image": {
     "KERNEL.ELF sha256": "3e8bdb0e94690638b0e219611338ab37872c0c864f78a3252e4d108ca40e183a",
     "bytes": 823944,
-    "rebuilt-this-tick-byte-identical": true
+    "rebuilt-this-tick-byte-identical": true,
+    "image-receipt": "build/aiueos-d/image-receipt.edn, recorded 2026-10-24 05:14:41 JST, tree c76675e, dirty-entries 0"
    },
-   "profile": "guest-browser full, same as A",
-   "status": "in-flight at commit time; boot started 2026-10-24 05:13 JST (detached, build/aiueos-d, run log control-run4.log); one earlier attempt (control-run2) stalled at AIUEOS_KOTOBA_ELF_PROCESS_OK = the known #108 HOST-FLAKE-SIGNATURE and was retried, not counted as evidence"
+   "profile": "guest-browser full (synthetic=0), same as A",
+   "status": "MEASURED in the follow-up commit; run log build/control-run4.log (detached boot 05:13 JST, harness end 05:41 JST)",
+   "stage-order": "SETTINGS(n=1..3 pct=100 -> n=4..6 pct=125, written=2, stored=1, frame text-px 668->1757 = 2.63x) -> FLOW",
+   "flow": {
+    "verdict": "leftover=census-miss",
+    "ops": 182,
+    "text-px": 9564,
+    "hash": "b2fad8a7",
+    "vs-pin-ratio": 2.66,
+    "identical-to": "A"
+   },
+   "separate-known-flake": "the run then reproduced the #108 process-phase stall (GUEST-NO-EXIT after 523s, attempts=3, quiescence watchdog); not used as evidence"
   }
  },
- "attribution": "The FLOW census-miss tracks the SETTINGS stage's persisted UI scale (pct=125 active at the FLOW measurement, frame census magnified 2.63-2.66x), not the object route: the op stream is byte-identical, the same object route passes the pin at pct=100, and object containment is byte-proven per image.",
+ "matrix": {
+  "layout": "census (text-px/hash) by object route x active UI scale at FLOW",
+  "selfhost-object @ pct=100": "3593/a19f95a8 (pin pass; B2, image 99f908be, tree 8820d3b2)",
+  "selfhost-object @ pct=125": "9564/b2fad8a7 (census-miss; A, image ab5f25d0, tree c76675e)",
+  "committed-object @ pct=100": "3593/a19f95a8 (pin pass; B, image 0f85a7be, tree 8820d3b2)",
+  "committed-object @ pct=125": "9564/b2fad8a7 (census-miss; E, image 3e8bdb0e, tree c76675e)",
+  "note": "the pct=100 runs are at tree 8820d3b2 (one commit earlier than the pct=125 runs at c76675e); the op stream is byte-identical across both trees and both objects"
+ },
+ "attribution": "The FLOW census-miss tracks the SETTINGS stage's persisted UI scale, not the object route. All four matrix cells are measured: at fixed profile the two object routes give byte-identical censuses (A=E=9564/b2fad8a7 at pct=125; B=B2=3593/a19f95a8 at pct=100), the op stream (FLOW_OPS words sha1 42fd9ed6) is byte-identical in every run, and each image's linked object is byte-proven.",
  "gate-proposal": {
   "option-a": "measure the FLOW census at a fixed pct (restore pct=100 before the FLOW stage) and keep the single pin 3593/a19f95a8",
   "option-b": "scale-indexed pins (pct=100: 3593/a19f95a8; pct=125: 9564/b2fad8a7 as measured here)",
   "recommendation": "option-a: one canonical pin keeps the census comparable across profile changes",
   "root-cause-timeline": "pin calibrated ADR-0234 (90f8b03, 2026-09-25) at pct=100; scale stage landed later in ADR-0261 (62490d0, 2026-10-23 16:32, PR #470) - the FLOW pin predates the stage that changes the scale before FLOW"
  },
- "boundary": "kernel/*.c is still compiled by zig cc; the C-free claim covers the compiler lineage and the kotoba object route only. The #108 process-phase stall is a separate known flake and is not used as evidence here."
+ "boundary": "kernel/*.c is still compiled by zig cc; the C-free claim covers the compiler lineage and the kotoba object route only. The #108 process-phase stall is a separate known flake and is not used as evidence here. B2's image (99f908be) no longer exists in build/ (the dir was rebuilt); its containment rests on the byte-proof recorded at commit 8820d3b2, its census and serial-log identity were re-measured here."
 }

@@ -1,5 +1,12 @@
-# excerpt: same selfhost object route, synthetic-input profile (no scale stage, scale stays pct=100).
+# excerpt: synthetic-input profile (no scale stage, scale stays pct=100).
 # build/aiueos-syn/kernel-serial.log
+# CORRECTION (follow-up, 2026-10-24): the first commit of this excerpt said
+# "same selfhost object route". Wrong at the image level. The run booted
+# KERNEL.ELF 0f85a7be (committed object 3f7409bf; .text byte-verified at
+# offset 325792 this follow-up, no selfhost .text present) - B is the
+# COMMITTED-object pct=100 pass. The selfhost-object pct=100 pass (image
+# 99f908be, commit 8820d3b2) has the identical census and a byte-identical
+# serial log (file sha1 feacee9ee27dad36d4042f8a13f808ed8b98b05a).
 AIUEOS_GUEST_BROWSER_FRAME_OK ops=5 overlap=d8e7ff win1-title=dde2ea surface=1280x800
 AIUEOS_GUEST_BROWSER_INPUT leftover=no-pointer-event tablets=0 used=0 abs=0 key=0
 AIUEOS_GUEST_BROWSER_SCANOUT_OK resource=7 scanout=0 source=gop-framebuffer
