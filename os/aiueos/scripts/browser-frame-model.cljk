@@ -189,6 +189,14 @@
 
 (def ^:private hot-colour 0xd9d9d9)
 
+(defn- ctl-colour
+  "ADR-0253: a control's face -- pressed (#bfbfbf, #e6b800 in the high-contrast palette) when it is
+  hot and the pointer's button is down, hot (#d9d9d9, #ffd400), or plain (#e6e6e6, #e0e0e0)."
+  [hc down hot?]
+  (cond (and hot? down) (if hc 0xe6b800 0xbfbfbf)
+        hot? (if hc 0xffd400 0xd9d9d9)
+        :else (if hc 0xe0e0e0 0xe6e6e6)))
+
 (defn- hot?
   "ADR-0246: the pointer [px py] is inside the control rect (x y w h)."
   [pointer x y w h]
@@ -208,13 +216,13 @@
   under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
   (:titles k) from (x + 6, 6), one line, clipped at x + 90."
-  [{:keys [vw apps titles pointer hc ring]}]
+  [{:keys [vw apps titles pointer hc ring down]}]
   (when (pos? (or apps 0))
     (into [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
           (mapcat (fn [k]
                     (let [x (+ 6 (* 102 (dec k)))]
                       (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
-                        (into (into [[:rect x 2 96 24 (if (hot? pointer x 2 96 24) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]]
+                        (into (into [[:rect x 2 96 24 (ctl-colour hc down (hot? pointer x 2 96 24))]]
                                     (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
                                                      :bottom 28 :wrap? false}
                                                     (take 32 (get titles k)))))
@@ -304,7 +312,7 @@
                  [xi xw] (glyph 215)
                  close (when chrome?
                          [[:rect (- (+ x w) 24) (+ y 6) 16 16
-                           (if (hot? (:pointer scene) (- (+ x w) 24) (+ y 6) 16 16) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]
+                           (ctl-colour hc (:down scene) (hot? (:pointer scene) (- (+ x w) 24) (+ y 6) 16 16))]
                           [:glyph (+ (- (+ x w) 24) (quot (- 16 xw) 2)) (+ y 6) xi xw]])
                  ;; ADR-0234: the body flows as cssom lays out the window's
                  ;; document: text 14 in from the body box (x, y + 28), lines
@@ -356,7 +364,7 @@
                        (let [cx (- (+ x w) 44)
                              [gi gw] (glyph 9633)]
                          [[:rect cx (+ y 6) 16 16
-                           (if (hot? (:pointer scene) cx (+ y 6) 16 16) (if hc 0xffd400 hot-colour) (if hc 0xe0e0e0 0xe6e6e6))]
+                           (ctl-colour hc (:down scene) (hot? (:pointer scene) cx (+ y 6) 16 16))]
                           [:glyph (+ cx (quot (- 16 gw) 2)) (+ y 6) gi gw (if hc 0x404040 0x595959)]]))
                      (:ops b) (:ops c) caret))))
         stack)
@@ -685,7 +693,9 @@
        ["f11-restore" s5] ["f11-up" s5]
        ;; ADR-0252: the pointer moves onto window 1's resize handle at (500, 320), where it
        ;; is the resize cursor, and back to (380, 142), where it is the arrow
-       ["move-to-handle" (at base [500 320])] ["move-away" (at base [380 142])]])))
+       ["move-to-handle" (at base [500 320])] ["move-away" (at base [380 142])]
+       ;; ADR-0253: the button goes down on launcher button 1 at (54, 14) and up again
+       ["press-launcher" (assoc (at base [54 14]) :down true)] ["release-launcher" (at base [54 14])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
@@ -961,6 +971,11 @@
                   " stack=" (apply str (map :id (:stack scene)))
                   " rect=" (:x w) "," (:y w) "," (:w w) "," (:h w)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
+  (doseq [[i [ev scene]] (map-indexed vector max-frames)
+          :when (>= i 14)
+          :let [ops (frame scene)
+                cnt #(count (filter (fn [[k _ _ _ _ c]] (and (= k :rect) (= c %))) ops))]]
+    (println (str "press-frame n=" (+ 19 i) " " ev " pressed=" (cnt 0xbfbfbf) " hot=" (cnt hot-colour))))
   (doseq [[i [ev scene]] (map-indexed vector key-frames)
           :let [ops (frame scene)
                 c (census ops)

@@ -1195,3 +1195,45 @@
       (is (= :cursor-shape-ok-missing (:reason (guest/classify "guest-browser-cursor-shape" {:serial (str base shape)}))))
       (is (= :guest-browser-cursor-shape-absent (:reason (guest/classify "guest-browser-cursor-shape" {:serial (str base shape-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-cursor-shape" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private press-rows
+  [[33 1 "54,14" 1 "272,132,240,200" 186 2322 "d3d22b31"]
+   [34 4 "54,14" 0 "272,132,240,200" 186 2322 "d3d22b31"]])
+
+(def ^:private press-lines
+  "AIUEOS_GUEST_BROWSER_PRESS n=33 pressed=1 hot=0\r\nAIUEOS_GUEST_BROWSER_PRESS n=34 pressed=0 hot=1\r\n")
+
+(def ^:private pressed-ok
+  "AIUEOS_GUEST_BROWSER_PRESSED_OK events=2 down=pressed up=hot\r\n")
+
+(deftest guest-browser-pressed-state-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok)
+        mx (apply str (map max-line press-rows))
+        ok (str base mx press-lines pressed-ok)]
+    (testing "pressed while down, hot after: green"
+      (let [r (guest/classify "guest-browser-pressed-state" {:serial ok})]
+        (is (= :guest-browser-pressed-state (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "the earlier gates still read their own lines with the press lines present"
+      (is (= :guest-browser-cursor-shape (:reason (guest/classify "guest-browser-cursor-shape" {:serial ok})))))
+    (testing "a control that is not pressed while the button is down is red, and says which frame"
+      (let [r (guest/classify "guest-browser-pressed-state"
+                              {:serial (str base mx (.replace press-lines "n=33 pressed=1 hot=0" "n=33 pressed=0 hot=1") pressed-ok)})]
+        (is (= :pressed-colour-differs-from-model (:reason r)))
+        (is (= 33 (first (:kernel (:first-difference r)))))))
+    (testing "a control that stays pressed after the release is red"
+      (is (= :pressed-colour-differs-from-model
+             (:reason (guest/classify "guest-browser-pressed-state"
+                                      {:serial (str base mx (.replace press-lines "n=34 pressed=0 hot=1" "n=34 pressed=1 hot=0") pressed-ok)})))))
+    (testing "a press that changes the window state off the model is red"
+      (let [bad (assoc-in (vec press-rows) [0 4] "0,28,1280,720")]
+        (is (= :pressed-state-differs-from-model
+               (:reason (guest/classify "guest-browser-pressed-state"
+                                        {:serial (str base (apply str (map max-line bad)) press-lines pressed-ok)}))))))
+    (testing "it needs the cursor-shape gate green first"
+      (is (= :no-cursor-shape (:reason (guest/classify "guest-browser-pressed-state" {:serial (str mx press-lines pressed-ok)})))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :pressed-ok-missing (:reason (guest/classify "guest-browser-pressed-state" {:serial (str base mx press-lines)}))))
+      (is (= :guest-browser-pressed-state-absent (:reason (guest/classify "guest-browser-pressed-state" {:serial (str base pressed-ok)}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-pressed-state" {:serial ok :qemu-unmeasured? true})))))))

@@ -77,7 +77,8 @@
 ;;   2032           ADR-0248: the keyboard focus ring: 0 none, 1..4 launcher
 ;;                  button k, 5 the focused window's close control. Kotoba's
 ;;                  browser-ime.kotoba moves it (F6, Shift+F6); this object draws it
-;;   2033           not assigned
+;;   2033           ADR-0253: 1 while the pointer's button is down (C writes it on a
+;;                  press and a release); a hot control is then drawn pressed
 ;;   2034           scratch owned by this object (ADR-0240): the first
 ;;                  highlighted body index of the window being laid out, 64
 ;;                  for none
@@ -513,10 +514,20 @@
           (if (< py y) 0
             (if (>= py (+ y h)) 0 1)))))))
 
+;; ADR-0253: a hot control is drawn pressed while the pointer's button is down (surface word
+;; 2033, C's: 1 down, 0 up). #bfbfbf, or #e6b800 in the high-contrast palette (black on it is
+;; 11:1); hot and not pressed is as before.
+(defn pressed-rgb [s] (if (= (hc s) 1) 15120384 12566463))
+
+(defn ctl-rgb [s x y w h]
+  (if (= (hot s x y w h) 1)
+    (if (= (sw s 2033) 1) (pressed-rgb s) (hot-rgb s))
+    (face-rgb s)))
+
 (defn button [s f k]
   (if (= (bit-and (sw s 31) (app-bit k)) 0) 0
     (let [x (+ 6 (* 102 (- k 1)))]
-      (do (sput s 422 (if (= (hot s x 2 96 24) 1) (hot-rgb s) (face-rgb s)))
+      (do (sput s 422 (ctl-rgb s x 2 96 24))
           (put-rect s x 2 96 24)
           (sput s 420 (+ x 90)) (sput s 421 28)
           (sput s 426 0) (sput s 428 32)
@@ -578,7 +589,7 @@
   (if (= (max-ctl s w) 0) 0
     (let [gi (glyph-of s f 9633)
           gw (glyph-width s f gi)]
-      (do (sput s 422 (if (= (hot s (- (+ x w) 44) (+ y 6) 16 16) 1) (hot-rgb s) (face-rgb s)))
+      (do (sput s 422 (ctl-rgb s (- (+ x w) 44) (+ y 6) 16 16))
           (put-rect s (- (+ x w) 44) (+ y 6) 16 16)
           (sput s 422 (icon-rgb s))
           (put-glyph s (+ (- (+ x w) 44) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))
@@ -587,7 +598,7 @@
   (if (= (chrome s w) 0) 0
     (let [gi (glyph-of s f 215)
           gw (glyph-width s f gi)]
-      (do (sput s 422 (if (= (hot s (- (+ x w) 24) (+ y 6) 16 16) 1) (hot-rgb s) (face-rgb s)))
+      (do (sput s 422 (ctl-rgb s (- (+ x w) 24) (+ y 6) 16 16))
           (put-rect s (- (+ x w) 24) (+ y 6) 16 16)
           (sput s 422 (ink s))
           (put-glyph s (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) gi gw)))))

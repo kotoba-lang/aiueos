@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-pressed-state
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-pressed-state"]
+  :doc "Guest browser pressed state (ADR-0253) on KERNEL.ELF under QEMU, after the pointer moves: a hot control is drawn pressed while the pointer's button is down (surface word 2033, C's) and hot again after, decided by Kotoba in browser-frame2; the press and release frames equal browser-frame-model.cljk's."}
 
  :browser-desktop-cursor-shape
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-cursor-shape"]
