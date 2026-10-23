@@ -1194,13 +1194,16 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \
   -c -o "$kernel_memory_object" "$aiueos/kernel/memory.c"
+# ADR-0272: the virtio-sound driver is compiled into the guest-browser build only.
+kernel_pci_audio=
+if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then kernel_pci_audio=-DAIUEOS_AUDIO; fi
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $physical_network_qualification_cflags \
   $physical_direct_https_qualification_cflags \
   $murakumo_device_result_cflags \
   $physical_relay_qualification_cflags \
-  $physical_job_qualification_cflags \
+  $physical_job_qualification_cflags $kernel_pci_audio \
   -c -o "$kernel_pci_object" "$aiueos/kernel/pci.c"
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone \

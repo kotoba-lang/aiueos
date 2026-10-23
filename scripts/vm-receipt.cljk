@@ -5,6 +5,7 @@
 ;;
 ;;   kbb --backend sci --classpath src scripts/vm-receipt.cljk --serial F --out DIR --profiles a,b,c [--shots DIR]
 ;;       [--serial1 F]               the first boot's serial for a two-boot gate (guest-browser-settings keeps it as :serial1)
+;;       [--wav F]                   the WAV the sound card wrote (guest-browser-audio): passed to the classifier and kept beside the serial
 ;;       [--extra F]                 a second text (a gate's own output) that --require regexes also search; kept beside the serial
 ;;       [--require name=REGEX ...]  a verdict that is green when REGEX matches a line of the serial (for a gate that is
 ;;                                   not a compositor profile, e.g. the DHCP lease marker); --profiles may then be empty
@@ -31,12 +32,14 @@
                  [k re])
       shots (opt "--shots")
       serial (str (.readFileSync fs serial-path "utf8"))
+      wav-path (opt "--wav")
+      wav (when wav-path (.readFileSync fs wav-path))
       extra-path (opt "--extra")
       extra (when extra-path (str (.readFileSync fs extra-path "utf8")))
       serial1-path (opt "--serial1")
       serial1 (when serial1-path (str (.readFileSync fs serial1-path "utf8")))
       verdicts (into (into {} (for [p profiles]
-                                (let [r (g/classify p (cond-> {:serial serial} serial1 (assoc :serial1 serial1)))]
+                                (let [r (g/classify p (cond-> {:serial serial} serial1 (assoc :serial1 serial1) wav (assoc :wav wav)))]
                                   [p {:green? (boolean (:green? r)) :reason (:reason r)}])))
                      (for [[k re] requires]
                        [k {:green? (boolean (re-find (re-pattern (str "(?m)^" re)) (str serial "\n" extra))) :reason :marker :marker re}]))
@@ -50,11 +53,13 @@
                :host {:model (sh "sysctl -n hw.model") :cpu (sh "sysctl -n machdep.cpu.brand_string")
                       :os (sh "uname -srm") :qemu (sh "qemu-system-x86_64 --version | head -1")}
                :serial-sha256 (sha (.readFileSync fs serial-path))
+               :wav-sha256 (when wav-path (sha wav))
                :serial1-sha256 (when serial1-path (sha (.readFileSync fs serial1-path)))
                :verdicts verdicts
                :screenshots-sha256 shot-hashes}]
   (.mkdirSync fs out #js {:recursive true})
   (.writeFileSync fs (.join path out "kernel-serial.log") serial)
+  (when wav (.writeFileSync fs (.join path out "audio.wav") wav))
   (when extra (.writeFileSync fs (.join path out "gate-output.log") extra))
   (when serial1 (.writeFileSync fs (.join path out "kernel-serial.log.boot1") serial1))
   (.writeFileSync fs (.join path out "receipt.edn") (str (pr-str receipt) "\n"))

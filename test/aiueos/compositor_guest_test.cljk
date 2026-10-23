@@ -1616,6 +1616,75 @@
       (is (= :guest-browser-backup-absent (:reason (run s1))))
       (is (= 3 (:exit (guest/classify "guest-browser-backup" {:serial good :qemu-unmeasured? true})))))))
 
+(deftest guest-browser-audio-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        w1 @#'guest/settings-want-1
+        w2 @#'guest/settings-want-2
+        s1 (str through-sign-out
+                (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0 scale=100 net=0\r\n" w1)
+                "AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=1 created=1 pub=aabbccddeeff0011\r\n")
+        s1 (.replace s1 "SETTINGS_OK events=6" "SETTINGS_OK events=6")
+        cycle (str "AIUEOS_GUEST_BROWSER_BACKUP_TAKE settings=1111111111111111 passkey=2222222222222222\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_WIPE settings-valid=0 passkey-blank=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_RESTORE settings=1111111111111111 passkey=2222222222222222 settings-valid=1 contrast=1 scale=125 net=1 pub=aabbccddeeff0011 key-signs=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_BACKUP_OK sectors=2 byte-for-byte\r\n")
+        good (str s1 cycle)
+        audio (str "AIUEOS_GUEST_BROWSER_AUDIO_REG ready=1 streams=2\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_GO events=4\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 vol=100 frames=26460 accepted=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=1 key=457 vol=75\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=2 key=456 vol=75\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=3 key=457 vol=50\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=4 key=456 vol=50\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=2 vol=50 frames=26460 accepted=1\r\n"
+                   "AIUEOS_GUEST_BROWSER_AUDIO_OK plays=2 volumes=100,50\r\n")
+        good (str s1 cycle audio)
+        ;; a WAV: 44100 Hz stereo S16, each burst 0.1 s silence + 0.4 s of a 440 Hz sine at the given amplitude + 0.1 s silence
+        wav (fn [amps]
+              (let [rate 44100 per (* rate 0.6) n (* per (count amps)) bytes (js/Uint8Array. (+ 44 (* 4 n)))
+                    put32 (fn [off v] (doseq [k (range 4)] (aset bytes (+ off k) (bit-and (js/Math.floor (/ v (js/Math.pow 256 k))) 255))))
+                    put16 (fn [off v] (aset bytes off (bit-and v 255)) (aset bytes (inc off) (bit-and (bit-shift-right v 8) 255)))]
+                (doseq [[o t] [[0 "RIFF"] [8 "WAVE"] [12 "fmt "] [36 "data"]]] (doseq [k (range 4)] (aset bytes (+ o k) (.charCodeAt t k))))
+                (put32 4 (+ 36 (* 4 n))) (put32 16 16) (put16 20 1) (put16 22 2) (put32 24 rate) (put32 28 (* rate 4)) (put16 32 4) (put16 34 16) (put32 40 (* 4 n))
+                (dotimes [i n]
+                  (let [b (js/Math.floor (/ i per)) k (- i (* b per))
+                        v (if (and (>= k (* rate 0.1)) (< k (* rate 0.5)))
+                            (js/Math.round (* (nth amps b) 32767 (js/Math.sin (* 2 js/Math.PI 440 (/ k rate)))))
+                            0)
+                        u (bit-and v 65535)]
+                    (put16 (+ 44 (* 4 i)) u) (put16 (+ 46 (* 4 i)) u)))
+                bytes))
+        run (fn [serial w] (guest/classify "guest-browser-audio" {:serial serial :wav w}))]
+    (testing "two 440 Hz bursts, the second at half the level, volume keys and plays as the kernel printed them: green"
+      (let [r (run good (wav [1.0 0.5]))]
+        (is (= :guest-browser-audio (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a second burst at the same level is red (the volume did not take effect)"
+      (is (= :second-burst-not-at-half-level (:reason (run good (wav [1.0 1.0]))))))
+    (testing "a quiet first burst is red"
+      (is (= :first-burst-not-at-full-level (:reason (run good (wav [0.3 0.15]))))))
+    (testing "a WAV with one burst is red"
+      (is (= :wav-does-not-hold-two-bursts (:reason (run good (wav [1.0]))))))
+    (testing "no WAV is red, a non-WAV is red"
+      (is (= :no-wav (:reason (run good nil))))
+      (is (= :not-a-wav (:reason (run good (js/Uint8Array. 100))))))
+    (testing "the kernel's word alone is not enough: a wrong volume line is red"
+      (is (= :volume-keys-wrong (:reason (run (.replace good "key=457 vol=50" "key=457 vol=75") (wav [1.0 0.5]))))))
+    (testing "it needs the backup gate green first; no card is absent; unmeasured is exit 3"
+      (is (= :no-backup (:reason (run (str s1 audio) (wav [1.0 0.5])))))
+      (is (= :guest-browser-audio-absent (:reason (run (str s1 cycle) (wav [1.0 0.5])))))
+      (is (= 3 (:exit (guest/classify "guest-browser-audio" {:serial good :wav (wav [1.0 0.5]) :qemu-unmeasured? true})))))))
+
 (def ^:private scale-rows
   ;; n key pct vw vh win ops text-px hash
   [[1 349 100 1280 800 "0,28,1280,720" 71 582 "25c93f77"]

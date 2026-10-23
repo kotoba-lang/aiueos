@@ -307,6 +307,11 @@ fi
 # a fixed topology — it answers ARP for 10.0.2.2 — which is what lets the first
 # packet aiueos ever sends be checked against an actual reply rather than a
 # loopback of itself. No host network access is involved.
+# ADR-0272: a virtio sound card whose output goes to a WAV file next to the serial log, so the sound the guest plays can be measured on the host.
+audio_args=
+if [ "${AIUEOS_TEST_AUDIO:-0}" = 1 ]; then
+  audio_args="-audiodev wav,id=aiueossnd,path=$out/audio.wav -device virtio-sound-pci,audiodev=aiueossnd"
+fi
 net_args=
 if [ "${AIUEOS_TEST_NET:-0}" = 1 ]; then
   # `guestfwd` gives the guest a TCP peer without any external network: QEMU
@@ -933,6 +938,18 @@ while time.time() < end:
                 recv_obj()
                 globals()["notify_sent"] = k + 1
                 log("notify event " + str(k + 1) + " sent")
+        # ADR-0272: four key events for the audio stage (when a sound card is attached): the volume-down key twice, down then up, after the
+        # guest has played the first tone burst and each after the guest's line for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 " in serial_now and globals().get("audio_sent", 0) < 4:
+            k = globals().get("audio_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": "volumedown"}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["audio_sent"] = k + 1
+                log("audio event " + str(k + 1) + " sent")
         # ADR-0270: ten key events for the passkey stage, after the notification stage: Ctrl+Alt+L (the lock), F3 (a passkey of
         # another device: refused), F4 (this device's passkey: the session opens), each down then up, each after the guest's line
         # for the one before.
@@ -1213,6 +1230,7 @@ PY
     $tpm_args \
     $usb_args \
     $net_args \
+    $audio_args \
     -device virtio-rng-pci \
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
