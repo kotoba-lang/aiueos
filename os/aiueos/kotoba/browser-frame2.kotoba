@@ -597,7 +597,9 @@
         (put-rect s x y 120 24)
         (sput s 420 (+ x 114)) (sput s 421 (+ y 26))
         (sput s 426 0) (sput s 428 32)
-        (text-block s f (+ 32 (* 32 (- k 1))) (+ x 6) (+ y 4)))))
+        (text-block s f (+ 32 (* 32 (- k 1))) (+ x 6) (+ y 4))
+        ;; ADR-0262: the focus ring on tray button i is ring target 8 + i
+        (if (= (sw s 2032) (+ 8 i)) (put-ring s x y 120 24) 0))))
 
 (defn tray [s f k i vh]
   (if (> k 4) 0
@@ -801,7 +803,18 @@
             0)
           0)
         (max-control s f x y w)
+        ;; ADR-0262: the keyboard focus ring on the focused window's maximize (6) and minimize (7) controls
+        (if (= focused 1)
+          (if (= (sw s 2032) 6)
+            (if (= (max-ctl s w) 1) (put-ring s (- (+ x w) 44) (+ y 6) 16 16) 0)
+            0)
+          0)
         (min-control s x y w)
+        (if (= focused 1)
+          (if (= (sw s 2032) 7)
+            (if (= (min-ctl s w) 1) (put-ring s (- (+ x w) 64) (+ y 6) 16 16) 0)
+            0)
+          0)
         ;; body: cssom's flow from (x + 14, y + 42), cut at the bottom inset;
         ;; the composition after it wraps at x + w - 14 (0 when that is left
         ;; of the viewport: every glyph then wraps, as a negative limit would).

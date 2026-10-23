@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: every shell control is reachable and activatable from the keyboard (ADR-0262)
+- The focus ring (F6) now has eleven targets: launcher buttons, the focused window\'s close, maximize and minimize controls and
+  the tray\'s buttons; Enter presses the one it is on through the same path as the pointer. `guest-browser-keyboard-only` gates it.
+
 ### desktop: a UI scale of 100/125/150 percent (ADR-0261)
 - Ctrl+= and Ctrl+- choose the scale (Kotoba); C magnifies what it paints and sets the logical viewport; Kotoba fits the
   windows into it. `guest-browser-ui-scale` gates it with a model that paints the scale as the present does. The op

@@ -1566,3 +1566,135 @@
     (testing "no lines is absent, unmeasured is exit 3"
       (is (= :guest-browser-settings-absent (:reason (run {:serial through-sign-out :serial1 boot1}))))
       (is (= 3 (:exit (run {:serial boot2 :serial1 boot1 :qemu-unmeasured? true})))))))
+
+(def ^:private scale-rows
+  ;; n key pct vw vh win ops text-px hash
+  [[1 349 100 1280 800 "0,28,1280,720" 71 582 "25c93f77"]
+   [2 348 100 1280 800 "0,28,1280,720" 71 582 "25c93f77"]
+   [3 117 100 1280 800 "0,28,1280,720" 71 582 "25c93f77"]
+   [4 53 125 1024 640 "0,28,1024,612" 70 1536 "48a15000"]
+   [5 52 125 1024 640 "0,28,1024,612" 70 1536 "48a15000"]
+   [6 53 150 853 533 "0,28,853,505" 70 1828 "67c770b1"]
+   [7 52 150 853 533 "0,28,853,505" 70 1828 "67c770b1"]
+   [8 53 150 853 533 "0,28,853,505" 70 1828 "67c770b1"]
+   [9 52 150 853 533 "0,28,853,505" 70 1828 "67c770b1"]
+   [10 49 125 1024 640 "0,28,853,505" 72 1536 "48a15000"]
+   [11 48 125 1024 640 "0,28,853,505" 72 1536 "48a15000"]
+   [12 49 100 1280 800 "0,28,853,505" 72 582 "25c93f77"]
+   [13 48 100 1280 800 "0,28,853,505" 72 582 "25c93f77"]
+   [14 116 100 1280 800 "0,28,853,505" 72 582 "25c93f77"]
+   [15 349 100 1280 800 "80,80,520,360" 72 582 "60620c8b"]
+   [16 348 100 1280 800 "80,80,520,360" 72 582 "60620c8b"]])
+
+(defn- scale-line [[n key pct vw vh win ops px h]]
+  (str "AIUEOS_GUEST_BROWSER_SCALE n=" n " key=" key " pct=" pct " vw=" vw " vh=" vh " win=" win
+       " ops=" ops " text-px=" px " hash=" h "\r\n"))
+
+(def ^:private scale-ok "AIUEOS_GUEST_BROWSER_SCALE_OK events=16\r\n")
+
+(deftest guest-browser-ui-scale-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        sc (apply str (map scale-line scale-rows))
+        ok (str through-sign-out sc scale-ok)
+        run (fn [serial] (guest/classify "guest-browser-ui-scale" {:serial serial}))]
+    (testing "scaled in two steps, held at 150, back to 100 and restored: green"
+      (let [r (run ok)]
+        (is (= :guest-browser-ui-scale (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "a window that leaves the viewport is red (and so is anything the model does not say)"
+      (is (= :ui-scale-differs-from-model
+             (:reason (run (.replace ok "pct=150 vw=853 vh=533 win=0,28,853,505" "pct=150 vw=853 vh=533 win=0,28,1024,612"))))))
+    (testing "a scale that did not change the frame is red"
+      (is (= :ui-scale-differs-from-model
+             (:reason (run (.replace ok "pct=125 vw=1024 vh=640 win=0,28,1024,612 ops=70 text-px=1536" "pct=125 vw=1024 vh=640 win=0,28,1024,612 ops=70 text-px=582"))))))
+    (testing "a fourth step past 150 would be red"
+      (is (= :ui-scale-differs-from-model
+             (:reason (run (.replace ok "n=8 key=53 pct=150 vw=853" "n=8 key=53 pct=175 vw=731"))))))
+    (testing "it needs the sign-out gate green first"
+      (is (= :no-sign-out (:reason (run (str sc scale-ok))))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :ui-scale-ok-missing (:reason (run (str through-sign-out sc)))))
+      (is (= :guest-browser-ui-scale-absent (:reason (run (str through-sign-out scale-ok)))))
+      (is (= 3 (:exit (guest/classify "guest-browser-ui-scale" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private ring-rows
+  ;; n key ring windows focus stack min top ops text-px hash
+  [[1 257 1 1 1 "1" 0 "80,80,520,360" 76 582 "60620c8b"]
+   [2 256 1 1 1 "1" 0 "80,80,520,360" 76 582 "60620c8b"]
+   [3 257 2 1 1 "1" 0 "80,80,520,360" 76 582 "60620c8b"]
+   [4 256 2 1 1 "1" 0 "80,80,520,360" 76 582 "60620c8b"]
+   [5 113 2 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [6 112 2 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [7 257 3 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [8 256 3 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [9 257 4 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [10 256 4 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [11 257 5 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [12 256 5 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [13 257 6 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [14 256 6 2 2 "12" 0 "80,80,520,360" 96 595 "71f2d5d8"]
+   [15 113 6 2 2 "12" 0 "0,28,1280,720" 95 595 "181f1694"]
+   [16 112 6 2 2 "12" 0 "0,28,1280,720" 95 595 "181f1694"]
+   [17 257 7 2 2 "12" 0 "0,28,1280,720" 95 595 "181f1694"]
+   [18 256 7 2 2 "12" 0 "0,28,1280,720" 95 595 "181f1694"]
+   [19 113 7 2 1 "12" 2 "0,28,1280,720" 78 702 "1b23b022"]
+   [20 112 7 2 1 "12" 2 "0,28,1280,720" 78 702 "1b23b022"]
+   [21 257 8 2 1 "12" 2 "0,28,1280,720" 82 702 "1b23b022"]
+   [22 256 8 2 1 "12" 2 "0,28,1280,720" 82 702 "1b23b022"]
+   [23 113 8 2 2 "12" 0 "0,28,1280,720" 91 595 "181f1694"]
+   [24 112 8 2 2 "12" 0 "0,28,1280,720" 91 595 "181f1694"]
+   [25 257 0 2 2 "12" 0 "0,28,1280,720" 91 595 "181f1694"]
+   [26 256 0 2 2 "12" 0 "0,28,1280,720" 91 595 "181f1694"]
+   [27 5 0 1 1 "1" 0 "80,80,520,360" 72 582 "60620c8b"]
+   [28 4 0 1 1 "1" 0 "80,80,520,360" 72 582 "60620c8b"]])
+
+(defn- ring-line [[n key ring w f st mn top ops px h]]
+  (str "AIUEOS_GUEST_BROWSER_RING n=" n " key=" key " ring=" ring " windows=" w " focus=" f " stack=" st
+       " min=" mn " top=" top " ops=" ops " text-px=" px " hash=" h "\r\n"))
+
+(deftest guest-browser-keyboard-only-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
+                  (apply str (map max-line shape-rows)) shape-ok
+                  (apply str (map max-line press-rows)) press-lines pressed-ok)
+        mn (apply str (map min-line min-rows))
+        pre (str base mn min-reg-lines minimize-ok)
+        lines (apply str (map lock-line lock-rows))
+        states (apply str (map lock-state-line lock-state-rows))
+        lock-part (str pre lines states screen-lock-ok)
+        so (apply str (map so-line so-rows))
+        so-states (apply str (map lock-state-line so-lock-rows))
+        through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
+        rg (apply str (map ring-line ring-rows))
+        ring-ok "AIUEOS_GUEST_BROWSER_RING_OK events=28\r\n"
+        ok (str through-sign-out rg ring-ok)
+        run (fn [serial] (guest/classify "guest-browser-keyboard-only" {:serial serial}))]
+    (testing "every control reached and activated from the keyboard: green"
+      (let [r (run ok)]
+        (is (= :guest-browser-keyboard-only (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "an Enter that opened no window is red, and says which frame"
+      (let [r (run (.replace ok "n=5 key=113 ring=2 windows=2 focus=2 stack=12" "n=5 key=113 ring=2 windows=1 focus=1 stack=1"))]
+        (is (= :keyboard-only-differs-from-model (:reason r)))
+        (is (= 5 (:n (:kernel (:first-difference r)))))))
+    (testing "a ring that stopped before the tray is red"
+      (is (= :keyboard-only-differs-from-model
+             (:reason (run (.replace ok "n=21 key=257 ring=8" "n=21 key=257 ring=0"))))))
+    (testing "a pointer event among the keys is red"
+      (is (= :keyboard-only-differs-from-model
+             (:reason (run (.replace ok "n=1 key=257" "n=1 key=1"))))))
+    (testing "it needs the sign-out gate green first"
+      (is (= :no-sign-out (:reason (run (str rg ring-ok))))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :keyboard-only-ok-missing (:reason (run (str through-sign-out rg)))))
+      (is (= :guest-browser-keyboard-only-absent (:reason (run (str through-sign-out ring-ok)))))
+      (is (= 3 (:exit (guest/classify "guest-browser-keyboard-only" {:serial ok :qemu-unmeasured? true})))))))

@@ -854,6 +854,21 @@ while time.time() < end:
                 recv_obj()
                 globals()["uiux_sent"] = k + 1
                 log("uiux event " + str(k + 1) + " sent")
+        # ADR-0262: twenty-eight keys for the keyboard-only stage, after the scale stage: F6, Enter and Escape, down and up.
+        if typing and b"AIUEOS_GUEST_BROWSER_RING_GO" in serial_now and globals().get("ring_sent", 0) < 28:
+            k = globals().get("ring_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_RING n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                press = (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24)
+                # F6 F6 Enter  F6 F6 F6 F6  Enter  F6  Enter  F6  Enter  F6  Esc, each down then up
+                keys = ["f6", "f6", "ret", "f6", "f6", "f6", "f6", "ret", "f6", "ret", "f6", "ret", "f6", "esc"]
+                qc = keys[k // 2]
+                ev = [{"type": "key", "data": {"down": k % 2 == 0, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["ring_sent"] = k + 1
+                log("ring event " + str(k + 1) + " sent")
         # ADR-0261: sixteen keys for the UI scale stage, after the sign-out stage: F11, Ctrl down, '=' three
         # times (125, 150, 150), '-' twice (125, 100), Ctrl up, F11. Each waits for the guest's line for the one before.
         if typing and b"AIUEOS_GUEST_BROWSER_SCALE_GO" in serial_now and globals().get("scale_sent", 0) < 16:
