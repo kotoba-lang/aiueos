@@ -41,6 +41,14 @@
                          (str "no task " g)))
       (= tok "gate") (let [g (second (str/split e #"\s+"))]
                        (when-not (.includes guest-text (str "\"" g "\"")) (str "no guest profile " g)))
+      (= tok "receipt") (let [f (second (str/split e #"\s+"))]
+                          (if-not (exists? f)
+                            (str "no receipt " f)
+                            (let [r (edn/read-string (str (.readFileSync fs (.join path root f) "utf8")))
+                                  bad (remove #(:green? (val %)) (:verdicts r))]
+                              (cond (not (re-find #"^[0-9a-f]{40}$" (str (:commit r)))) (str "receipt " f " names no commit")
+                                    (empty? (:verdicts r)) (str "receipt " f " names no verdict")
+                                    (seq bad) (str "receipt " f " has a red verdict " (key (first bad)))))))
       (re-find #"\.(md|sh|edn)$" tok)
       (when-not (or (exists? tok) (exists? "os" "aiueos" "scripts" tok) (exists? "docs" tok))
         (str "no file " tok))
@@ -60,6 +68,11 @@
      (for [r rows :when (not (#{:pass :unachieved} (:status r)))] (str (:id r) ": status must be :pass or :unachieved"))
      (for [r rows :when (not (#{:pass :partial :none} (:qemu-progress r)))] (str (:id r) ": unknown qemu-progress"))
      (for [r rows :when (and (= :pass (:status r)) (empty? (:evidence r)))] (str (:id r) ": :pass without evidence"))
+     (for [r rows :when (and (= :pass (:status r)) (not-any? #(str/starts-with? % "receipt ") (:evidence r)))]
+       (str (:id r) ": :pass without a receipt of a run"))
+     (for [r rows :when (and (= :pass (:status r)) (#{:release :user} (:required-level r))
+                             (not (get-in data [:reference-machine :release-receipt-ok])))]
+       (str (:id r) ": :pass at " (name (:required-level r)) " level on a VM receipt alone"))
      (for [r rows :when (and (= :pass (:status r)) (not confirmed?))]
        (str (:id r) ": :pass while the reference machine is not confirmed by the owner"))
      (for [r rows e (:evidence r) :let [p (evidence-problem e)] :when p] (str (:id r) ": " p)))))
@@ -81,7 +94,7 @@
           p (reduce + (map :weight (filter #(= :pass (:status %)) rs)))
           q (reduce + (map #(* (:weight %) ({:pass 1.0 :partial 0.5 :none 0.0} (:qemu-progress %))) rs))]
       (println (str "  " (name c) " (" title "): weight " w ", pass " p ", qemu-progress " (/ (js/Math.round (* 10 q)) 10)))))
-  (println (str "SCORE " (pct score) "   (weight of :pass rows over 100; QEMU, design and hosted evidence do not count)"))
+  (println (str "SCORE " (pct score) "   (weight of :pass rows over 100; a :pass needs a receipt of a run in the reference VM; design and hosted evidence do not count)"))
   (println (str "QEMU-PROGRESS " (pct prog) "   (not part of the score: pass = 1, partial = 1/2, none = 0, by weight)"))
   (when (get args 0)
     (when (some #{"--markdown"} args)

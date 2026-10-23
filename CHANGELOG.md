@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### scorecard: the owner's VM is the reference; ten rows pass by receipt (17%)
+- Reference = the owner's Mac VM (QEMU + UEFI), counted as :device-level evidence when a receipt is kept
+  (`scripts/vm-receipt.cljk`, `os/aiueos/qualification/receipts/vm-20261023/`). C1 C2 C3 C4 D1 D2 D4 D7 G4 I5 are :pass;
+  the checker refuses a :pass without a readable receipt with green verdicts. Expected behaviours not re-measured in a ChromeOS VM.
+
 ### desktop: the close control of the only visible window is disabled (ADR-0257)
 - browser-frame2 draws it greyed and never hot; the refused press is measured. `guest-browser-minimize` is 26 events.
 
