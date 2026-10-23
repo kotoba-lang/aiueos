@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1481,7 +1481,7 @@
 ;; the frames boot one drew.
 
 (def ^:private settings-want
-  [{:n 1 :hc 1 :ops 72 :px 582 :hash "60620c8b"} {:n 2 :hc 1 :ops 72 :px 582 :hash "60620c8b"}])
+  [{:n 1 :hc 1 :ops 77 :px 668 :hash "bed963dd"} {:n 2 :hc 1 :ops 77 :px 668 :hash "bed963dd"}])
 
 (defn- settings-lines [s]
   (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
@@ -1673,6 +1673,133 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-keyboard-only
        :leftover [:window-contents-have-nothing-to-focus :no-move-or-resize-by-key :draw-list-not-pixels]})))
+
+;; Guest browser text editing (ADR-0263): after the keyboard-only stage the host sends seventy-two keys to the clean
+;; session's window 1, whose body is empty: "ab cd" typed; Home, Right Right; Ctrl+Right and Ctrl+Left (by word); Left;
+;; x typed at the caret and Ctrl+Z undoing it; Shift+Right Shift+Right selecting " c", Backspace deleting the
+;; selection and Ctrl+Z bringing it back; Delete; Enter and e (a second line); Left Left (onto the line break), End,
+;; Home, End, Right, End; Shift+Home selecting the second line, and Left collapsing it. The kernel prints
+;; AIUEOS_GUEST_BROWSER_EDIT n= key= text= caret= sel= ops= text-px= hash= (text: _ is a space, | a line break;
+;; caret and selection are read back from the surface's words). Green needs the keyboard-only gate green on the same
+;; serial, the lines equal to browser-frame-model.cljk's ("edit-frame": a model of the editing rules written apart from
+;; the Kotoba, and the frame it draws), and, apart from the model, the text and caret at the steps that name the
+;; rules: typed, moved by word, inserted in the middle, undone, selected, deleted, restored, lines separate.
+
+(def ^:private edit-want
+  [{:n 1 :key 121 :text "a" :caret 1 :sel "-" :ops 73 :px 605 :hash "e6295770"}
+   {:n 2 :key 120 :text "a" :caret 1 :sel "-" :ops 73 :px 605 :hash "e6295770"}
+   {:n 3 :key 193 :text "ab" :caret 2 :sel "-" :ops 74 :px 630 :hash "405532b4"}
+   {:n 4 :key 192 :text "ab" :caret 2 :sel "-" :ops 74 :px 630 :hash "405532b4"}
+   {:n 5 :key 229 :text "ab_" :caret 3 :sel "-" :ops 75 :px 630 :hash "f33d3c14"}
+   {:n 6 :key 228 :text "ab_" :caret 3 :sel "-" :ops 75 :px 630 :hash "f33d3c14"}
+   {:n 7 :key 185 :text "ab_c" :caret 4 :sel "-" :ops 76 :px 646 :hash "fac661e4"}
+   {:n 8 :key 184 :text "ab_c" :caret 4 :sel "-" :ops 76 :px 646 :hash "fac661e4"}
+   {:n 9 :key 129 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 10 :key 128 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 11 :key 409 :text "ab_cd" :caret 0 :sel "-" :ops 77 :px 671 :hash "41da75f3"}
+   {:n 12 :key 408 :text "ab_cd" :caret 0 :sel "-" :ops 77 :px 671 :hash "41da75f3"}
+   {:n 13 :key 425 :text "ab_cd" :caret 1 :sel "-" :ops 77 :px 671 :hash "8a3afa63"}
+   {:n 14 :key 424 :text "ab_cd" :caret 1 :sel "-" :ops 77 :px 671 :hash "8a3afa63"}
+   {:n 15 :key 425 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 16 :key 424 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 17 :key 117 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 18 :key 425 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 19 :key 424 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 20 :key 116 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 21 :key 117 :text "ab_cd" :caret 5 :sel "-" :ops 77 :px 671 :hash "18d395f3"}
+   {:n 22 :key 421 :text "ab_cd" :caret 3 :sel "-" :ops 77 :px 671 :hash "53d98f93"}
+   {:n 23 :key 420 :text "ab_cd" :caret 3 :sel "-" :ops 77 :px 671 :hash "53d98f93"}
+   {:n 24 :key 116 :text "ab_cd" :caret 3 :sel "-" :ops 77 :px 671 :hash "53d98f93"}
+   {:n 25 :key 421 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 26 :key 420 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 27 :key 181 :text "abx_cd" :caret 3 :sel "-" :ops 78 :px 687 :hash "f1e195eb"}
+   {:n 28 :key 180 :text "abx_cd" :caret 3 :sel "-" :ops 78 :px 687 :hash "f1e195eb"}
+   {:n 29 :key 117 :text "abx_cd" :caret 3 :sel "-" :ops 78 :px 687 :hash "f1e195eb"}
+   {:n 30 :key 177 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 31 :key 176 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 32 :key 116 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 33 :key 169 :text "ab_cd" :caret 2 :sel "-" :ops 77 :px 671 :hash "820e7b73"}
+   {:n 34 :key 425 :text "ab_cd" :caret 3 :sel "2,3" :ops 77 :px 655 :hash "0572dfb3"}
+   {:n 35 :key 424 :text "ab_cd" :caret 3 :sel "2,3" :ops 77 :px 655 :hash "0572dfb3"}
+   {:n 36 :key 168 :text "ab_cd" :caret 3 :sel "2,3" :ops 77 :px 655 :hash "0572dfb3"}
+   {:n 37 :key 169 :text "ab_cd" :caret 3 :sel "2,3" :ops 77 :px 655 :hash "0572dfb3"}
+   {:n 38 :key 425 :text "ab_cd" :caret 4 :sel "2,4" :ops 78 :px 655 :hash "0572dfb3"}
+   {:n 39 :key 424 :text "ab_cd" :caret 4 :sel "2,4" :ops 78 :px 655 :hash "0572dfb3"}
+   {:n 40 :key 168 :text "ab_cd" :caret 4 :sel "2,4" :ops 78 :px 655 :hash "0572dfb3"}
+   {:n 41 :key 57 :text "abd" :caret 2 :sel "-" :ops 75 :px 655 :hash "8ace5a83"}
+   {:n 42 :key 56 :text "abd" :caret 2 :sel "-" :ops 75 :px 655 :hash "8ace5a83"}
+   {:n 43 :key 117 :text "abd" :caret 2 :sel "-" :ops 75 :px 655 :hash "8ace5a83"}
+   {:n 44 :key 177 :text "ab_cd" :caret 4 :sel "-" :ops 77 :px 671 :hash "ab1c90b3"}
+   {:n 45 :key 176 :text "ab_cd" :caret 4 :sel "-" :ops 77 :px 671 :hash "ab1c90b3"}
+   {:n 46 :key 116 :text "ab_cd" :caret 4 :sel "-" :ops 77 :px 671 :hash "ab1c90b3"}
+   {:n 47 :key 445 :text "ab_c" :caret 4 :sel "-" :ops 76 :px 646 :hash "fac661e4"}
+   {:n 48 :key 444 :text "ab_c" :caret 4 :sel "-" :ops 76 :px 646 :hash "fac661e4"}
+   {:n 49 :key 113 :text "ab_c|" :caret 5 :sel "-" :ops 76 :px 646 :hash "f9284304"}
+   {:n 50 :key 112 :text "ab_c|" :caret 5 :sel "-" :ops 76 :px 646 :hash "f9284304"}
+   {:n 51 :key 73 :text "ab_c|e" :caret 6 :sel "-" :ops 77 :px 668 :hash "5f4bf19d"}
+   {:n 52 :key 72 :text "ab_c|e" :caret 6 :sel "-" :ops 77 :px 668 :hash "5f4bf19d"}
+   {:n 53 :key 421 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}
+   {:n 54 :key 420 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}
+   {:n 55 :key 421 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 56 :key 420 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 57 :key 429 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 58 :key 428 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 59 :key 409 :text "ab_c|e" :caret 0 :sel "-" :ops 77 :px 668 :hash "e4c578bd"}
+   {:n 60 :key 408 :text "ab_c|e" :caret 0 :sel "-" :ops 77 :px 668 :hash "e4c578bd"}
+   {:n 61 :key 429 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 62 :key 428 :text "ab_c|e" :caret 4 :sel "-" :ops 77 :px 668 :hash "9b5013bd"}
+   {:n 63 :key 425 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}
+   {:n 64 :key 424 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}
+   {:n 65 :key 429 :text "ab_c|e" :caret 6 :sel "-" :ops 77 :px 668 :hash "5f4bf19d"}
+   {:n 66 :key 428 :text "ab_c|e" :caret 6 :sel "-" :ops 77 :px 668 :hash "5f4bf19d"}
+   {:n 67 :key 169 :text "ab_c|e" :caret 6 :sel "-" :ops 77 :px 668 :hash "5f4bf19d"}
+   {:n 68 :key 409 :text "ab_c|e" :caret 5 :sel "5,6" :ops 77 :px 652 :hash "62e7291d"}
+   {:n 69 :key 408 :text "ab_c|e" :caret 5 :sel "5,6" :ops 77 :px 652 :hash "62e7291d"}
+   {:n 70 :key 168 :text "ab_c|e" :caret 5 :sel "5,6" :ops 77 :px 652 :hash "62e7291d"}
+   {:n 71 :key 421 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}
+   {:n 72 :key 420 :text "ab_c|e" :caret 5 :sel "-" :ops 77 :px 668 :hash "bed963dd"}])
+
+(defn- edit-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_EDIT n=(\d+) key=(\d+) text=(\S*) caret=(\d+) sel=(\S+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key text caret sel ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :text text :caret (parse-long caret) :sel sel
+                :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-text-edit-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (edit-lines serial)
+        at (fn [n] (nth ls (dec n) nil))
+        text= (fn [n t c] (let [l (at n)] (and l (= t (:text l)) (= c (:caret l)))))
+        ring (guest-browser-keyboard-only-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? ring))
+      (assoc ring :reason :no-keyboard-only :leftover (into [:no-keyboard-only] (:leftover ring)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-text-edit-absent :leftover [:guest-browser-text-edit-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_EDIT_OK events=72" (or serial "")))
+      {:green? false :exit 1 :reason :text-edit-ok-missing :leftover [:text-edit-ok-missing]}
+      (not= ls edit-want)
+      {:green? false :exit 1 :reason :text-edit-differs-from-model :leftover [:text-edit-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) edit-want)))}
+      ;; the rules, by name
+      (not (and (text= 9 "ab_cd" 5) (text= 11 "ab_cd" 0) (text= 15 "ab_cd" 2)))
+      {:green? false :exit 1 :reason :typed-or-caret-moves-wrong :leftover [:typed-or-caret-moves-wrong]}
+      (not (and (text= 18 "ab_cd" 5) (text= 22 "ab_cd" 3)))
+      {:green? false :exit 1 :reason :word-moves-wrong :leftover [:word-moves-wrong]}
+      (not (and (text= 27 "abx_cd" 3) (text= 30 "ab_cd" 2)))
+      {:green? false :exit 1 :reason :insert-in-the-middle-or-undo-wrong :leftover [:insert-in-the-middle-or-undo-wrong]}
+      (not (and (= "2,4" (:sel (at 38))) (text= 41 "abd" 2) (text= 44 "ab_cd" 4)))
+      {:green? false :exit 1 :reason :selection-delete-or-undo-wrong :leftover [:selection-delete-or-undo-wrong]}
+      (not (and (text= 47 "ab_c" 4) (text= 49 "ab_c|" 5) (text= 51 "ab_c|e" 6)))
+      {:green? false :exit 1 :reason :delete-or-lines-wrong :leftover [:delete-or-lines-wrong]}
+      (not (and (text= 57 "ab_c|e" 4) (text= 59 "ab_c|e" 0) (text= 61 "ab_c|e" 4) (text= 65 "ab_c|e" 6)))
+      {:green? false :exit 1 :reason :line-start-or-end-wrong :leftover [:line-start-or-end-wrong]}
+      (not (and (= "5,6" (:sel (at 68))) (text= 71 "ab_c|e" 5) (= "-" (:sel (at 71)))))
+      {:green? false :exit 1 :reason :shift-home-or-collapse-wrong :leftover [:shift-home-or-collapse-wrong]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-text-edit
+       :leftover [:undo-is-one-step :english-direct-typing-only :no-composition-in-the-middle :no-up-down :no-mouse-caret :draw-list-not-pixels]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -2126,6 +2253,9 @@
     ;; ADR-0262: the keyboard-only keys come after the scale stage.
     "guest-browser-keyboard-only" {"AIUEOS_GUEST_BROWSER" "1"
                                    "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0263: the editing keys come after the keyboard-only stage.
+    "guest-browser-text-edit" {"AIUEOS_GUEST_BROWSER" "1"
+                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2173,6 +2303,7 @@
     "guest-browser-settings" (guest-browser-settings-result opts)
     "guest-browser-ui-scale" (guest-browser-ui-scale-result opts)
     "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
+    "guest-browser-text-edit" (guest-browser-text-edit-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2221,6 +2352,7 @@
     "guest-browser-settings" "AIUEOS_GUEST_BROWSER_SETTINGS"
     "guest-browser-ui-scale" "AIUEOS_GUEST_BROWSER_SCALE"
     "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
+    "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2269,6 +2401,7 @@
     "guest-browser-settings" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SETTINGS_OK"
     "guest-browser-ui-scale" "AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK"
     "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
+    "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

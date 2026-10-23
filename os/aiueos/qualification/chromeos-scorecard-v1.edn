@@ -275,9 +275,9 @@
    :procedure "Caret, selection, delete, word movement, line start/end, undo."
    :expected "Each edits as in a text field."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-caret" "gate guest-browser-selection" "ADR-0232" "ADR-0240"]
-   :note "Caret, selection and delete are gated; word movement and undo are not."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-caret" "gate guest-browser-selection" "ADR-0232" "ADR-0240" "gate guest-browser-text-edit" "ADR-0263" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "The caret is an index and editing follows it: typing and Enter at the caret, Left/Right/Home/End, Ctrl+Left/Right by word, Shift extending a selection, Backspace and Delete, Ctrl+Z undoing the last edit; every step equals a model of the rules written apart from the Kotoba. Undo is one step (no redo), no pointer-placed caret, no Up/Down, no composition at the caret in the middle of the text."
    }
   {:id :D7 :category :input :title "Copy and paste with permission"
    :weight 1 :required true :required-level :device

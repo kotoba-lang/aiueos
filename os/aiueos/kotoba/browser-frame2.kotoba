@@ -362,11 +362,14 @@
   ;; the bottom inset (and, ADR-0234, it is inside the viewport: an
   ;; overflowing body can leave the cursor past it). It never wraps.
   ;; ADR-0238: nor when its top is above the top inset; drawn the offset higher.
-  (if (> (+ (sw s 418) 16) (sw s 421)) 0
-    (if (< (sw s 418) (sw s 2044)) 0
-      (if (> (+ (sw s 417) 1) (sw s 3)) 0
-        (do (sput s 422 (ink s))
-            (put-rect s (sw s 417) (- (sw s 418) (sw s 2045)) 1 16))))))
+  ;; ADR-0263: where the caret's index was reached (2007, 2008), else at the cursor (the end).
+  (let [cx (if (> (sw s 2007) 0) (- (sw s 2007) 1) (sw s 417))
+        cy (if (> (sw s 2007) 0) (sw s 2008) (sw s 418))]
+    (if (> (+ cy 16) (sw s 421)) 0
+      (if (< cy (sw s 2044)) 0
+        (if (> (+ cx 1) (sw s 3)) 0
+          (do (sput s 422 (ink s))
+              (put-rect s cx (- cy (sw s 2045)) 1 16)))))))
 
 (defn text-block [s f base x y]
   ;; Right limit, bottom, wrap and limit are already in scratch.
@@ -405,6 +408,24 @@
         (+ (if (= pws 1) 0 (adv s f 32)) (cwidth s f base (+ i 1) 1))
         (+ (adv s f c) (cwidth s f base (+ i 1) 0))))))
 
+;; ADR-0263: scratch word 2034 packs three small indexes for the window being laid out:
+;; lo + 128 hi + 16384 c -- the selection [lo, hi) (127 127 for none) and the caret index c. 2007 and 2008
+;; hold where the cursor was when the caret's index was reached (2007 = x + 1, 0 = not reached: the caret is at the end).
+(defn cap [s j]
+  (if (= (sw s 2007) 0)
+    (if (>= j (quot (sw s 2034) 16384))
+      (do (sput s 2007 (+ (sw s 417) 1)) (sput s 2008 (sw s 418)))
+      0)
+    0))
+
+(defn in-sel [s j]
+  (if (>= j (bit-and (sw s 2034) 127))
+    (if (< j (bit-and (quot (sw s 2034) 128) 127)) 1 0)
+    0))
+
+(defn has-sel [s]
+  (if (< (bit-and (sw s 2034) 127) (bit-and (quot (sw s 2034) 128) 127)) 1 0))
+
 (defn highlight [s gw]
   ;; ADR-0240: the selection behind the glyph about to be written, then the
   ;; text colour back for it
@@ -419,10 +440,11 @@
   ;; advance
   (let [gi (glyph-of s f cp)
         gw (glyph-width s f gi)]
-    (do (if (> (+ (sw s 418) 16) (sw s 421)) 0
+    (do (cap s j)
+        (if (> (+ (sw s 418) 16) (sw s 421)) 0
           (if (< (sw s 418) (sw s 2044)) 0
             (if (> (+ (sw s 417) gw) (sw s 3)) 0
-              (do (if (>= j (sw s 2034)) (highlight s gw) 0)
+              (do (if (= (in-sel s j) 1) (highlight s gw) 0)
                   (put-glyph s (sw s 417) (- (sw s 418) (sw s 2045)) gi gw)))))
         (sput s 417 (+ (sw s 417) gw))
         0)))
@@ -462,7 +484,7 @@
   (let [c (at s base i)]
     (if (= c 0) 0
       (if (= c 10)
-        (do (newline s) (pack s f base (+ i 1)))
+        (do (cap s i) (newline s) (pack s f base (+ i 1)))
         (if (= (ws c) 1)
           (pack s f base (+ i 1))
           (let [e (word-end s base i)]
@@ -489,13 +511,27 @@
   (if (>= i 64) 64
     (if (= (sw s (+ base i)) 0) i (blen s base (+ i 1)))))
 
-(defn sel-start [s id base]
-  ;; ADR-0240: the first selected index of window id's body, 64 for none
+(defn f-caret [s id base]
+  ;; ADR-0263: window id's caret index; the end when the caret is another window's or none
+  (let [n (blen s base 0) v (sw s 2004)]
+    (if (= (quot v 128) id)
+      (let [c (- (bit-and v 127) 1)] (if (> c n) n c))
+      n)))
+
+(defn f-anchor [s id base]
+  ;; the selection's anchor index, -1 for none or another window's
   (if (= (sw s 2036) id)
-    (let [n (blen s base 0)
-          k (if (> (sw s 2037) n) n (sw s 2037))]
-      (if (= k 0) 64 (- n k)))
-    64))
+    (let [a (sw s 2005) n (blen s base 0)]
+      (if (= a 0) -1 (if (> (- a 1) n) n (- a 1))))
+    -1))
+
+(defn sel-pack [s id base]
+  ;; ADR-0240 / ADR-0263: lo + 128 hi + 16384 c, see `cap`
+  (let [a (f-anchor s id base)
+        c (f-caret s id base)
+        lo (if (< a 0) c (if (< a c) a c))
+        hi (if (< a 0) c (if (> a c) a c))]
+    (+ (if (= lo hi) 127 lo) (+ (* (if (= lo hi) 127 hi) 128) (* c 16384)))))
 
 (defn body-block [s f base x y]
   ;; Right limit, bottom, limit and window width are already in scratch.
@@ -826,13 +862,14 @@
         (sput s 421 (+ (- (+ y h) 8) (sw s 2045)))
         (sput s 426 1) (sput s 428 64) (sput s 430 w)
         ;; ADR-0240: only the focused window's selection is drawn
-        (sput s 2034 (if (= focused 1) (sel-start s id (+ 160 (* 64 (- id 1)))) 64))
+        (sput s 2034 (if (= focused 1) (sel-pack s id (+ 160 (* 64 (- id 1)))) (+ 127 (* 127 128) (* 127 16384))))
+        (sput s 2007 0)
         (body-block s f (+ 160 (* 64 (- id 1))) (+ x 14) (+ y 42))
         ;; the composition, only in the focused window, after its body; the
         ;; caret only while nothing is selected (ADR-0240)
         (if (= focused 1)
           (do (lay-comp s f 0 (+ (sw s 445) (sw s 433)))
-              (if (= (sw s 2034) 64) (caret s) 0))
+              (if (= (has-sel s) 0) (caret s) 0))
           0))))
 
 (defn emit [s f k]

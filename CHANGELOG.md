@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the caret is an index and text editing follows it (ADR-0263)
+- Insertion, Backspace, Delete and paste happen at the caret; Left / Right, Home / End, Ctrl+Left / Right (by word),
+  Shift extending a selection between the anchor and the caret, and Ctrl+Z (undo the last edit) work; Space and Enter
+  insert in English mode. `guest-browser-text-edit` gates it against a model of the rules written apart from the Kotoba.
+
 ### desktop: every shell control is reachable and activatable from the keyboard (ADR-0262)
 - The focus ring (F6) now has eleven targets: launcher buttons, the focused window\'s close, maximize and minimize controls and
   the tray\'s buttons; Enter presses the one it is on through the same path as the pointer. `guest-browser-keyboard-only` gates it.
