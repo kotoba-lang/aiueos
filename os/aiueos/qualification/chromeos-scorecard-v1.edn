@@ -577,8 +577,9 @@
    :procedure "Increase the text size."
    :expected "Text and layout grow without clipping."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-ui-scale" "ADR-0261" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "Ctrl+= / Ctrl+- scale the whole desktop 100, 125, 150 percent: the ink census of the same text grows 582 -> 1536 -> 1828 pixels and the window is fitted inside the shrinking logical viewport in every frame, none refused. Nearest-neighbour magnification, nothing above 150, not persisted, no settings window."
    }
   {:id :I8 :category :power :title "Everything reachable by keyboard alone"
    :weight 1 :required true :required-level :device
