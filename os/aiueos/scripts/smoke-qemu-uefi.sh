@@ -899,17 +899,19 @@ while time.time() < end:
                 recv_obj()
                 globals()["scale_sent"] = k + 1
                 log("scale event " + str(k + 1) + " sent")
-        # ADR-0260: two keys after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
+        # ADR-0260/0265: two keys (second boot) or six (first boot) after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
         # stored record says so.
-        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < 2:
+        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (6 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
             k = globals().get("settings_sent", 0)
             if k == 0 or (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % k) in serial_now:
                 time.sleep(0.5)
                 phase = os.environ.get("AIUEOS_SETTINGS_PHASE", "1")
-                qc = "f10" if phase == "1" else "alt"
-                ev = [{"type": "key", "data": {"down": k == 0, "key": {"type": "qcode", "data": qc}}}]
+                # ADR-0265: first boot F10 (high contrast) then Ctrl+= (125 %), both kept on the volume.
+                qc = ("f10", "f10", "ctrl", "equal", "equal", "ctrl")[k] if phase == "1" else "alt"
+                dn = (True, False, True, True, False, False)[k] if phase == "1" else k == 0
+                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()

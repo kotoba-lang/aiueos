@@ -1481,23 +1481,30 @@
 ;; the frames boot one drew.
 
 (def ^:private settings-want
-  [{:n 1 :hc 1 :ops 77 :px 668 :hash "bed963dd"} {:n 2 :hc 1 :ops 77 :px 668 :hash "bed963dd"}])
+  (let [a {:hc 1 :ops 77 :pct 100 :px 668 :hash "bed963dd"}
+        z {:hc 1 :ops 77 :pct 125 :px 1757 :hash "244cc84c"}]
+    [(assoc a :n 1) (assoc a :n 2) (assoc a :n 3) (assoc z :n 4) (assoc z :n 5) (assoc z :n 6)]))
+(def ^:private settings-want-2
+  (mapv #(assoc (last settings-want) :n %) [1 2]))
 
 (defn- settings-lines [s]
-  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
-       (mapv (fn [[_ n key hc ops px hash written stored]]
-               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :ops (parse-long ops) :px (parse-long px)
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) pct=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
+       (mapv (fn [[_ n key hc ops pct px hash written stored]]
+               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :ops (parse-long ops) :pct (parse-long pct) :px (parse-long px)
                 :hash hash :written (parse-long written) :stored (if (= stored "none") "none" (parse-long stored))}))))
 
 (defn- settings-boot [s]
-  (when-let [[_ v c] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+)" (or s ""))]
+  (when-let [[_ v c] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+) scale=(\d+)" (or s ""))]
     [(parse-long v) (parse-long c)]))
+(defn- settings-scale [s]
+  (when-let [[_ v] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=\d+ contrast=\d+ scale=(\d+)" (or s ""))]
+    (parse-long v)))
 
 (defn guest-browser-settings-result
   [{:keys [serial serial1 qemu-unmeasured?] :as opts}]
   (let [l1 (settings-lines serial1)
         l2 (settings-lines serial)
-        shape (fn [ls] (mapv #(select-keys % [:n :hc :ops :px :hash]) ls))
+        shape (fn [ls] (mapv #(select-keys % [:n :hc :ops :pct :px :hash]) ls))
         sign-out (guest-browser-sign-out-result opts)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1505,7 +1512,7 @@
       (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
       (or (empty? l1) (empty? l2)) {:green? false :exit 1 :reason :guest-browser-settings-absent
                                     :leftover [:guest-browser-settings-absent]}
-      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial1 ""))
+      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6" (or serial1 ""))
                 (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial ""))))
       {:green? false :exit 1 :reason :settings-ok-missing :leftover [:settings-ok-missing]}
       (not= (settings-boot serial1) [0 0])
@@ -1514,17 +1521,21 @@
       {:green? false :exit 1 :reason :second-boot-did-not-read-the-choice :leftover [:second-boot-did-not-read-the-choice]}
       (not= (shape l1) settings-want)
       {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]}
-      (not= (shape l2) settings-want)
+      (not= (shape l2) settings-want-2)
       {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]}
-      (not= (mapv (juxt :written :stored) l1) [[1 1] [1 1]])
+      (not= (settings-scale serial) 125)
+      {:green? false :exit 1 :reason :second-boot-did-not-read-the-scale :leftover [:second-boot-did-not-read-the-scale]}
+      (not= (settings-scale serial1) 100)
+      {:green? false :exit 1 :reason :first-boot-had-a-scale :leftover [:first-boot-had-a-scale]}
+      (not= (mapv (juxt :written :stored) l1) [[1 1] [1 1] [1 1] [2 1] [2 1] [2 1]])
       {:green? false :exit 1 :reason :choice-not-written :leftover [:choice-not-written]}
-      (not= (mapv :key l1) [273 272])
+      (not= (vec (take 2 (mapv :key l1))) [273 272])
       {:green? false :exit 1 :reason :first-boot-did-not-press-f10 :leftover [:first-boot-did-not-press-f10]}
       (or (some #{273 272} (map :key l2)) (not= (mapv (juxt :written :stored) l2) [[0 1] [0 1]]))
       {:green? false :exit 1 :reason :second-boot-was-told-or-wrote :leftover [:second-boot-was-told-or-wrote]}
       :else
       {:green? true :exit 0 :reason :guest-browser-settings
-       :leftover [:contrast-only :no-settings-window :no-scale :no-network :restored-at-the-settings-stage-not-at-boot]})))
+       :leftover [:contrast-and-scale-only :no-settings-window :no-network :restored-at-the-settings-stage-not-at-boot]})))
 
 ;; Guest browser UI scale (ADR-0261): after the sign-out stage the host sends F11 (the clean session's window is
 ;; maximized), Ctrl+= three times and Ctrl+- twice (125, 150, 150, 125, 100) and F11 again. Kotoba chooses the

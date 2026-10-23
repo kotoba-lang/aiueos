@@ -2192,8 +2192,8 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
    up on the first boot (the choice goes on and is written), Alt down and up on the second boot of the same
    volume (nothing changes the choice, and the frame is high-contrast because the record said so). The stage
    itself is boot-agnostic; the classifier knows which boot it read. */
-extern int aiueos_settings_read(uint32_t *);
-extern int aiueos_settings_write(uint32_t);
+extern int aiueos_settings_read(uint32_t *, uint32_t *);
+extern int aiueos_settings_write(uint32_t, uint32_t);
 
 /* ADR-0261: the UI scale stage. Kotoba chooses the scale (Ctrl+= and Ctrl+-, browser-ime.kotoba) and answers
    200000000 + the percent; C magnifies what it paints (framebuffer.c), sets the logical viewport -- surface words 3
@@ -2501,32 +2501,54 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
-  uint32_t stored = 0, last = 0xffffffffU, written = 0, se = 0, sidle = 0;
-  int valid = aiueos_settings_read(&stored);
+  uint32_t stored = 0, stored_scale = 100, last = 0xffffffffU, last_scale = 100, written = 0, se = 0, sidle = 0, want;
+  uint32_t physw = aiueos_desktop_width(), physh = aiueos_desktop_height();
+  int valid = aiueos_settings_read(&stored, &stored_scale);
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=");
   serial_decimal(valid ? 1U : 0U);
   serial_string(" contrast=");
   serial_decimal(valid ? stored : 0U);
+  serial_string(" scale=");
+  serial_decimal(valid ? stored_scale : 100U);
   serial_string("\r\n");
-  if (valid) { surface[2039] = stored; last = stored; }
+  if (valid) {
+    surface[2039] = stored; last = stored; last_scale = stored_scale;
+    if (stored_scale != 100U && aiueos_desktop_set_scale(stored_scale)) {
+      surface[3] = physw * 100U / stored_scale;
+      surface[4] = physh * 100U / stored_scale;
+      (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+    }
+  }
+  want = valid ? 2U : 6U;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
-  serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_GO events=2\r\n");
-  while (se < 2 && sidle < 60000U) {
+  serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_GO events=");
+  serial_decimal(want);
+  serial_string("\r\n");
+  while (se < want && sidle < 60000U) {
     uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
     int64_t kr, fo;
     if (!key) { sidle++; continue; }
     sidle = 0;
     if ((key >> 2) == 88U) continue;
     kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
-    (void)kr;
+    if (kr >= 200000000LL && kr < 200000200LL) {
+      uint32_t pct = (uint32_t)(kr - 200000000LL);
+      if (aiueos_desktop_set_scale(pct)) {
+        surface[3] = physw * 100U / pct;
+        surface[4] = physh * 100U / pct;
+        (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+      }
+    }
     fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
     if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
       hash = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &px);
       (void)aiueos_desktop_show();
     }
-    if (surface[2039] < 2U && surface[2039] != last && aiueos_settings_write(surface[2039])) {
+    if (surface[2039] < 2U && (surface[2039] != last || aiueos_desktop_scale() != last_scale) &&
+        aiueos_settings_write(surface[2039], aiueos_desktop_scale())) {
       last = surface[2039];
+      last_scale = aiueos_desktop_scale();
       written++;
     }
     se++;
@@ -2538,6 +2560,8 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     serial_decimal(surface[2039]);
     serial_string(" ops=");
     serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" pct=");
+    serial_decimal(aiueos_desktop_scale());
     serial_string(" text-px=");
     serial_decimal(px);
     serial_string(" hash=");
@@ -2548,9 +2572,11 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     if (last > 1U) serial_string("none"); else serial_decimal(last);
     serial_string("\r\n");
   }
-  if (se == 2) {
+  if (se == want) {
     debug_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK\n");
-    serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2\r\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK events=");
+    serial_decimal(want);
+    serial_string("\r\n");
     return 1;
   }
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS leftover=events-missing\r\n");
