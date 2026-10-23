@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### audio: a virtio-sound driver and a volume key (ADR-0272)
+- A polled virtio-sound output driver (guest-browser build) plays a 440 Hz burst at a volume held in C; the volume-down key lowers it; QEMU's WAV
+  output is measured on the host (two 440 Hz bursts, the second at half the level). `guest-browser-audio` gates it.
+
 ### storage: backup and restore of the user's records (ADR-0271)
 - A four-sector door (1034..1037) and a stage that copies the settings and passkey records to backup sectors, wipes the originals, restores
   them and checks them byte for byte (SHA-256), the settings and the key's public point. `guest-browser-backup` gates it.

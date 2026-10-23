@@ -3108,6 +3108,97 @@ static int browser_backup_stage(void) {
 static int browser_backup_stage(void) { return 0; }
 #endif
 
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0272: sound. With a virtio sound card attached (QEMU writes its output to a WAV file the host can measure) the stage plays a 440 Hz
+   tone burst at the set volume, waits for the volume-down key twice (100 -> 75 -> 50), and plays the burst again. The volume is a
+   software gain on the samples, kept here; KEY_VOLUMEDOWN is evdev 114, KEY_VOLUMEUP 115. Each burst is 0.1 s of silence, 0.4 s of tone
+   and 0.1 s of silence at 44100 Hz stereo S16, so the host can find the two tones by their levels. */
+extern int aiueos_audio_ready(void);
+extern uint32_t aiueos_audio_streams(void);
+extern int aiueos_audio_play(const int16_t *, uint32_t);
+#define AUDIO_RATE 44100U
+#define AUDIO_FRAMES (AUDIO_RATE * 6U / 10U)
+static int16_t audio_pcm[AUDIO_FRAMES * 2U] __attribute__((section(".high_bss")));
+
+static void audio_fill(uint32_t volume) {
+  static const int16_t q[17] = {0, 3212, 6393, 9512, 12539, 15446, 18204, 20787, 23170, 25329, 27245, 28898, 30273, 31356, 32137, 32609, 32767};
+  uint32_t phase = 0, step = (uint32_t)(((uint64_t)440U << 32) / AUDIO_RATE);
+  for (uint32_t n = 0; n < AUDIO_FRAMES; n++) {
+    int32_t v = 0;
+    if (n >= AUDIO_RATE / 10U && n < AUDIO_RATE / 10U + AUDIO_RATE * 4U / 10U) {
+      uint32_t idx = phase >> 26, quarter = idx & 15U, half = idx & 32U;   /* 64 steps per period */
+      int32_t m = (idx & 16U) ? q[16U - quarter] : q[quarter];
+      v = half ? -m : m;
+      v = v * (int32_t)volume / 100;
+      phase += step;
+    }
+    audio_pcm[2U * n] = (int16_t)v;
+    audio_pcm[2U * n + 1U] = (int16_t)v;
+  }
+}
+
+static int browser_audio_stage(void) {
+  uint32_t volume = 100, presses = 0, idle = 0, played = 0;
+  int ok;
+  int ready = aiueos_audio_ready();
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_REG ready=");
+  serial_decimal(ready ? 1U : 0U);
+  serial_string(" streams=");
+  serial_decimal(aiueos_audio_streams());
+  serial_string("\r\n");
+  if (!ready) return 0;
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_GO events=4\r\n");
+  audio_fill(volume);
+  ok = aiueos_audio_play(audio_pcm, AUDIO_FRAMES);
+  played++;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 vol=");
+  serial_decimal(volume);
+  serial_string(" frames=");
+  serial_decimal(AUDIO_FRAMES);
+  serial_string(" accepted=");
+  serial_decimal(ok ? 1U : 0U);
+  serial_string("\r\n");
+  if (!ok) return 0;
+  while (presses < 4U && idle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    if (!key) { idle++; continue; }
+    idle = 0;
+    presses++;
+    if (key == 114U * 4U + 1U) volume = volume >= 25U ? volume - 25U : 0U;
+    else if (key == 115U * 4U + 1U) volume = volume <= 75U ? volume + 25U : 100U;
+    serial_string("AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=");
+    serial_decimal(presses);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" vol=");
+    serial_decimal(volume);
+    serial_string("\r\n");
+  }
+  if (presses < 4U) { serial_string("AIUEOS_GUEST_BROWSER_AUDIO leftover=keys-missing\r\n"); return 0; }
+  audio_fill(volume);
+  ok = aiueos_audio_play(audio_pcm, AUDIO_FRAMES);
+  played++;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=2 vol=");
+  serial_decimal(volume);
+  serial_string(" frames=");
+  serial_decimal(AUDIO_FRAMES);
+  serial_string(" accepted=");
+  serial_decimal(ok ? 1U : 0U);
+  serial_string("\r\n");
+  if (!ok) return 0;
+  serial_string("AIUEOS_GUEST_BROWSER_AUDIO_OK plays=");
+  serial_decimal(played);
+  serial_string(" volumes=100,");
+  serial_decimal(volume);
+  serial_string("\r\n");
+  return 1;
+}
+#else
+static int browser_audio_stage(void) { return 0; }
+#endif
+
+
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
                                    uint32_t total_layers,
@@ -6751,7 +6842,7 @@ qwen_runtime_boot_complete:
                                                                 if (browser_notify_stage(surface, font, font_length, dict, dict_length))
                                                                   if (browser_passkey_stage(surface, font, font_length, dict, dict_length))
                                                                     if (browser_settings_stage(surface, font, font_length, dict, dict_length))
-                                                                      (void)browser_backup_stage();
+                                                                      if (browser_backup_stage()) (void)browser_audio_stage();
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

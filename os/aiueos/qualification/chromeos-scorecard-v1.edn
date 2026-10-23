@@ -556,8 +556,9 @@
    :procedure "Play a sound; change the volume."
    :expected "Sound plays at the set level."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-audio" "ADR-0272" "receipt os/aiueos/qualification/receipts/vm-20261024/audio/receipt.edn"]
+   :note "A polled virtio-sound driver played a 440 Hz burst at volume 100; the volume-down key was pressed twice (100 -> 75 -> 50) and the burst played again. Measured by the HOST on the WAV file QEMU's sound card wrote (kept in the receipt, audio.wav): two bursts of about 0.4 s at 440.0 Hz, RMS 23170 then 11306, a ratio of 0.488 for volume 50. Limits, stated so the owner can reject this pass: the volume is a software gain in the stage with no mixer, indicator or mute; one output stream; a VM's sound card writing a file, not a speaker; no playback of audio files (E6) and no input."
    }
   {:id :I5 :category :power :title "High-contrast mode"
    :weight 1 :required true :required-level :device

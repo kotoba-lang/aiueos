@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup" "guest-browser-audio"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -2112,6 +2112,86 @@
       {:green? true :exit 0 :reason :guest-browser-backup
        :leftover [:the-user-data-is-two-records :the-backup-is-on-the-same-volume :no-user-interface :no-off-device-copy]})))
 
+;; Guest browser sound (ADR-0272): with a virtio sound card attached whose output QEMU writes to a WAV file, the stage plays a 440 Hz tone burst at
+;; volume 100, waits for the volume-down key twice (the volume becomes 50) and plays the burst again. The kernel prints
+;; AIUEOS_GUEST_BROWSER_AUDIO_REG / _PLAY n= vol= / _VOLUME n= key= vol= / _OK; the HOST measures the WAV: two tone bursts about 0.4 s long at
+;; 440 Hz, the second at half the RMS level of the first. Green needs the backup gate green on the same serial, the serial lines, and the
+;; measured WAV (it is not taken from the guest's word).
+
+(defn- wav-int16 [^js bytes off] (let [v (bit-or (aget bytes off) (bit-shift-left (aget bytes (inc off)) 8))] (if (>= v 32768) (- v 65536) v)))
+(defn- wav-u32 [^js bytes off] (+ (aget bytes off) (* 256 (aget bytes (+ off 1))) (* 65536 (aget bytes (+ off 2))) (* 16777216 (aget bytes (+ off 3)))))
+
+(defn wav-bursts
+  "Parse a PCM WAV (RIFF, 16-bit) and find its tone bursts: runs of 20 ms windows whose RMS (first channel) is above 300, each with its RMS,
+  zero-crossing frequency and duration in seconds. Returns {:rate :channels :bursts [...]} or {:error kw}."
+  [^js bytes]
+  (let [n (if bytes (.-length bytes) 0)
+        tag (fn [off] (apply str (map #(char (aget bytes (+ off %))) (range 4))))]
+    (if (or (< n 44) (not= "RIFF" (tag 0)) (not= "WAVE" (tag 8)))
+      {:error :not-a-wav}
+      (let [channels (+ (aget bytes 22) (* 256 (aget bytes 23)))
+            rate (wav-u32 bytes 24)
+            bits (+ (aget bytes 34) (* 256 (aget bytes 35)))
+            data-off (loop [off 12] (cond (> (+ off 8) n) nil
+                                          (= "data" (tag off)) (+ off 8)
+                                          :else (recur (+ off 8 (wav-u32 bytes (+ off 4))))))]
+        (if (or (nil? data-off) (not= bits 16) (< channels 1))
+          {:error :unsupported-wav}
+          (let [frames (quot (- n data-off) (* 2 channels))
+                at (fn [i] (wav-int16 bytes (+ data-off (* 2 channels i))))
+                win (quot rate 50)
+                nwin (quot frames win)
+                rms (fn [lo hi] (let [c (- hi lo)] (if (<= c 0) 0 (Math/sqrt (/ (reduce + (map #(let [v (at %)] (* v v)) (range lo hi))) c)))))
+                loud (mapv (fn [w] (> (rms (* w win) (* (inc w) win)) 300)) (range nwin))
+                runs (loop [w 0 cur nil out []]
+                       (cond (>= w nwin) (if cur (conj out cur) out)
+                             (nth loud w) (recur (inc w) (if cur [(first cur) w] [w w]) out)
+                             :else (recur (inc w) nil (if cur (conj out cur) out))))
+                burst (fn [[a b]]
+                        (let [lo (* a win) hi (* (inc b) win)
+                              xs (vec (filter #(and (neg? (at %)) (>= (at (inc %)) 0)) (range lo (dec hi))))
+                              secs (/ (- hi lo) rate)
+                              ;; frequency from the first to the last rising zero crossing (the window edges hold silence)
+                              freq (if (> (count xs) 1) (/ (* (dec (count xs)) rate) (- (peek xs) (first xs))) 0)]
+                          {:rms (rms lo hi) :freq freq :seconds secs}))]
+            {:rate rate :channels channels :bursts (mapv burst runs)}))))))
+
+(defn guest-browser-audio-result
+  [{:keys [serial wav qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        reg (re-find #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_REG ready=1 streams=(\d+)\s*$" s)
+        plays (mapv (fn [[_ n vol frames acc]] {:n (parse-long n) :vol (parse-long vol) :frames (parse-long frames) :accepted (parse-long acc)})
+                    (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=(\d+) vol=(\d+) frames=(\d+) accepted=(\d)\s*$" s))
+        vols (mapv (fn [[_ n key vol]] {:n (parse-long n) :key (parse-long key) :vol (parse-long vol)})
+                   (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_VOLUME n=(\d+) key=(\d+) vol=(\d+)\s*$" s))
+        backup (guest-browser-backup-result opts)
+        w (when wav (wav-bursts wav))
+        [b1 b2] (:bursts w)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? backup))
+      (assoc backup :reason :no-backup :leftover (into [:no-backup] (:leftover backup)))
+      (not reg) {:green? false :exit 1 :reason :guest-browser-audio-absent :leftover [:guest-browser-audio-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_AUDIO_OK plays=2 volumes=100,50\s*$" s))
+      {:green? false :exit 1 :reason :audio-ok-missing :leftover [:audio-ok-missing]}
+      (not= (mapv (juxt :n :vol :accepted) plays) [[1 100 1] [2 50 1]])
+      {:green? false :exit 1 :reason :plays-wrong :leftover [:plays-wrong]}
+      (not= (mapv (juxt :key :vol) vols) [[457 75] [456 75] [457 50] [456 50]])
+      {:green? false :exit 1 :reason :volume-keys-wrong :leftover [:volume-keys-wrong]}
+      (nil? wav) {:green? false :exit 1 :reason :no-wav :leftover [:no-wav]}
+      (:error w) {:green? false :exit 1 :reason (:error w) :leftover [(:error w)]}
+      (not= 2 (count (:bursts w)))
+      {:green? false :exit 1 :reason :wav-does-not-hold-two-bursts :leftover [:wav-does-not-hold-two-bursts] :bursts (:bursts w)}
+      (not (every? #(and (< 0.3 (:seconds %) 0.55) (< 420 (:freq %) 460)) [b1 b2]))
+      {:green? false :exit 1 :reason :burst-is-not-a-440hz-tone :leftover [:burst-is-not-a-440hz-tone] :bursts (:bursts w)}
+      (not (< 14000 (:rms b1) 26000))
+      {:green? false :exit 1 :reason :first-burst-not-at-full-level :leftover [:first-burst-not-at-full-level] :bursts (:bursts w)}
+      (not (< 0.45 (/ (:rms b2) (:rms b1)) 0.55))
+      {:green? false :exit 1 :reason :second-burst-not-at-half-level :leftover [:second-burst-not-at-half-level] :bursts (:bursts w)}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-audio :bursts (:bursts w)
+       :leftover [:volume-is-a-software-gain-in-the-stage :one-output-stream :no-mixer-ui :no-mute-or-devices :no-input]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2590,6 +2670,11 @@
     "guest-browser-backup" {"AIUEOS_GUEST_BROWSER" "1"
                             "AIUEOS_TEST_NET" "1"
                             "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0272: a virtio sound card writing a WAV file; the audio stage follows the backup stage.
+    "guest-browser-audio" {"AIUEOS_GUEST_BROWSER" "1"
+                           "AIUEOS_TEST_NET" "1"
+                           "AIUEOS_TEST_AUDIO" "1"
+                           "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2643,6 +2728,7 @@
     "guest-browser-notify" (guest-browser-notify-result opts)
     "guest-browser-passkey" (guest-browser-passkey-result opts)
     "guest-browser-backup" (guest-browser-backup-result opts)
+    "guest-browser-audio" (guest-browser-audio-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2697,6 +2783,7 @@
     "guest-browser-notify" "AIUEOS_GUEST_BROWSER_NOTIFY"
     "guest-browser-passkey" "AIUEOS_GUEST_BROWSER_PASSKEY"
     "guest-browser-backup" "AIUEOS_GUEST_BROWSER_BACKUP"
+    "guest-browser-audio" "AIUEOS_GUEST_BROWSER_AUDIO"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2751,6 +2838,7 @@
     "guest-browser-notify" "AIUEOS_COMPOSITOR_GUEST_BROWSER_NOTIFY_OK"
     "guest-browser-passkey" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PASSKEY_OK"
     "guest-browser-backup" "AIUEOS_COMPOSITOR_GUEST_BROWSER_BACKUP_OK"
+    "guest-browser-audio" "AIUEOS_COMPOSITOR_GUEST_BROWSER_AUDIO_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

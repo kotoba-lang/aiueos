@@ -102,6 +102,8 @@
                                    :qemu-unmeasured? (not measured?)
                                    :hosted-wm? false
                                    :hosted-ime? false
+                                   :wav (let [f (.join path out "audio.wav")]
+                                          (when (and (= profile "guest-browser-audio") (.existsSync fs f)) (.readFileSync fs f)))
                                    :flow-parity parity
                                    :damage-shots (when (= profile "guest-browser-damage")
                                                    (damage-shots started))})

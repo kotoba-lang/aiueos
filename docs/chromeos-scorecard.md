@@ -21,14 +21,14 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 35%.** Twenty-three rows are `:pass`, each by a receipt of a run in the reference VM (below): B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F4, G4, H4, I5, I7 and I8
-(weight 35 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 36%.** Twenty-four rows are `:pass`, each by a receipt of a run in the reference VM (below): B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F4, G4, H4, I4, I5, I7 and I8
+(weight 36 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
 **Current-tree receipt.** `os/aiueos/qualification/receipts/vm-20261024/ui-current` is one boot of the tree after the size-optimized guest-browser build (ADR-0270) and the backup stage (ADR-0271), with 33 profiles green: the 28 of the first `ui` receipt (vm-20261023) plus clock, layout, notify, passkey and backup. The rows' own receipts stay the ones they cite; this one shows the passes above still hold on the current build.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 54.5% of the required weight (it counts the rows above too) (a row whose behaviour is gated
+Beside the score, and never added to it, the **QEMU-level progress** is 55.5% of the required weight (it counts the rows above too) (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
 security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
 
