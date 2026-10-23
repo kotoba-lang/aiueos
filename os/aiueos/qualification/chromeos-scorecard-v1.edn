@@ -201,8 +201,9 @@
    :procedure "Read the status area on battery and on AC, online and offline."
    :expected "Each shows its current state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-clock" "ADR-0264"]
+   :note "Only the clock is a status today: C reads the CMOS real-time clock and the launcher row shows HH:MM. There is no power state (the kernel reads no battery device; a VM has none) and no network state (the desktop stages run before the network is up)."
    }
   {:id :C10 :category :shell :title "Interaction states and feedback"
    :weight 2 :required true :required-level :device

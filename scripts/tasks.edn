@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-clock
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-clock"]
+  :doc "Guest browser clock (ADR-0264) on KERNEL.ELF under QEMU, after the editing stage: C sets the machine's real-time clock to 12:34, reads it back from the CMOS registers and reports the minute of the day in surface word 1968; browser-frame2 draws HH:MM at the right end of the launcher row; both frames equal browser-frame-model.cljk's and the second is the first plus five glyphs."}
  :browser-desktop-text-edit
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-text-edit"]
   :doc "Guest browser text editing (ADR-0263) on KERNEL.ELF under QEMU, after the keyboard-only stage: the caret is an index and editing follows it -- typing and Enter at the caret, Left / Right / Home / End, Ctrl+Left / Right by word, Shift extending a selection, Backspace and Delete, Ctrl+Z undoing the last edit; seventy-two keys on an empty window, each line equal to browser-frame-model.cljk's, whose editing rules are stated apart from the Kotoba."}

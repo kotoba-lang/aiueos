@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the launcher row shows the clock (ADR-0264)
+- C reads the CMOS real-time clock and reports the minute of the day (surface word 1968); browser-frame2 draws HH:MM at the right end
+  of the launcher row. `guest-browser-clock` gates it. The op capacity is 248 (words 1968..2003 free). Power and network states are not
+  yet reported.
+
 ### desktop: the caret is an index and text editing follows it (ADR-0263)
 - Insertion, Backspace, Delete and paste happen at the caret; Left / Right, Home / End, Ctrl+Left / Right (by word),
   Shift extending a selection between the anchor and the caret, and Ctrl+Z (undo the last edit) work; Space and Enter

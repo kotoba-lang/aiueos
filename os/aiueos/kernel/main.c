@@ -2416,6 +2416,88 @@ static int browser_edit_stage(uint32_t *surface, const uint8_t *font, uint64_t f
   return 0;
 }
 
+/* ADR-0264: the clock in the launcher row. C reads the machine's real-time clock (CMOS registers 0x00..0x09
+   through ports 0x70 / 0x71, BCD or binary, 12 or 24 hour as register B says) and reports the minute of the day + 1
+   in surface word 1968; browser-frame2 draws HH:MM at the right end of the launcher row. The stage first sets the clock
+   to 12:34:00 -- the desktop's test hook, so that the frame can be known -- reads it back, reports it, and clears the
+   word again afterwards so the stages after it are what they were. */
+static uint8_t rtc_read(uint8_t reg) { out8(0x70, reg); return in8(0x71); }
+static void rtc_write(uint8_t reg, uint8_t value) { out8(0x70, reg); out8(0x71, value); }
+static uint32_t rtc_decode(uint8_t value, int binary) { return binary ? value : (uint32_t)((value >> 4) * 10 + (value & 15)); }
+static uint8_t rtc_encode(uint32_t value, int binary) { return binary ? (uint8_t)value : (uint8_t)(((value / 10) << 4) | (value % 10)); }
+
+/* the minute of the day, or 0xffffffff when the clock would not settle */
+static uint32_t rtc_minute_of_day(void) {
+  uint8_t b = rtc_read(0x0B);
+  int binary = (b & 4) != 0, h24 = (b & 2) != 0;
+  uint32_t guard = 0;
+  while ((rtc_read(0x0A) & 0x80) && guard++ < 1000000U) {}
+  if (guard >= 1000000U) return 0xffffffffU;
+  uint32_t minute = rtc_decode(rtc_read(0x02), binary);
+  uint8_t raw = rtc_read(0x04);
+  uint32_t hour = rtc_decode(raw & 0x7f, binary);
+  if (!h24) { hour %= 12; if (raw & 0x80) hour += 12; }
+  if (hour > 23 || minute > 59) return 0xffffffffU;
+  return hour * 60 + minute;
+}
+
+static void rtc_set_time(uint32_t hour, uint32_t minute) {
+  uint8_t b = rtc_read(0x0B);
+  int binary = (b & 4) != 0, h24 = (b & 2) != 0;
+  uint32_t h = hour;
+  uint8_t hraw;
+  if (!h24) { hraw = rtc_encode(h % 12 == 0 ? 12 : h % 12, binary); if (h >= 12) hraw |= 0x80; }
+  else hraw = rtc_encode(h, binary);
+  rtc_write(0x0B, (uint8_t)(b | 0x80));   /* SET: no update while the registers change */
+  rtc_write(0x00, rtc_encode(0, binary));
+  rtc_write(0x02, rtc_encode(minute, binary));
+  rtc_write(0x04, hraw);
+  rtc_write(0x0B, (uint8_t)(b & 0x7f));
+}
+
+static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t m, hash = 0, px = 0, i;
+  int64_t fo;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_GO frames=2\r\n");
+  for (i = 0; i < 2; i++) {
+    if (i == 1) {
+      rtc_set_time(12, 34);
+      m = rtc_minute_of_day();
+      serial_string("AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=");
+      if (m == 0xffffffffU) serial_string("none");
+      else { serial_decimal(m / 60U); serial_string(":"); serial_decimal(m % 60U); }
+      serial_string("\r\n");
+      if (m == 0xffffffffU) return 0;
+      surface[1968] = m + 1U;
+    }
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    px = 0;
+    hash = 0;
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    serial_string("AIUEOS_GUEST_BROWSER_CLOCK n=");
+    serial_decimal(i + 1U);
+    serial_string(" status=");
+    serial_decimal(surface[1968]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string("\r\n");
+  }
+  surface[1968] = 0;
+  debug_string("AIUEOS_GUEST_BROWSER_CLOCK_OK\n");
+  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2\r\n");
+  return 1;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
@@ -6113,7 +6195,8 @@ qwen_runtime_boot_complete:
                                                       if (browser_scale_stage(surface, font, font_length, dict, dict_length))
                                                         if (browser_ring_stage(surface, font, font_length, dict, dict_length))
                                                           if (browser_edit_stage(surface, font, font_length, dict, dict_length))
-                                                            browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                            if (browser_clock_stage(surface, font, font_length))
+                                                              browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

@@ -26,7 +26,7 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 48.5% of the required weight (it counts the rows above too) (a row whose behaviour is gated
+Beside the score, and never added to it, the **QEMU-level progress** is 49% of the required weight (it counts the rows above too) (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
 security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
 
