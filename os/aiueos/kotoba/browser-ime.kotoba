@@ -324,15 +324,147 @@
 (defn clear-state [s]
   (do (wp s 433 0) (wp s 445 0) (wp s 442 0) (wp s 443 0) (wp s 444 0) 0))
 
+;; --- the body's editing model (ADR-0263) ----------------------------------------
+;; The focused body is a run of code points (0 ends it, 10 breaks the line). Until ADR-0263 the caret was
+;; always at its end and a selection was the last k code points. Now the caret is an index:
+;;   word 2004  window id * 128 + caret + 1 of the window it belongs to; 0 (or another window's) = the end
+;;   word 2005  the selection's anchor + 1 (0 = none); with the caret it bounds the selection
+;;   word 2036  the window the selection belongs to; word 2037 its length (kept for ADR-0240's readers)
+;;   word 2006  the undo record: window id, kind (1 text was inserted, 2 text was deleted), index, length,
+;;              and where the caret goes; the deleted text (up to 32 code points) waits in 446.. which
+;;              composing would overwrite, so composing forgets the record
+;; With the caret at the end everything below is what it was.
+(defn bn [s] (body-len s (body-base s) 0))
+
+(defn caret-ix [s]
+  (let [n (bn s) v (w s 2004)]
+    (if (= (quot v 128) (w s 2))
+      (let [c (- (bit-and v 127) 1)] (if (> c n) n c))
+      n)))
+
+(defn set-caret [s c]
+  (wp s 2004 (if (< c (bn s)) (+ (* (w s 2) 128) (+ c 1)) 0)))
+
+(defn anchor-ix [s]
+  (if (= (w s 2036) (w s 2))
+    (let [a (w s 2005) n (bn s)]
+      (if (= a 0) -1 (if (> (- a 1) n) n (- a 1))))
+    -1))
+
+(defn sel-len [s]
+  (let [a (anchor-ix s)]
+    (if (< a 0) 0
+      (let [c (caret-ix s)] (if (> a c) (- a c) (- c a))))))
+
+(defn sel-lo [s]
+  (let [a (anchor-ix s) c (caret-ix s)]
+    (if (< a 0) c (if (< a c) a c))))
+
+(defn sel-hi [s]
+  (let [a (anchor-ix s) c (caret-ix s)]
+    (if (< a 0) c (if (> a c) a c))))
+
+(defn clear-sel [s]
+  (do (wp s 2005 0) (wp s 2036 0) (wp s 2037 0) 0))
+
+(defn sync-sel [s]
+  (let [k (sel-len s)]
+    (if (= k 0) (clear-sel s)
+      (do (wp s 2036 (w s 2)) (wp s 2037 k) 0))))
+
+(defn begin-sel [s]
+  (if (< (anchor-ix s) 0)
+    (do (wp s 2036 (w s 2)) (wp s 2005 (+ (caret-ix s) 1)))
+    0))
+
+(defn clear-from [s base i n]
+  (if (>= i n) 0
+    (do (wp s (+ base i) 0) (clear-from s base (+ i 1) n))))
+
+(defn move-down [s base i n d]
+  (if (>= (+ i d) n) 0
+    (do (wp s (+ base i) (w s (+ base (+ i d))))
+        (move-down s base (+ i 1) n d))))
+
+(defn move-up [s base i at m]
+  (if (< i at) 0
+    (do (wp s (+ base (+ i m)) (w s (+ base i)))
+        (move-up s base (- i 1) at m))))
+
+(defn save-text [s base lo i m]
+  (if (>= i m) 0
+    (do (wp s (+ 446 i) (w s (+ base (+ lo i))))
+        (save-text s base lo (+ i 1) m))))
+
+(defn restore-text [s base at i m]
+  (if (>= i m) 0
+    (do (wp s (+ base (+ at i)) (w s (+ 446 i)))
+        (restore-text s base at (+ i 1) m))))
+
+(defn rec-undo [s kind idx len caret]
+  (wp s 2006 (+ (* (w s 2) 8388608)
+                (+ (* kind 2097152) (+ (* idx 16384) (+ (* len 128) caret))))))
+
+;; typing in a run is one undo step: an insert right after the recorded one extends it
+(defn note-insert [s at m]
+  (let [v (w s 2006)
+        kind (bit-and (quot v 2097152) 3)
+        pidx (bit-and (quot v 16384) 127)
+        plen (bit-and (quot v 128) 127)]
+    (if (= (quot v 8388608) (w s 2))
+      (if (= kind 1)
+        (if (= (+ pidx plen) at)
+          (rec-undo s 1 pidx (+ plen m) (+ at m))
+          (rec-undo s 1 at m (+ at m)))
+        (rec-undo s 1 at m (+ at m)))
+      (rec-undo s 1 at m (+ at m)))))
+
+(defn del-range [s lo hi]
+  (let [base (body-base s) n (bn s) d (- hi lo)]
+    (if (<= d 0) 0
+      (do (move-down s base lo n d)
+          (clear-from s base (- n d) n)
+          0))))
+
+(defn ins-room [s at m]
+  (let [base (body-base s) n (bn s)]
+    (move-up s base (- n 1) at m)))
+
 (defn commit [s]
-  ;; The preedit onto the end of the focused body, whole or not at all.
+  ;; The preedit into the body at the caret, whole or not at all.
   (let [base (body-base s)
-        at (body-len s base 0)
-        n (w s 445)]
-    (if (> (+ at n) 64) -5
-      (do (copy-preedit s base at 0 n)
+        n (w s 445)
+        at (caret-ix s)
+        len (bn s)]
+    (if (> (+ len n) 64) -5
+      (do (ins-room s at n)
+          (copy-preedit s base at 0 n)
           (clear-state s)
+          (note-insert s at n)
+          (set-caret s (+ at n))
           n))))
+
+(defn drop-selection [s]
+  ;; insert-text "" over [lo, hi): the selected code points go (kept for undo when they fit), the
+  ;; caret is at lo
+  (let [lo (sel-lo s) hi (sel-hi s) base (body-base s) len (- hi lo)]
+    (do (if (> len 32) (wp s 2006 0)
+          (do (save-text s base lo 0 len) (rec-undo s 2 lo len (+ lo len))))
+        (del-range s lo hi)
+        (clear-sel s)
+        (set-caret s lo)
+        0)))
+
+(defn put-latin [s c]
+  (let [base (body-base s) n (bn s) at (caret-ix s)]
+    (if (>= n 64) -5
+      (do (ins-room s at 1)
+          (wp s (+ base at) c)
+          (note-insert s at 1)
+          (set-caret s (+ at 1))
+          1))))
+
+
 
 ;; --- preedit and romaji buffers ----------------------------------------------
 
@@ -491,29 +623,9 @@
 
 ;; --- the selection (ADR-0240) --------------------------------------------------
 
-(defn sel-len [s]
-  ;; the focused body's selection, clamped to the body as normalize-selection
-  ;; clamps it; 0 when there is none or it is another window's
-  (if (= (w s 2036) (w s 2))
-    (let [n (body-len s (body-base s) 0)]
-      (if (> (w s 2037) n) n (w s 2037)))
-    0))
 
-(defn set-sel [s k]
-  (if (= k 0) (do (wp s 2036 0) (wp s 2037 0) 0)
-    (do (wp s 2036 (w s 2)) (wp s 2037 k) 0)))
 
-(defn clear-from [s base i n]
-  (if (>= i n) 0
-    (do (wp s (+ base i) 0) (clear-from s base (+ i 1) n))))
 
-(defn drop-selection [s]
-  ;; insert-text "" over [n - k, n): the selected code points go, the caret
-  ;; is at the end of the body again
-  (let [base (body-base s)
-        n (body-len s base 0)]
-    (do (clear-from s base (- n (sel-len s)) n)
-        (set-sel s 0))))
 
 (defn replace-selection [s]
   (if (> (sel-len s) 0) (drop-selection s) 0))
@@ -521,31 +633,117 @@
 (defn composing [s]
   (if (> (w s 433) 0) 1 (if (> (w s 445) 0) 1 (if (= (w s 442) 1) 1 0))))
 
-(defn extend-left [s]
-  ;; move-caret -1 :extend? -- one more code point before the end selected,
-  ;; none past the start of the body
-  (let [k (sel-len s)]
-    (if (< k (body-len s (body-base s) 0)) (set-sel s (+ k 1)) 0)))
+;; --- caret movement and the rest of the editing keys (ADR-0263) -------------------
+;; Nothing here acts while a composition is pending. Shift extends the selection from the anchor; without
+;; Shift a selection collapses to its near edge on Left / Right.
+(defn move-to [s c extend]
+  (do (if (= extend 1) (begin-sel s) (clear-sel s))
+      (set-caret s c)
+      (sync-sel s)
+      0))
 
-(defn extend-right [s]
-  ;; move-caret +1 :extend? -- the caret back toward the anchor at the end
-  (let [k (sel-len s)]
-    (if (> k 0) (set-sel s (- k 1)) 0)))
+(defn arrow-key [s left]
+  (if (= (composing s) 1) 0
+    (let [c (caret-ix s) n (bn s)
+          target (if (= left 1) (if (> c 0) (- c 1) 0) (if (< c n) (+ c 1) n))]
+      (if (= (w s 2035) 1) (move-to s target 1)
+        (if (> (sel-len s) 0)
+          (move-to s (if (= left 1) (sel-lo s) (sel-hi s)) 0)
+          (move-to s target 0))))))
 
-(defn shift-arrow [s left]
-  (if (= (w s 2035) 0) 0
-    (if (= (composing s) 1) 0
-      (if (= left 1) (extend-left s) (extend-right s)))))
+(defn line-start [s base i]
+  (if (<= i 0) 0
+    (if (= (w s (+ base (- i 1))) 10) i (line-start s base (- i 1)))))
+
+(defn line-end [s base i n]
+  (if (>= i n) n
+    (if (= (w s (+ base i)) 10) i (line-end s base (+ i 1) n))))
+
+(defn home-key [s]
+  (if (= (composing s) 1) 0
+    (move-to s (line-start s (body-base s) (caret-ix s)) (w s 2035))))
+
+(defn end-key [s]
+  (if (= (composing s) 1) 0
+    (move-to s (line-end s (body-base s) (caret-ix s) (bn s)) (w s 2035))))
+
+(defn wsp [cp] (if (= cp 32) 1 (if (= cp 10) 1 (if (= cp 9) 1 (if (= cp 12288) 1 0)))))
+
+(defn wl-ws [s base i]
+  (if (<= i 0) i (if (= (wsp (w s (+ base (- i 1)))) 1) (wl-ws s base (- i 1)) i)))
+
+(defn wl-word [s base i]
+  (if (<= i 0) i (if (= (wsp (w s (+ base (- i 1)))) 0) (wl-word s base (- i 1)) i)))
+
+(defn wr-ws [s base i n]
+  (if (>= i n) i (if (= (wsp (w s (+ base i))) 1) (wr-ws s base (+ i 1) n) i)))
+
+(defn wr-word [s base i n]
+  (if (>= i n) i (if (= (wsp (w s (+ base i))) 0) (wr-word s base (+ i 1) n) i)))
+
+;; Ctrl+Left: to the start of the word at or before the caret; Ctrl+Right: to the end of the next word
+(defn word-key [s left]
+  (if (= (composing s) 1) 0
+    (let [base (body-base s) c (caret-ix s) n (bn s)]
+      (move-to s (if (= left 1)
+                   (wl-word s base (wl-ws s base c))
+                   (wr-word s base (wr-ws s base c n) n))
+               (w s 2035)))))
 
 (defn delete-backward [s]
-  ;; browser.text-edit delete-backward. With a selection (ADR-0240) the
-  ;; selection goes. Without one the caret is at the end of the body (where
-  ;; insert-text leaves it): the last code point goes. Bodies hold code
-  ;; points, so there is no surrogate pair to keep whole.
+  ;; browser.text-edit delete-backward: the selection goes, else the code point before the caret
   (if (> (sel-len s) 0) (drop-selection s)
-    (let [base (body-base s)
-          at (body-len s base 0)]
-      (if (> at 0) (do (wp s (+ base (- at 1)) 0) 0) 0))))
+    (let [c (caret-ix s) base (body-base s)]
+      (if (> c 0)
+        (do (save-text s base (- c 1) 0 1)
+            (rec-undo s 2 (- c 1) 1 c)
+            (del-range s (- c 1) c)
+            (set-caret s (- c 1))
+            0)
+        0))))
+
+(defn delete-forward [s]
+  (if (= (composing s) 1) 0
+    (if (> (sel-len s) 0) (drop-selection s)
+      (let [c (caret-ix s) n (bn s) base (body-base s)]
+        (if (< c n)
+          (do (save-text s base c 0 1)
+              (rec-undo s 2 c 1 c)
+              (del-range s c (+ c 1))
+              (set-caret s c)
+              0)
+          0)))))
+
+;; Ctrl+Z: undo the last edit of this window -- a run of typed code points, one commit or paste, one
+;; deletion -- once; there is no redo
+(defn undo [s]
+  (let [v (w s 2006) base (body-base s)
+        kind (bit-and (quot v 2097152) 3)
+        idx (bit-and (quot v 16384) 127)
+        len (bit-and (quot v 128) 127)
+        caret (bit-and v 127)]
+    (if (not (= (quot v 8388608) (w s 2))) 0
+      (if (= kind 1)
+        (if (> (+ idx len) (bn s)) 0
+          (do (del-range s idx (+ idx len))
+              (wp s 2006 0)
+              (clear-sel s)
+              (set-caret s idx)
+              0))
+        (if (= kind 2)
+          (if (> (+ (bn s) len) 64) 0
+            (do (ins-room s idx len)
+                (restore-text s base idx 0 len)
+                (wp s 2006 0)
+                (clear-sel s)
+                (set-caret s caret)
+                0))
+          0)))))
+
+
+
+
+
 
 (defn on-backspace [s d]
   (if (= (w s 442) 1) (cancel s d)
@@ -556,16 +754,13 @@
 (defn on-letter [s c]
   (if (>= (w s 433) 8) -8
     (do (replace-selection s)
+        (wp s 2006 0)
+        (wp s 2004 0)
         (wp s (+ 434 (w s 433)) c)
         (wp s 433 (+ (w s 433) 1))
         (convert-buf s 0)
         0)))
 
-(defn put-latin [s c]
-  (let [base (body-base s)
-        at (body-len s base 0)]
-    (if (>= at 64) -5
-      (do (wp s (+ base at) c) 1))))
 
 (defn off-letter [s c]
   (do (replace-selection s)
@@ -579,12 +774,6 @@
 (defn cwp [d i v]
   (kernel-store-u32 (kernel-subregion d 260 (* i 4) 4) 4 0 v))
 
-(defn ctrl-key [s code]
-  ;; with Ctrl held: C over a selection asks to write the clipboard, V asks
-  ;; to read it; nothing while composing, and no other shortcut
-  (if (= (composing s) 1) 0
-    (if (= code 46) (if (> (sel-len s) 0) 512 0)
-      (if (= code 47) 513 0))))
 
 (defn copy-out [s d from i k]
   ;; from: the surface word of the first selected code point
@@ -592,12 +781,6 @@
     (do (cwp d (+ i 1) (w s (+ from i)))
         (copy-out s d from (+ i 1) k))))
 
-(defn copy-sel [s d]
-  ;; the selection's text into the clipboard: the last k code points
-  (let [k (sel-len s)
-        base (body-base s)]
-    (if (= k 0) 0
-      (copy-out s d (+ base (- (body-len s base 0) k)) 0 k))))
 
 (defn paste-in [s d to i n]
   ;; to: the surface word the first pasted code point goes to
@@ -605,17 +788,40 @@
     (do (wp s (+ to i) (cw d (+ i 1)))
         (paste-in s d to (+ i 1) n))))
 
+
+(defn copy-sel [s d]
+  ;; the selection's text into the clipboard
+  (let [k (sel-len s)
+        base (body-base s)]
+    (if (= k 0) 0
+      (copy-out s d (+ base (sel-lo s)) 0 k))))
+
 (defn paste [s d]
-  ;; insert-text of the clipboard's text: the selection goes, the text is
-  ;; appended at the caret (the end of the body), whole or not at all
+  ;; insert-text of the clipboard's text: the selection goes, the text goes in at the caret,
+  ;; whole or not at all
   (let [n (cw d 0)
         base (body-base s)
         k (sel-len s)
-        at (body-len s base 0)]
+        len (bn s)]
     (if (= n 0) 0
-      (if (> (+ (- at k) n) 64) -5
+      (if (> (+ (- len k) n) 64) -5
         (do (replace-selection s)
-            (paste-in s d (+ base (- at k)) 0 n))))))
+            (let [at (caret-ix s)]
+              (do (ins-room s at n)
+                  (paste-in s d (+ base at) 0 n)
+                  (note-insert s at n)
+                  (set-caret s (+ at n))
+                  n)))))))
+
+(defn ctrl-key [s code]
+  ;; with Ctrl held: C over a selection asks to write the clipboard, V asks to read it; Left and
+  ;; Right move by word, Z undoes; nothing while composing, and no other shortcut
+  (if (= (composing s) 1) 0
+    (if (= code 46) (if (> (sel-len s) 0) 512 0)
+      (if (= code 47) 513
+        (if (= code 105) (word-key s 1)
+          (if (= code 106) (word-key s 0)
+            (if (= code 44) (undo s) 0)))))))
 
 (defn complete [s d db code]
   ;; an admitted request's completion; the clipboard in place of the
@@ -631,19 +837,25 @@
   (do (wp s 432 (if (= (w s 432) 0) 1 0))
       (clear-state s)))
 
+
 (defn key [s d code]
   (let [c (letter-of code)]
     (if (= code 41) (toggle s)
-    (if (= code 105) (shift-arrow s 1)
-    (if (= code 106) (shift-arrow s 0)
+    (if (= code 105) (arrow-key s 1)
+    (if (= code 106) (arrow-key s 0)
+    (if (= code 102) (home-key s)
+    (if (= code 107) (end-key s)
+    (if (= code 111) (delete-forward s)
     (if (= (w s 432) 0)
       (if (> c 0) (off-letter s c)
-        (if (= code 14) (delete-backward s) 0))
+        (if (= code 57) (off-letter s 32)
+          (if (= code 28) (off-letter s 10)
+            (if (= code 14) (delete-backward s) 0))))
       (if (> c 0) (on-letter s c)
         (if (= code 57) (on-space s d)
           (if (= code 28) (on-enter s)
             (if (= code 14) (on-backspace s d)
-              (if (= code 1) (cancel s d) 0)))))))))))
+              (if (= code 1) (cancel s d) 0))))))))))))))
 
 ;; --- admission ----------------------------------------------------------------
 
@@ -848,6 +1060,7 @@
 (defn sign-out-now [s]
   (do (zero-body s 0)
       (zero-run s 2010 16) (zero-run s 2027 3) (zero-run s 2036 2) (zero-run s 2040 4)
+      (zero-run s 2004 3) (wp s 432 0)
       (zero-run s 10 15)
       (wp s 5 1) (wp s 6 80) (wp s 7 80) (wp s 8 520) (wp s 9 360)
       (wp s 1 1) (wp s 2 1)

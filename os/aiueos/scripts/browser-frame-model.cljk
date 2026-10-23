@@ -139,6 +139,12 @@
       (if (= c 10) (recur (rest cps) [] (conj out cur)) (recur (rest cps) (conj cur p) out))
       (conj out cur))))
 
+(defn- nl-indexes
+  "For each segment of the body, the index of the 10 that ends it (nil for the last segment)."
+  [body]
+  (let [idx (keep (fn [[c i]] (when (= c 10) i)) body)]
+    (vec (concat idx [nil]))))
+
 (defn body-lines-indexed
   "ADR-0234: the body's lines as browser.surface + cssom lay out the window's
   document -- the body text, each 10 a <br> -- at line width `wmax`; each
@@ -146,7 +152,12 @@
   [wmax body]
   (let [body (vec (map-indexed (fn [i c] [c i]) (take-while pos? body)))]
     (if (some #(= 10 (first %)) body)
-      (vec (mapcat #(pack wmax %) (segments body)))
+      (vec (mapcat (fn [seg end]
+                     ;; ADR-0263: the 10 that ends a segment is a zero-width [:nl index] at the end of its
+                     ;; last line, so a caret standing on it is found at the end of that line
+                     (let [ls (pack wmax seg)]
+                       (if end (conj (pop ls) (conj (peek ls) [:nl end])) ls)))
+                   (segments body) (nl-indexes body)))
       (let [collapsed (vec (mapcat #(if (ws? (first %)) [[32 (second (first %))]] %)
                                    (partition-by #(boolean (ws? %)) body)))]
         (cond
@@ -166,25 +177,31 @@
     (+ (* 65536 (mix 70)) (* 256 (mix 130)) (mix 220))))
 
 (defn- lay-body
-  "The body's lines ([cp i] each) from (left, top), 20 apart: {:ops :x :y}
+  "The body's lines ([cp i] each) from (left, top), 20 apart: {:ops :x :y :cap}
   with the pen after the last glyph. A glyph whose foot passes `bottom` or
   whose right edge passes `vw` is not drawn, nor (ADR-0238) one whose top is
-  above `ceiling`; the pen moves anyway. A drawn glyph whose index is at or
-  past `sel` has a highlight rect of its size right before it (ADR-0240)."
-  [{:keys [left top bottom ceiling vw sel]} lines]
-  (reduce (fn [{:keys [ops]} [i line]]
+  above `ceiling`; the pen moves anyway. A drawn glyph whose index is in
+  `sel` = [lo hi) has a highlight rect of its size right before it (ADR-0240,
+  ADR-0263). :cap is the pen where the first index at or past `caret` was
+  reached, drawn or not -- also at the zero-width [:nl i] -- or nil (ADR-0263)."
+  [{:keys [left top bottom ceiling vw sel caret]} lines]
+  (reduce (fn [{:keys [ops cap]} [i line]]
             (let [y (+ top (* 20 i))]
-              (loop [cps line x left ops ops]
+              (loop [cps line x left ops ops cap cap]
                 (if-let [[cp j] (first cps)]
-                  (let [[gi gw] (glyph cp)]
-                    (recur (rest cps) (+ x gw)
-                           (if (and (<= (+ y 16) bottom) (>= y ceiling) (<= (+ x gw) vw))
-                             (cond-> ops
-                               (and sel (>= j sel)) (conj [:rect x y gw 16 highlight])
-                               true (conj [:glyph x y gi gw]))
-                             ops)))
-                  {:ops ops :x x :y y}))))
-          {:ops [] :x left :y top}
+                  (if (= cp :nl)
+                    (recur (rest cps) x ops (or cap (when (and caret (>= j caret)) [x y])))
+                    (let [[gi gw] (glyph cp)
+                          cap (or cap (when (and caret (>= j caret)) [x y]))]
+                      (recur (rest cps) (+ x gw)
+                             (if (and (<= (+ y 16) bottom) (>= y ceiling) (<= (+ x gw) vw))
+                               (cond-> ops
+                                 (and sel (>= j (first sel)) (< j (second sel))) (conj [:rect x y gw 16 highlight])
+                                 true (conj [:glyph x y gi gw]))
+                               ops)
+                             cap)))
+                  {:ops ops :x x :y y :cap cap}))))
+          {:ops [] :x left :y top :cap nil}
           (map-indexed vector lines)))
 
 (def ^:private hot-colour 0xd9d9d9)
@@ -375,9 +392,15 @@
                  ;; this window's: the last min(k, n) code points
                  n (count (take-while pos? (take 64 body)))
                  k (if (and f? (= (first selection) id)) (min (second selection) n) 0)
-                 sel (when (pos? k) (- n k))
+                 ;; ADR-0263: a scene may name the selection as a range [id lo hi) and the caret as
+                 ;; [id index]; the legacy [id k] is the last k code points, the caret at the end
+                 rng (cond (and f? (= (first (:range scene)) id)) [(second (:range scene)) (nth (:range scene) 2)]
+                           (pos? k) [(- n k) n])
+                 sel (when (and rng (< (first rng) (second rng))) rng)
+                 caret-ix (when (and f? (= (first (:caret scene)) id) (< (second (:caret scene)) n))
+                            (second (:caret scene)))
                  b (lay-body {:left (+ x 14) :top (- (+ y 42) sc) :bottom (- (+ y h) 8)
-                              :ceiling (+ y 36) :vw vw :sel sel}
+                              :ceiling (+ y 36) :vw vw :sel sel :caret caret-ix}
                              (body-lines-indexed (- w 28) (take 64 body)))
                  c (when (and f? (seq composition))
                      (lay-line {:x (:x b) :y (:y b) :left (+ x 14) :right (- (+ x w) 14)
@@ -387,7 +410,7 @@
                  ;; collapsed selection -- 1 x 16 in the text colour, where
                  ;; the next glyph would go (after the composition, if any);
                  ;; not drawn when its foot passes the bottom inset.
-                 [cx cy] (if c [(:x c) (:y c)] [(:x b) (:y b)])
+                 [cx cy] (if c [(:x c) (:y c)] (or (:cap b) [(:x b) (:y b)]))
                  ;; ADR-0240: no caret while something is selected (sel-ops
                  ;; draws one only for a collapsed selection)
                  caret (when (and f? (nil? sel) (<= (+ cy 16) (- (+ y h) 8)) (>= cy (+ y 36)) (<= (+ cx 1) vw))
@@ -859,6 +882,103 @@
                        [:rect (sc (+ x dx)) (sc (+ y dy)) (- (ce (+ x dx 1)) (sc (+ x dx))) (- (ce (+ y dy 1)) (sc (+ y dy))) (or c ink)])))
                  ops))))
 
+;; ADR-0263: text editing, stated here apart from browser-ime.kotoba. The body is a vector of code points; the
+;; caret is an index; a selection is the span between the anchor and the caret; undo remembers the last edit of
+;; the window (a run of typed code points, a deletion) once. Word and line moves are the plain rules:
+;; Ctrl+Left goes to the start of the word at or before the caret, Ctrl+Right to the end of the next word; Home and
+;; End go to the start and end of the caret's line (the lines are separated by 10); with Shift a move keeps or starts
+;; a selection, without it a selection collapses to its near edge on Left and Right.
+(defn- ed-ws? [c] (contains? #{32 10 9 12288} c))
+(defn- ed-sel [{:keys [caret anchor]}] (when (and anchor (not= anchor caret)) [(min anchor caret) (max anchor caret)]))
+(defn- ed-move [st c extend?]
+  (let [a (when extend? (or (:anchor st) (:caret st)))]
+    (assoc st :caret c :anchor (when (and a (not= a c)) a))))
+(defn- ed-line-start [body i] (loop [i i] (if (or (<= i 0) (= 10 (nth body (dec i)))) i (recur (dec i)))))
+(defn- ed-line-end [body i] (loop [i i] (if (or (>= i (count body)) (= 10 (nth body i))) i (recur (inc i)))))
+(defn- ed-word-left [body i]
+  (let [i (loop [i i] (if (and (pos? i) (ed-ws? (nth body (dec i)))) (recur (dec i)) i))]
+    (loop [i i] (if (and (pos? i) (not (ed-ws? (nth body (dec i))))) (recur (dec i)) i))))
+(defn- ed-word-right [body i]
+  (let [n (count body)
+        i (loop [i i] (if (and (< i n) (ed-ws? (nth body i))) (recur (inc i)) i))]
+    (loop [i i] (if (and (< i n) (not (ed-ws? (nth body i)))) (recur (inc i)) i))))
+(defn- ed-delete [st lo hi caret-after]
+  (let [body (:body st)
+        txt (subvec body lo hi)]
+    (assoc st :body (into (subvec body 0 lo) (subvec body hi)) :caret lo :anchor nil
+           :undo (when (<= (- hi lo) 32) {:kind :del :idx lo :text txt :caret caret-after}))))
+(defn- ed-insert [st cps]
+  (let [{:keys [body caret undo]} st
+        at caret m (count cps)
+        merge? (and undo (= :ins (:kind undo)) (= (+ (:idx undo) (:len undo)) at))]
+    (assoc st :body (into (into (subvec body 0 at) cps) (subvec body at)) :caret (+ at m) :anchor nil
+           :undo (if merge? (update undo :len + m) {:kind :ins :idx at :len m}))))
+(defn- ed-drop-sel [st]
+  (if-let [[lo hi] (ed-sel st)] (ed-delete st lo hi hi) (assoc st :anchor nil)))
+(defn- ed-step [st [op arg]]
+  (let [{:keys [body caret]} st n (count body)]
+    (case op
+      :type (-> st ed-drop-sel (ed-insert [arg]))
+      :left (if-let [[lo _] (ed-sel st)] (ed-move st lo false) (ed-move st (max 0 (dec caret)) false))
+      :right (if-let [[_ hi] (ed-sel st)] (ed-move st hi false) (ed-move st (min n (inc caret)) false))
+      :shift-left (ed-move st (max 0 (dec caret)) true)
+      :shift-right (ed-move st (min n (inc caret)) true)
+      :home (ed-move st (ed-line-start body caret) false)
+      :end (ed-move st (ed-line-end body caret) false)
+      :shift-home (ed-move st (ed-line-start body caret) true)
+      :ctrl-left (ed-move st (ed-word-left body caret) false)
+      :ctrl-right (ed-move st (ed-word-right body caret) false)
+      :backspace (if (ed-sel st) (ed-drop-sel st)
+                   (if (pos? caret) (ed-delete st (dec caret) caret caret) st))
+      :delete (if (ed-sel st) (ed-drop-sel st)
+                (if (< caret n) (ed-delete st caret (inc caret) caret) st))
+      :undo (let [u (:undo st)]
+              (case (:kind u)
+                :ins (assoc (ed-delete st (:idx u) (+ (:idx u) (:len u)) 0) :undo nil)
+                :del (assoc st :body (into (into (subvec body 0 (:idx u)) (:text u)) (subvec body (:idx u)))
+                            :caret (:caret u) :anchor nil :undo nil)
+                st)))))
+
+;; The sequence the host sends after the keyboard-only stage; each step is a key (Ctrl or Shift held round it
+;; where named). [step, evdev code, qcode, modifier]
+(def edit-steps
+  [[[:type 97] 30 "a"] [[:type 98] 48 "b"] [[:type 32] 57 "spc"] [[:type 99] 46 "c"] [[:type 100] 32 "d"]
+   [[:home] 102 "home"] [[:right] 106 "right"] [[:right] 106 "right"]
+   [[:ctrl-right] 106 "right" :ctrl] [[:ctrl-left] 105 "left" :ctrl] [[:left] 105 "left"]
+   [[:type 120] 45 "x"] [[:undo] 44 "z" :ctrl]
+   [[:shift-right] 106 "right" :shift] [[:shift-right] 106 "right" :shift]
+   [[:backspace] 14 "backspace"] [[:undo] 44 "z" :ctrl] [[:delete] 111 "delete"]
+   [[:type 10] 28 "ret"] [[:type 101] 18 "e"]
+   [[:left] 105 "left"] [[:left] 105 "left"] [[:end] 107 "end"] [[:home] 102 "home"] [[:end] 107 "end"]
+   [[:right] 106 "right"] [[:end] 107 "end"] [[:shift-home] 102 "home" :shift] [[:left] 105 "left"]])
+
+(def edit-frames
+  (let [clean (second (last max-frames))
+        w1 (first (:stack clean))
+        scene (fn [st]
+                (let [rng (ed-sel st)]
+                  (cond-> (assoc clean :stack [(assoc w1 :body (:body st))]
+                                       :caret [1 (:caret st)])
+                    rng (assoc :range [1 (first rng) (second rng)]))))
+        mod-code {:ctrl 29 :shift 42}
+        mod-q {:ctrl "ctrl" :shift "shift"}]
+    (loop [steps edit-steps st {:body [] :caret 0 :anchor nil :undo nil} out []]
+      (if-let [[step code q md] (first steps)]
+        (let [st2 (ed-step st step)
+              ev (fn [label st] [label st code q])
+              frames (cond-> []
+                       md (conj [(str (name md) " down") st nil (mod-q md) (mod-code md) true])
+                       true (conj [(str q " down") st2 q code true])
+                       true (conj [(str q " up") st2 q code false])
+                       md (conj [(str (name md) " up") st2 (mod-q md) (mod-code md) false]))]
+          ;; the modifier's down comes before the key's change; the key's down is the frame that changes
+          (recur (rest steps) st2
+                 (into out (map (fn [[label s2 _ _ _]] [label (scene (if (re-find #"(ctrl|shift) down" label) st s2))]) frames))))
+        out))))
+
+(defn- ed-text [body]
+  (apply str (map #(case % 32 "_" 10 "|" (str (char %))) body)))
+
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
 ;; press path as the pointer. F6 F6 puts the ring on launcher button 2 and Enter opens window 2; F6 four times
@@ -895,7 +1015,7 @@
 ;; ADR-0260: after the sign-out stage the settings stage: the clean session (one window 1) with the
 ;; high-contrast palette on -- chosen with F10 on the first boot, restored from the volume on the second.
 (def settings-frames
-  (let [clean (second (last max-frames))
+  (let [clean (second (last edit-frames))   ; ADR-0263: the session as the editing stage left it
         hc (assoc clean :hc true)]
     [["f10" hc] ["f10-up" hc]]))
 
@@ -1158,6 +1278,16 @@
   ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
   ;; list for the cursor, focus and scroll frames -- the kernel prints the
   ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[i [ev scene]] (map-indexed vector edit-frames)
+          :let [ops (frame scene)
+                c (census ops)
+                w (first (:stack scene))
+                n (count (:body w))
+                [_ ci] (:caret scene)
+                rng (when-let [r (:range scene)] [(nth r 1) (nth r 2)])]]
+    (println (str "edit-frame n=" (inc i) " " ev " text=" (ed-text (:body w)) " caret=" (if (< ci n) ci n)
+                  " sel=" (if rng (str (first rng) "," (second rng)) "-")
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector ring-frames)
           :let [ops (frame scene)
                 c (census ops)

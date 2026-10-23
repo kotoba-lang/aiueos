@@ -854,6 +854,20 @@ while time.time() < end:
                 recv_obj()
                 globals()["uiux_sent"] = k + 1
                 log("uiux event " + str(k + 1) + " sent")
+        # ADR-0263: seventy-two keys for the text editing stage, after the keyboard-only stage: a short text typed,
+        # then caret moves, insertion, selection, deletion, Enter and Ctrl+Z (see the frame model's edit-steps).
+        if typing and b"AIUEOS_GUEST_BROWSER_EDIT_GO" in serial_now and globals().get("edit_sent", 0) < 72:
+            k = globals().get("edit_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_EDIT n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                qs = ['a', 'a', 'b', 'b', 'spc', 'spc', 'c', 'c', 'd', 'd', 'home', 'home', 'right', 'right', 'right', 'right', 'ctrl', 'right', 'right', 'ctrl', 'ctrl', 'left', 'left', 'ctrl', 'left', 'left', 'x', 'x', 'ctrl', 'z', 'z', 'ctrl', 'shift', 'right', 'right', 'shift', 'shift', 'right', 'right', 'shift', 'backspace', 'backspace', 'ctrl', 'z', 'z', 'ctrl', 'delete', 'delete', 'ret', 'ret', 'e', 'e', 'left', 'left', 'left', 'left', 'end', 'end', 'home', 'home', 'end', 'end', 'right', 'right', 'end', 'end', 'shift', 'home', 'home', 'shift', 'left', 'left']
+                ds = [True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, True, False, False, True, True, False, False, True, False, True, False, True, True, False, False, True, True, False, False, True, True, False, False, True, False, True, True, False, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, False, True, True, False, False, True, False]
+                ev = [{"type": "key", "data": {"down": ds[k], "key": {"type": "qcode", "data": qs[k]}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["edit_sent"] = k + 1
+                log("edit event " + str(k + 1) + " sent")
         # ADR-0262: twenty-eight keys for the keyboard-only stage, after the scale stage: F6, Enter and Escape, down and up.
         if typing and b"AIUEOS_GUEST_BROWSER_RING_GO" in serial_now and globals().get("ring_sent", 0) < 28:
             k = globals().get("ring_sent", 0)

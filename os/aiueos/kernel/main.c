@@ -2344,6 +2344,78 @@ static int browser_ring_stage(uint32_t *surface, const uint8_t *font, uint64_t f
   return 0;
 }
 
+/* ADR-0263: the text editing stage. The host sends seventy-two keys -- a short text typed, then caret moves
+   (Left, Right, Home, End, Ctrl+Left / Right by word), insertion at the caret, a selection (Shift+Right,
+   Shift+Home), Backspace and Delete, Enter, and Ctrl+Z -- to the clean session's window 1, whose body is empty.
+   The stage hands each key to Kotoba and prints the body as ASCII (space as _, line break as |), the caret and the
+   selection it reads back from the surface's words, and what it painted. */
+static int browser_edit_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                              uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_EDIT_GO events=72\r\n");
+  while (se < 72 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    (void)kr;
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    {
+      const uint32_t base = 160U + 64U * (surface[2] - 1U);
+      uint32_t n = 0, caret, v = surface[2004], lo = 0, hi = 0;
+      while (n < 64U && surface[base + n]) n++;
+      caret = (v / 128U == surface[2]) ? ((v & 127U) - 1U) : n;
+      if (caret > n) caret = n;
+      if (surface[2036] == surface[2] && surface[2005]) {
+        uint32_t a = surface[2005] - 1U;
+        if (a > n) a = n;
+        lo = a < caret ? a : caret;
+        hi = a < caret ? caret : a;
+      }
+      serial_string("AIUEOS_GUEST_BROWSER_EDIT n=");
+      serial_decimal(se);
+      serial_string(" key=");
+      serial_decimal(key);
+      serial_string(" text=");
+      for (uint32_t k = 0; k < n; k++) {
+        uint32_t c = surface[base + k];
+        char ch[2] = {0, 0};
+        ch[0] = c == 32U ? '_' : (c == 10U ? '|' : (c < 128U ? (char)c : '?'));
+        serial_string(ch);
+      }
+      serial_string(" caret=");
+      serial_decimal(caret);
+      serial_string(" sel=");
+      if (hi > lo) { serial_decimal(lo); serial_string(","); serial_decimal(hi); }
+      else serial_string("-");
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+      serial_string(" text-px=");
+      serial_decimal(px);
+      serial_string(" hash=");
+      serial_hex32(hash);
+      serial_string("\r\n");
+    }
+  }
+  if (se == 72) {
+    debug_string("AIUEOS_GUEST_BROWSER_EDIT_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_EDIT_OK events=72\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_EDIT leftover=events-missing\r\n");
+  return 0;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
@@ -6040,7 +6112,8 @@ qwen_runtime_boot_complete:
                                                     if (browser_uiux_stage(surface, font, font_length, dict, dict_length))
                                                       if (browser_scale_stage(surface, font, font_length, dict, dict_length))
                                                         if (browser_ring_stage(surface, font, font_length, dict, dict_length))
-                                                          browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                          if (browser_edit_stage(surface, font, font_length, dict, dict_length))
+                                                            browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");
