@@ -60,7 +60,7 @@ AIUEOS_KOTOBA_STORAGE_READ_VALIDATION_OK superblock mutable-object
 AIUEOS_KOTOBA_STORAGE_WRITE_OK journal mutable-object bounded-store
 AIUEOS_SERVICE_REGISTRY_OK journal-object ids=2 generation=2,1 restart=1,0 decoder=kotoba fixed-stack
 AIUEOS_KOTOBA_PCI_PLANNER_OK cap extent msix-region
-AIUEOS_GUEST_BROWSER_TABLET tablets=1 press=1 used=3 abs=2 key=1
+AIUEOS_GUEST_BROWSER_TABLET tablets=1 press=1 used=5 abs=2 key=2
 AIUEOS_VIRTIO_INPUT_OK modern-pci eventq configured used-ring
 AIUEOS_DESKTOP_INPUT_OK envelope-v1 sequence=1 kind=key ime-neutral
 AIUEOS_GUEST_INPUT_OK eventq-used=1 synthetic=0
@@ -97,7 +97,7 @@ AIUEOS_GUEST_BROWSER_LOOP_FRAME n=6 src=pointer answer=0 ops=81 text-px=875 hash
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=7 src=key answer=0 ops=83 text-px=902 hash=907e5d19
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=8 src=key answer=0 ops=83 text-px=917 hash=110408d5
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=9 src=key answer=1 ops=82 text-px=901 hash=7b0f9b05
-AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=82 text-px=901 hash=7b0f9b05 idle-min=825
+AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=82 text-px=901 hash=7b0f9b05 idle-min=678
 AIUEOS_GUEST_BROWSER_CARET_GO keys=5
 AIUEOS_GUEST_BROWSER_CARET_FRAME n=1 key=37 answer=0 ops=84 caret=458,214 text-px=928 hash=f17b8389
 AIUEOS_GUEST_BROWSER_CARET_FRAME n=2 key=30 answer=0 ops=84 caret=466,214 text-px=952 hash=7029fa28
@@ -558,6 +558,36 @@ AIUEOS_GUEST_BROWSER_SCALE n=14 key=116 pct=100 vw=1280 vh=800 win=0,28,853,505 
 AIUEOS_GUEST_BROWSER_SCALE n=15 key=349 pct=100 vw=1280 vh=800 win=80,80,520,360 ops=72 text-px=582 hash=60620c8b
 AIUEOS_GUEST_BROWSER_SCALE n=16 key=348 pct=100 vw=1280 vh=800 win=80,80,520,360 ops=72 text-px=582 hash=60620c8b
 AIUEOS_GUEST_BROWSER_SCALE_OK events=16
+AIUEOS_GUEST_BROWSER_RING_GO events=28
+AIUEOS_GUEST_BROWSER_RING n=1 key=257 ring=1 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=76 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING n=2 key=256 ring=1 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=76 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING n=3 key=257 ring=2 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=76 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING n=4 key=256 ring=2 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=76 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING n=5 key=113 ring=2 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=6 key=112 ring=2 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=7 key=257 ring=3 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=8 key=256 ring=3 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=9 key=257 ring=4 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=10 key=256 ring=4 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=11 key=257 ring=5 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=12 key=256 ring=5 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=13 key=257 ring=6 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=14 key=256 ring=6 windows=2 focus=2 stack=12 min=0 top=80,80,520,360 ops=96 text-px=595 hash=71f2d5d8
+AIUEOS_GUEST_BROWSER_RING n=15 key=113 ring=6 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=95 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=16 key=112 ring=6 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=95 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=17 key=257 ring=7 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=95 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=18 key=256 ring=7 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=95 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=19 key=113 ring=7 windows=2 focus=1 stack=12 min=2 top=0,28,1280,720 ops=78 text-px=702 hash=1b23b022
+AIUEOS_GUEST_BROWSER_RING n=20 key=112 ring=7 windows=2 focus=1 stack=12 min=2 top=0,28,1280,720 ops=78 text-px=702 hash=1b23b022
+AIUEOS_GUEST_BROWSER_RING n=21 key=257 ring=8 windows=2 focus=1 stack=12 min=2 top=0,28,1280,720 ops=82 text-px=702 hash=1b23b022
+AIUEOS_GUEST_BROWSER_RING n=22 key=256 ring=8 windows=2 focus=1 stack=12 min=2 top=0,28,1280,720 ops=82 text-px=702 hash=1b23b022
+AIUEOS_GUEST_BROWSER_RING n=23 key=113 ring=8 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=91 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=24 key=112 ring=8 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=91 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=25 key=257 ring=0 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=91 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=26 key=256 ring=0 windows=2 focus=2 stack=12 min=0 top=0,28,1280,720 ops=91 text-px=595 hash=181f1694
+AIUEOS_GUEST_BROWSER_RING n=27 key=5 ring=0 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=72 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING n=28 key=4 ring=0 windows=1 focus=1 stack=1 min=0 top=80,80,520,360 ops=72 text-px=582 hash=60620c8b
+AIUEOS_GUEST_BROWSER_RING_OK events=28
 AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0
 AIUEOS_GUEST_BROWSER_SETTINGS_GO events=2
 AIUEOS_GUEST_BROWSER_SETTINGS n=1 key=273 hc=1 ops=72 text-px=582 hash=60620c8b written=1 stored=1
@@ -586,18 +616,3 @@ AIUEOS_COPYIN_OK noncanonical-and-unmapped-denied
 AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page
 AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task
 AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5
-AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3,4,5 object=service-registry,user-store service-ipc=mailbox domains=4,5 result=42
-AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first serializer=kotoba validator=kotoba decoder=kotoba materializer=kotoba fixed-stack
-AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2
-AIUEOS_RING3_OK processes=2 preemptive roots=2 domains=2,3 kernel-stacks=2 syscall-sysret
-AIUEOS_SYSRET_OK star-lstar-fmask canonical-rip-rsp rflags-sanitized per-task-stack
-AIUEOS_CAPABILITY_TRANSFER_OK source=2 target=3 attenuated atomic-claim transferred-use owner-exit=descendants-revoked
-AIUEOS_APP_CATALOG_LOOKUP_OK ids=app/hello,app/worker unknown=denied extents=nonoverlap
-AIUEOS_PROCESS_REAP_OK tasks=4 services=2-persistent process-slots=8 task-slots=8 generations=reused owner-caps-revoked allocator-pages=24 stack-pages=reused zero-reused
-AIUEOS_USER_SYSCALL_OK valid-log copied-payload too-big stale-generation foreign-owner wrong-type no-rights invalid-pointer
-AIUEOS_ADDRESS_SPACE_OK processes=2 distinct-cr3 private-pages cross-access-fault
-AIUEOS_PAGE_FAULT_OK write-protect vector=14
-AIUEOS_PAGE_FAULT_OK no-execute vector=14
-AIUEOS_DESKTOP_LOOP_OK persistent input service
-AIUEOS_INPUT_RING n=522
-AIUEOS_INPUT_RING n=523
