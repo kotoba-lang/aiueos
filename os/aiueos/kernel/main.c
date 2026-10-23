@@ -2643,6 +2643,196 @@ static int browser_notify_stage(uint32_t *surface, const uint8_t *font, uint64_t
   return 0;
 }
 
+#ifdef AIUEOS_SIZE_BUILD
+/* ADR-0270: at -Os clang lowers struct and array initialisers to calls the freestanding kernel does not otherwise define. The loops are
+   byte-wise and compiled with -fno-builtin, so they are not turned back into the calls they implement. */
+void *memset(void *d, int c, __SIZE_TYPE__ n) { volatile unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
+void *memcpy(void *d, const void *s, __SIZE_TYPE__ n) { volatile unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
+#endif
+
+/* ADR-0270: a device-bound passkey for the lock screen. The device key (an ECDSA P-256 scalar from the virtio-rng) is made the first
+   time it is needed and kept in sector 1035 of this machine's volume with its public point; a passkey made on another device is a
+   different key and does not verify against the registered public point. The ceremony is WebAuthn-shaped, with the key press as the
+   user-presence check: a fresh 32-byte challenge, authenticator data (the SHA-256 of the relying party "aiueos-session" and the
+   user-presence flag), a signature over SHA-256(challenge || authenticator data) with a fresh nonce, and a verification of that
+   signature against the REGISTERED public point. Only a verified signature opens the session; its id is the first eight bytes of
+   SHA-256(challenge || signature). The private scalar sits on the volume in the clear (no data encryption at rest, scorecard G3). */
+extern int aiueos_passkey_sector_read(uint8_t *);
+extern int aiueos_passkey_sector_write(const uint8_t *);
+extern int aiueos_random_bytes(uint8_t *, uint32_t);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sign(const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_public(const uint8_t *, uint8_t *, uint8_t *);
+extern uint64_t kotoba_aiueos_ecdsa_p256_sha256_verify(const uint8_t *, const uint8_t *, const uint8_t *, uint8_t *, uint64_t);
+extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *, uint64_t);
+
+/* in .high_bss: the low region is at its budget (qualification/low-region-budget.edn) */
+static uint8_t passkey_ws[2048] __attribute__((section(".high_bss")));
+static uint8_t passkey_d[32] __attribute__((section(".high_bss")));
+static uint8_t passkey_q[64] __attribute__((section(".high_bss")));
+static int passkey_ready, passkey_created;
+
+static int passkey_sha256(const uint8_t *data, uint32_t n, uint8_t out[32]) {
+  static uint8_t ws[512];
+  return kotoba_aiueos_sha256(data, n, out, ws, sizeof(ws)) != 0;
+}
+
+static int passkey_scalar(uint8_t k[32]) {
+  for (unsigned tries = 0; tries < 8; tries++) {
+    uint8_t any = 0;
+    if (!aiueos_random_bytes(k, 32)) return 0;
+    for (unsigned i = 0; i < 32; i++) any |= k[i];
+    if (any && k[0] != 0xffU) return 1;   /* below the group order */
+  }
+  return 0;
+}
+
+static int passkey_load(void) {
+  uint8_t sec[512];
+  if (passkey_ready) return 1;
+  if (!aiueos_passkey_sector_read(sec)) return 0;
+  {
+    static const char magic[8] = {'A','I','U','E','P','K','Y','1'};
+    uint32_t sum = 0, want = 0;
+    int ok = 1;
+    for (unsigned i = 0; i < 8; i++) if ((char)sec[i] != magic[i]) ok = 0;
+    for (unsigned i = 0; i < 4; i++) { sum |= (uint32_t)sec[128 + i] << (8 * i); }
+    want = (uint32_t)kotoba_aiueos_fnv1a(sec, 128);
+    if (ok && sum == want) {
+      for (unsigned i = 0; i < 32; i++) passkey_d[i] = sec[16 + i];
+      for (unsigned i = 0; i < 64; i++) passkey_q[i] = sec[48 + i];
+      passkey_ready = 1;
+      passkey_created = 0;
+      return 1;
+    }
+  }
+  if (!passkey_scalar(passkey_d)) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_public(passkey_d, passkey_q, passkey_ws)) return 0;
+  for (unsigned i = 0; i < 512; i++) sec[i] = 0;
+  { static const char magic[8] = {'A','I','U','E','P','K','Y','1'};
+    uint32_t sum;
+    for (unsigned i = 0; i < 8; i++) sec[i] = (uint8_t)magic[i];
+    sec[8] = 1;
+    for (unsigned i = 0; i < 32; i++) sec[16 + i] = passkey_d[i];
+    for (unsigned i = 0; i < 64; i++) sec[48 + i] = passkey_q[i];
+    sum = (uint32_t)kotoba_aiueos_fnv1a(sec, 128);
+    for (unsigned i = 0; i < 4; i++) sec[128 + i] = (uint8_t)(sum >> (8 * i));
+  }
+  if (!aiueos_passkey_sector_write(sec)) return 0;
+  passkey_ready = 1;
+  passkey_created = 1;
+  return 1;
+}
+
+/* One ceremony with the signing key `d` (this device's, or another device's) against the registered public point. Returns 1 when the
+   signature verifies; `session` gets the session id. */
+static int passkey_ceremony(const uint8_t *d, uint8_t session[8], uint8_t sig_out[64], int *signed_ok) {
+  uint8_t challenge[32], rp[32], msg[65], h[32], k[32], sig[64], sm[96], sd[32];
+  static const uint8_t rp_id[14] = {'a','i','u','e','o','s','-','s','e','s','s','i','o','n'};
+  *signed_ok = 0;
+  if (!aiueos_random_bytes(challenge, 32) || !passkey_scalar(k)) return 0;
+  if (!passkey_sha256(rp_id, 14, rp)) return 0;
+  for (unsigned i = 0; i < 32; i++) { msg[i] = challenge[i]; msg[32 + i] = rp[i]; }
+  msg[64] = 0x01U;                                   /* flags: user present (the key press) */
+  if (!passkey_sha256(msg, 65, h)) return 0;
+  if (!kotoba_aiueos_ecdsa_p256_sign(d, h, k, sig, passkey_ws)) return 0;
+  *signed_ok = 1;
+  for (unsigned i = 0; i < 64; i++) sig_out[i] = sig[i];
+  for (unsigned i = 0; i < 32; i++) { sm[i] = challenge[i]; }
+  for (unsigned i = 0; i < 64; i++) sm[32 + i] = sig[i];
+  if (!passkey_sha256(sm, 96, sd)) return 0;
+  for (unsigned i = 0; i < 8; i++) session[i] = sd[i];
+  return kotoba_aiueos_ecdsa_p256_sha256_verify(sig, h, passkey_q, passkey_ws, sizeof(passkey_ws)) != 0;
+}
+
+static void passkey_hex(const uint8_t *b, unsigned n) {
+  static const char hx[] = "0123456789abcdef";
+  char c[3] = {0, 0, 0};
+  for (unsigned i = 0; i < n; i++) { c[0] = hx[b[i] >> 4]; c[1] = hx[b[i] & 15U]; serial_string(c); }
+}
+
+/* The stage: lock the screen (Ctrl+Alt+L), try a passkey of another device (F3: refused), then this device's (F4: the session opens).
+   Ten key events, a frame for each. */
+static int browser_passkey_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                 uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t se = 0, sidle = 0, attempts = 0, accepted = 0;
+  uint8_t qh[32], session[8], sig[64], foreign[32];
+  int ready = passkey_load(), signed_ok = 0;
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_REG ready=");
+  serial_decimal(ready ? 1U : 0U);
+  serial_string(" created=");
+  serial_decimal(passkey_created ? 1U : 0U);
+  serial_string(" pub=");
+  if (ready && passkey_sha256(passkey_q, 64, qh)) passkey_hex(qh, 8); else serial_string("none");
+  serial_string("\r\n");
+  if (!ready) return 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_GO events=10\r\n");
+  while (se < 10 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    if (kr == 300000001LL || kr == 300000002LL) {
+      int own = kr == 300000001LL, ok;
+      const uint8_t *d = passkey_d;
+      if (!own) {   /* a passkey made on another device: a fresh scalar that is not this device's */
+        if (!passkey_scalar(foreign)) foreign[0] = 1;
+        d = foreign;
+      }
+      ok = passkey_ceremony(d, session, sig, &signed_ok);
+      attempts++;
+      serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_TRY n=");
+      serial_decimal(attempts);
+      serial_string(" key=");
+      serial_string(own ? "device" : "other-device");
+      serial_string(" signed=");
+      serial_decimal(signed_ok ? 1U : 0U);
+      serial_string(" verified=");
+      serial_decimal(ok ? 1U : 0U);
+      serial_string(" session=");
+      if (ok) { passkey_hex(session, 8); accepted++; } else serial_string("none");
+      serial_string("\r\n");
+      (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, ok ? 6U : 10U);
+    }
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    serial_string("AIUEOS_GUEST_BROWSER_PASSKEY n=");
+    serial_decimal(se);
+    serial_string(" key=");
+    serial_decimal(key);
+    serial_string(" locked=");
+    serial_decimal(surface[2030]);
+    serial_string(" denied=");
+    serial_decimal(surface[2026]);
+    serial_string(" ops=");
+    serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+    serial_string(" text-px=");
+    serial_decimal(px);
+    serial_string(" hash=");
+    serial_hex32(hash);
+    serial_string("\r\n");
+  }
+  if (se == 10) {
+    debug_string("AIUEOS_GUEST_BROWSER_PASSKEY_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_PASSKEY_OK events=10 tries=");
+    serial_decimal(attempts);
+    serial_string(" accepted=");
+    serial_decimal(accepted);
+    serial_string("\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_PASSKEY leftover=events-missing\r\n");
+  return 0;
+}
+
 /* ADR-0269: the settings window. Window 2 is the settings app: its title slot says "Settings" and its body is rebuilt from the
    three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. A press on a line of its body flips that setting (contrast, scale 100 -> 125 -> 150 -> 100, network); F10, Ctrl+= / Ctrl+- and F5 do the same
    from the keyboard. F10 flips the contrast,
@@ -6457,7 +6647,8 @@ qwen_runtime_boot_complete:
                                                             if (browser_clock_stage(surface, font, font_length))
                                                               if (browser_layout_stage(surface, font, font_length, dict, dict_length))
                                                                 if (browser_notify_stage(surface, font, font_length, dict, dict_length))
-                                                                  browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                                  if (browser_passkey_stage(surface, font, font_length, dict, dict_length))
+                                                                    browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

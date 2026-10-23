@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: a device-bound passkey opens the lock (ADR-0270)
+- A P-256 device key (from the virtio-rng, kept with its public point in sector 1035) signs a fresh challenge on the lock screen and the
+  signature is verified against the registered public point; F4 is this device's passkey (the session opens), F3 a passkey of another
+  device (refused). `guest-browser-passkey` checks the ceremony and the ten frames against the frame model.
+
 ### desktop: the settings window (ADR-0269)
 - Window 2 is the settings app (Contrast / Scale / Network), opened from launcher button 2 and rebuilt after every key; a press on its Contrast / Scale / Network lines changes that setting (F10, Ctrl+= and F5 still do); F5 flips the
   network setting (a flag the settings stage holds), which the status area follows (OFFLINE while it is off). The settings record keeps all three across a

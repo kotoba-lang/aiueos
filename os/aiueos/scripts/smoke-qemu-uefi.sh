@@ -933,6 +933,21 @@ while time.time() < end:
                 recv_obj()
                 globals()["notify_sent"] = k + 1
                 log("notify event " + str(k + 1) + " sent")
+        # ADR-0270: ten key events for the passkey stage, after the notification stage: Ctrl+Alt+L (the lock), F3 (a passkey of
+        # another device: refused), F4 (this device's passkey: the session opens), each down then up, each after the guest's line
+        # for the one before.
+        if typing and b"AIUEOS_GUEST_BROWSER_PASSKEY_GO" in serial_now and globals().get("passkey_sent", 0) < 10:
+            k = globals().get("passkey_sent", 0)
+            if k == 0 or (b"AIUEOS_GUEST_BROWSER_PASSKEY n=%d " % k) in serial_now:
+                time.sleep(0.5)
+                qc, dn = (("ctrl", True), ("alt", True), ("l", True), ("l", False), ("alt", False), ("ctrl", False),
+                          ("f3", True), ("f3", False), ("f4", True), ("f4", False))[k]
+                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
+                              + "\n").encode())
+                recv_obj()
+                globals()["passkey_sent"] = k + 1
+                log("passkey event " + str(k + 1) + " sent")
         # ADR-0260/0265/0269: two keys (second boot) or six pointer events (first boot) after the notification stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
