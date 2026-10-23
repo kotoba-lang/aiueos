@@ -7005,6 +7005,15 @@ qwen_runtime_boot_complete:
         for (unsigned i = 0; i < sizeof(fbody2) / 4; i++) flow[224 + i] = fbody2[i];
         for (unsigned i = 0; i < sizeof(fbody3) / 4; i++) flow[288 + i] = fbody3[i];
         for (unsigned i = 0; i < sizeof(fbody4) / 4; i++) flow[352 + i] = fbody4[i];
+        /* Gate Option A (2026-10-24, JUN-31): the FLOW census is measured at
+           a fixed pct. ADR-0261's UI scale magnifies what present_ops2
+           paints, so the census used to follow whatever the profile left
+           active -- 3593/a19f95a8 at pct=100, 9564/b2fad8a7 at pct=125 --
+           while the drawn op stream stayed byte-identical. The pin (ADR-0234)
+           is defined at pct=100: measure at 100, then put the user's own
+           scale back so only the measurement is pinned. */
+        uint32_t fprev_scale = aiueos_desktop_scale();
+        if (fprev_scale != 100U) (void)aiueos_desktop_set_scale(100U);
         fcount = (int64_t)kotoba_aiueos_browser_frame2((uint64_t)(uintptr_t)flow, 8192,
                    (uint64_t)(uintptr_t)font, font_length);
         if (fcount <= 0) {
@@ -7018,6 +7027,9 @@ qwen_runtime_boot_complete:
         } else {
           fhash = aiueos_desktop_colour_census(0x333333U, &fpx);
           (void)aiueos_desktop_show();
+          serial_string("AIUEOS_GUEST_BROWSER_FLOW_SCALE pinned=100 prev=");
+          serial_decimal(fprev_scale);
+          serial_string("\r\n");
           /* kind x y a b rgb per op, each word as 8 hex digits */
           serial_string("AIUEOS_GUEST_BROWSER_FLOW_OPS n=");
           serial_decimal((uint32_t)fcount);
@@ -7043,6 +7055,8 @@ qwen_runtime_boot_complete:
             serial_string("\r\n");
           }
         }
+        /* the pin covers the measurement only; the user's scale comes back */
+        if (fprev_scale != 100U) (void)aiueos_desktop_set_scale(fprev_scale);
       }
     }
     if (!(pci_result & 8)) {
