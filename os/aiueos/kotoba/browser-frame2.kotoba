@@ -615,12 +615,41 @@
                     x4 (clock-glyph s f (+ 48 m1) x3)]
                 (clock-glyph s f (+ 48 (- mm (* m1 10))) x4))))))))
 
+;; ADR-0266: the network state, word 1969 (0 = none reported, nothing drawn; 1 = no adapter, OFFLINE; 2 = an adapter
+;; whose link answered but no IPv4 echo, LINK; 3 = the peer answered ARP and the ICMP echo, ONLINE), in the ink
+;; from (vw - 160, 6), left of the clock.
+(defn net-status [s f vw]
+  (let [v (sw s 1969)]
+    (if (= v 0) 0
+      (if (> v 3) 0
+        (do (sput s 422 (ink s))
+            (if (= v 3)
+              (let [x1 (clock-glyph s f 79 (- vw 160))
+                    x2 (clock-glyph s f 78 x1)
+                    x3 (clock-glyph s f 76 x2)
+                    x4 (clock-glyph s f 73 x3)
+                    x5 (clock-glyph s f 78 x4)]
+                (clock-glyph s f 69 x5))
+              (if (= v 2)
+                (let [x1 (clock-glyph s f 76 (- vw 160))
+                      x2 (clock-glyph s f 73 x1)
+                      x3 (clock-glyph s f 78 x2)]
+                  (clock-glyph s f 75 x3))
+                (let [x1 (clock-glyph s f 79 (- vw 160))
+                      x2 (clock-glyph s f 70 x1)
+                      x3 (clock-glyph s f 70 x2)
+                      x4 (clock-glyph s f 76 x3)
+                      x5 (clock-glyph s f 73 x4)
+                      x6 (clock-glyph s f 78 x5)]
+                  (clock-glyph s f 69 x6)))))))))
+
 (defn launcher [s f vw]
   (if (= (sw s 31) 0) 0
     (do (sput s 422 (bg-rgb s))
         (put-rect s 0 0 vw 28)
         (button s f 1) (button s f 2) (button s f 3) (button s f 4)
-        (clock s f vw))))
+        (clock s f vw)
+        (net-status s f vw))))
 
 ;; The dock follows the same retained-op path as the launcher and windows.
 ;; App colours and initial glyphs are presentation data; the native presenter

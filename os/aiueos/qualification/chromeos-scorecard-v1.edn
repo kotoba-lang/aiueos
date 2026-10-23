@@ -202,8 +202,8 @@
    :expected "Each shows its current state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-clock" "ADR-0264"]
-   :note "Only the clock is a status today: C reads the CMOS real-time clock and the launcher row shows HH:MM. There is no power state (the kernel reads no battery device; a VM has none) and no network state (the desktop stages run before the network is up)."
+   :evidence ["gate guest-browser-clock" "ADR-0264" "ADR-0266"]
+   :note "The clock (CMOS real-time clock, HH:MM) and the network state (OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange, ADR-0266) are statuses in the launcher row; the network state is boot-time, not live. There is no power state (the kernel reads no battery device; a VM has none)."
    }
   {:id :C10 :category :shell :title "Interaction states and feedback"
    :weight 2 :required true :required-level :device

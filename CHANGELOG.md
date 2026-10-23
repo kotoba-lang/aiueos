@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the launcher row shows the network state (ADR-0266)
+- Surface word 1969 carries OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange (which runs before the
+  desktop stages, contrary to ADR-0264); browser-frame2 draws it left of the clock. `guest-browser-clock` now attaches a SLIRP NIC
+  and checks the third frame (ONLINE) against the frame model. Power is still not reported.
+
 ### desktop: the UI scale survives a reboot (ADR-0265)
 - The settings record's reserved word now carries the scale (0 = 100); the settings stage applies a stored scale before its first
   frame and writes when contrast or scale changed. `guest-browser-settings` sends F10 and Ctrl+= on the first boot (six keys) and

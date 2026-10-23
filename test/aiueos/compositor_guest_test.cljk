@@ -1848,9 +1848,10 @@
         ed (apply str (map edit-line edit-rows))
         through-edit (str through-ring ed "AIUEOS_GUEST_BROWSER_EDIT_OK events=72\r\n")
         clock (str "AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=12:34\r\n"
-                   "AIUEOS_GUEST_BROWSER_CLOCK n=1 status=0 ops=77 text-px=668 hash=bed963dd\r\n"
-                   "AIUEOS_GUEST_BROWSER_CLOCK n=2 status=755 ops=82 text-px=755 hash=9eb22e19\r\n"
-                   "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2\r\n")
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=1 status=0 net=0 ops=77 text-px=668 hash=bed963dd\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=2 status=755 net=0 ops=82 text-px=755 hash=9eb22e19\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK n=3 status=755 net=3 ops=88 text-px=892 hash=c9fc0d1c\r\n"
+                   "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3\r\n")
         ok (str through-edit clock)
         run (fn [serial] (guest/classify "guest-browser-clock" {:serial serial}))]
     (testing "set, read back, drawn as five glyphs: green"
@@ -1860,10 +1861,15 @@
     (testing "a clock that reads back differently is red"
       (is (= :clock-did-not-read-back (:reason (run (.replace ok "read=12:34" "read=12:35"))))))
     (testing "a clock frame that is not the model's is red"
-      (is (= :clock-differs-from-model (:reason (run (.replace ok "n=2 status=755 ops=82" "n=2 status=755 ops=81"))))))
+      (is (= :clock-differs-from-model (:reason (run (.replace ok "n=2 status=755 net=0 ops=82" "n=2 status=755 net=0 ops=81"))))))
+    (testing "an attached NIC that is not online is red, offline frames still compare to the model"
+      (is (= :nic-attached-but-not-online
+             (:reason (run (.replace (.replace (.replace ok "net=3 ops=88" "net=1 ops=89") "text-px=892" "text-px=902") "c9fc0d1c" "cb8b3900")))))
+      (is (= :clock-differs-from-model
+             (:reason (run (.replace ok "net=3 ops=88" "net=2 ops=88"))))))
     (testing "it needs the text-edit gate green first"
       (is (= :no-text-edit (:reason (run clock)))))
     (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
-      (is (= :clock-ok-missing (:reason (run (.replace ok "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2\r\n" "")))))
+      (is (= :clock-ok-missing (:reason (run (.replace ok "AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3\r\n" "")))))
       (is (= :guest-browser-clock-absent (:reason (run through-edit))))
       (is (= 3 (:exit (guest/classify "guest-browser-clock" {:serial ok :qemu-unmeasured? true})))))))

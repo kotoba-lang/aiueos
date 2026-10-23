@@ -234,7 +234,7 @@
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
   (:titles k) from (x + 6, 6), one line, clipped at x + 90. ADR-0264: then the
   clock -- HH:MM from (vw - 48, 6) in the ink -- when `status`, the minute of the day, is given."
-  [{:keys [vw apps titles pointer hc ring down status]}]
+  [{:keys [vw apps titles pointer hc ring down status net]}]
   (when (pos? (or apps 0))
     (let [buttons (mapcat (fn [k]
                             (let [x (+ 6 (* 102 (dec k)))]
@@ -248,10 +248,14 @@
           clock (when status
                   (let [h (quot status 60) m (mod status 60)]
                     (:ops (lay-line {:x (- vw 48) :y 6 :left (- vw 48) :right vw :bottom 28 :wrap? false}
-                                    [(+ 48 (quot h 10)) (+ 48 (mod h 10)) 58 (+ 48 (quot m 10)) (+ 48 (mod m 10))]))))]
+                                    [(+ 48 (quot h 10)) (+ 48 (mod h 10)) 58 (+ 48 (quot m 10)) (+ 48 (mod m 10))]))))
+          netw (when net
+                 (:ops (lay-line {:x (- vw 160) :y 6 :left (- vw 160) :right (- vw 52) :bottom 28 :wrap? false}
+                                 (map #(.charCodeAt % 0) (case net 3 "ONLINE" 2 "LINK" "OFFLINE")))))]
       (-> [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
           (into buttons)
-          (into clock)))))
+          (into clock)
+          (into netw)))))
 
 (defn- resize-handle?
   "ADR-0252: the pointer [x y] is on the resize handle (the last 16 px of both axes,
@@ -990,7 +994,10 @@
 ;; set the machine's clock to, 12:34 (the minute of the day, 754).
 (def clock-frames
   (let [last-edit (second (last edit-frames))]
-    [["no-status" last-edit] ["12:34" (assoc last-edit :status 754)]]))
+    [["no-status" last-edit] ["12:34" (assoc last-edit :status 754)]
+     ;; ADR-0266: the network state beside the clock -- 1 OFFLINE, 2 LINK, 3 ONLINE
+     ["net-1" (assoc last-edit :status 754 :net 1)] ["net-2" (assoc last-edit :status 754 :net 2)]
+     ["net-3" (assoc last-edit :status 754 :net 3)]]))
 
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
@@ -1296,7 +1303,7 @@
   (doseq [[i [ev scene]] (map-indexed vector clock-frames)
           :let [ops (frame scene)
                 c (census ops)]]
-    (println (str "clock-frame n=" (inc i) " " ev " status=" (if (:status scene) (inc (:status scene)) 0)
+    (println (str "clock-frame n=" (inc i) " " ev " status=" (if (:status scene) (inc (:status scene)) 0) " net=" (or (:net scene) 0)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector edit-frames)
           :let [ops (frame scene)

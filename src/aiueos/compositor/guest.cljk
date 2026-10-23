@@ -1820,16 +1820,25 @@
 ;; browser-frame-model.cljk's ("clock-frame"), and, apart from it, the clock frame being the other frame plus the
 ;; five glyphs of HH:MM and the status word being the minute of the day + 1 (755).
 
-(def ^:private clock-want
-  [{:n 1 :status 0 :ops 77 :px 668 :hash "bed963dd"}
-   {:n 2 :status 755 :ops 82 :px 755 :hash "9eb22e19"}])
+(def ^:private clock-want-first
+  [{:n 1 :status 0 :net 0 :ops 77 :px 668 :hash "bed963dd"}
+   {:n 2 :status 755 :net 0 :ops 82 :px 755 :hash "9eb22e19"}])
+
+;; ADR-0266: the third frame adds the network state the boot's enumeration left (1 OFFLINE, 2 LINK, 3 ONLINE), each
+;; with the glyphs the model draws for it (7, 4 and 6 on top of the clock frame's 82 ops).
+(def ^:private clock-want-net
+  {1 {:n 3 :status 755 :net 1 :ops 89 :px 902 :hash "cb8b3900"}
+   2 {:n 3 :status 755 :net 2 :ops 86 :px 836 :hash "37c80294"}
+   3 {:n 3 :status 755 :net 3 :ops 88 :px 892 :hash "c9fc0d1c"}})
 
 (defn guest-browser-clock-result
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [s (or serial "")
-        ls (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK n=(\d+) status=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
-                (mapv (fn [[_ n status ops px hash]]
-                        {:n (parse-long n) :status (parse-long status) :ops (parse-long ops) :px (parse-long px) :hash hash})))
+        ls (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK n=(\d+) status=(\d+) net=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+                (mapv (fn [[_ n status net ops px hash]]
+                        {:n (parse-long n) :status (parse-long status) :net (parse-long net) :ops (parse-long ops)
+                         :px (parse-long px) :hash hash})))
+        want (conj clock-want-first (get clock-want-net (:net (nth ls 2 nil))))
         rtc (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=(\d+):(\d+)\s*$" s)
         edit (guest-browser-text-edit-result opts)]
     (cond
@@ -1837,19 +1846,21 @@
       (not (:green? edit))
       (assoc edit :reason :no-text-edit :leftover (into [:no-text-edit] (:leftover edit)))
       (empty? ls) {:green? false :exit 1 :reason :guest-browser-clock-absent :leftover [:guest-browser-clock-absent]}
-      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2" s))
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3" s))
       {:green? false :exit 1 :reason :clock-ok-missing :leftover [:clock-ok-missing]}
       (not= ["12" "34"] (some-> rtc (subvec 1)))
       {:green? false :exit 1 :reason :clock-did-not-read-back :leftover [:clock-did-not-read-back]}
-      (not= ls clock-want)
+      (not= ls want)
       {:green? false :exit 1 :reason :clock-differs-from-model :leftover [:clock-differs-from-model]
        :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
-                                                 (concat ls (repeat nil)) clock-want)))}
+                                                 (concat ls (repeat nil)) want)))}
+      (not= 3 (:net (nth ls 2)))
+      {:green? false :exit 1 :reason :nic-attached-but-not-online :leftover [:nic-attached-but-not-online]}
       (not= 5 (- (:ops (second ls)) (:ops (first ls))))
       {:green? false :exit 1 :reason :clock-is-not-five-glyphs :leftover [:clock-is-not-five-glyphs]}
       :else
       {:green? true :exit 0 :reason :guest-browser-clock
-       :leftover [:clock-only-no-power-or-network :set-by-the-test-hook :not-refreshed-each-minute :draw-list-not-pixels]})))
+       :leftover [:no-power-state :network-state-is-boot-time-not-live :set-by-the-test-hook :not-refreshed-each-minute :draw-list-not-pixels]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -2307,7 +2318,9 @@
     "guest-browser-text-edit" {"AIUEOS_GUEST_BROWSER" "1"
                                "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0264: the clock stage needs no keys; it follows the editing stage.
+    ;; ADR-0266: a virtio NIC is attached (SLIRP, no host network) so the network state it draws can be ONLINE.
     "guest-browser-clock" {"AIUEOS_GUEST_BROWSER" "1"
+                           "AIUEOS_TEST_NET" "1"
                            "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
