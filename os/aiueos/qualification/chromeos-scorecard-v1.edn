@@ -194,8 +194,8 @@
    :expected "The change applies and is kept across a reboot."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-settings" "ADR-0260" "ADR-0265"]
-   :note "The high-contrast choice and the UI scale (125 %) are kept across a reboot (a record on the volume, written with readback, read by the second boot of the same volume, ADR-0260/0265). No settings window, no network setting."
+   :evidence ["gate guest-browser-settings" "ADR-0260" "ADR-0265" "ADR-0269"]
+   :note "A settings window (window 2, opened from launcher button 2) shows Contrast, Scale and Network and follows them; the contrast choice, the UI scale (125 %) and the network setting (a shell flag: the status area says OFFLINE while it is off; the adapter is untouched) are kept across a reboot (a record on the volume, written with readback, read by the second boot of the same volume; receipt vm-20261024/settings). Kept at :unachieved on purpose: the values change by keys (F10, Ctrl+=, Ctrl+-, F5), not by controls inside the window, and the network setting does not configure an adapter."
    }
   {:id :C9 :category :shell :title "Status area: network, power, clock"
    :weight 1 :required true :required-level :device
