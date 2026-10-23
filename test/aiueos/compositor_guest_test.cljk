@@ -1160,3 +1160,38 @@
       (is (= :guest-browser-maximize-control-absent
              (:reason (guest/classify "guest-browser-maximize-control" {:serial (str base ctl-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-maximize-control" {:serial ok :qemu-unmeasured? true})))))))
+
+(def ^:private shape-rows
+  [[31 3 "500,320" 0 "272,132,240,200" 179 2343 "c2fbd1ab"]
+   [32 3 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929"]])
+
+(def ^:private shape-ok
+  "AIUEOS_GUEST_BROWSER_CURSOR_SHAPE_OK events=2 handle=resize away=arrow\r\n")
+
+(deftest guest-browser-cursor-shape-classifier
+  (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok)
+        shape (apply str (map max-line shape-rows))
+        ok (str base shape shape-ok)]
+    (testing "the resize cursor over the handle and the arrow back: green"
+      (let [r (guest/classify "guest-browser-cursor-shape" {:serial ok})]
+        (is (= :guest-browser-cursor-shape (:reason r)))
+        (is (= 0 (:exit r)))))
+    (testing "the double-press and control gates still read their own lines with the shape lines present"
+      (is (= :guest-browser-maximize-control (:reason (guest/classify "guest-browser-maximize-control" {:serial ok})))))
+    (testing "a pointer that stays an arrow over the handle is red, and says which frame"
+      (let [bad (assoc-in (vec shape-rows) [0 5] 186)
+            bad (assoc-in bad [0 6] 2330)
+            bad (assoc-in bad [0 7] "e5cb1929")
+            r (guest/classify "guest-browser-cursor-shape" {:serial (str base (apply str (map max-line bad)) shape-ok)})]
+        (is (= :cursor-shape-differs-from-model (:reason r)))
+        (is (= 31 (:n (:kernel (:first-difference r)))))))
+    (testing "a pointer that does not go back to the arrow is red even if both lines agree with each other"
+      (let [bad (-> (vec shape-rows) (assoc-in [1 5] 179) (assoc-in [1 6] 2343) (assoc-in [1 7] "c2fbd1ab"))]
+        (is (not (:green? (guest/classify "guest-browser-cursor-shape"
+                                          {:serial (str base (apply str (map max-line bad)) shape-ok)}))))))
+    (testing "it needs the maximize-control gate green first"
+      (is (= :no-maximize-control (:reason (guest/classify "guest-browser-cursor-shape" {:serial (str shape shape-ok)})))))
+    (testing "the OK line missing is not green, no lines is absent, unmeasured is exit 3"
+      (is (= :cursor-shape-ok-missing (:reason (guest/classify "guest-browser-cursor-shape" {:serial (str base shape)}))))
+      (is (= :guest-browser-cursor-shape-absent (:reason (guest/classify "guest-browser-cursor-shape" {:serial (str base shape-ok)}))))
+      (is (= 3 (:exit (guest/classify "guest-browser-cursor-shape" {:serial ok :qemu-unmeasured? true})))))))

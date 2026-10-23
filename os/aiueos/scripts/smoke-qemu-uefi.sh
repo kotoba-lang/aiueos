@@ -764,7 +764,7 @@ while time.time() < end:
         # titlebar at (380, 142) -- press, release, press, release -- and one at
         # (380, 40), a press on the maximize control at (476, 146), F11 down and up --
         # each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 30:
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 32:
             k = globals().get("uiux_sent", 0)
             seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
                     (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
@@ -794,9 +794,15 @@ while time.time() < end:
                               {"type": "btn", "data": {"down": True, "button": "left"}}]
                     else:
                         ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
-                else:
+                elif k < 30:
                     # F11 down and up: the maximized window's control pressed from the keyboard
                     ev = [{"type": "key", "data": {"down": k == 28, "key": {"type": "qcode", "data": "f11"}}}]
+                else:
+                    # ADR-0252: the pointer onto window 1's resize handle at (500, 320), then away
+                    # to (380, 142): two abs events, no button
+                    x, y = (12800, 13108) if k == 30 else (9728, 5817)
+                    ev = [{"type": "abs", "data": {"axis": "x", "value": x}},
+                          {"type": "abs", "data": {"axis": "y", "value": y}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()

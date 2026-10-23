@@ -158,5 +158,14 @@
   {:id :high-contrast :gate "guest-browser-high-contrast" :adr "0247"
    :goal "a keyboard toggle switches the desktop between the default and a high-contrast palette (text/background contrast >= 7:1), chosen by Kotoba, with the choice kept across frames"
    :why "one fixed palette; the hosted shell follows the design tokens"}
+  ;; Extended 2026-10-23 (owner: go on toward 100%, UIUX included). The owner has not fixed what
+  ;; 100% is measured against (JUN-90 would); a scorecard of ~40 desktop-shell behaviours puts the
+  ;; gated work near a third. Missing and not yet floors: minimize and a window list, pressed and
+  ;; disabled states, text / hand / move cursors, tooltips, transitions, text scaling and HiDPI,
+  ;; notifications, settings, a colour hierarchy with more separation. Each becomes a floor when it
+  ;; is taken, with its gate.
+  {:id :cursor-shape :gate "guest-browser-cursor-shape" :adr "0252"
+   :goal "over a window's resize handle the pointer is a resize cursor (a diagonal with an L at each end) instead of the arrow, decided by Kotoba from the same handle rule browser-reduce uses, and the arrow comes back exactly when it leaves"
+   :why "the pointer is one arrow whatever is under it; nothing says that an edge can be dragged"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}

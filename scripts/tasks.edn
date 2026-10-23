@@ -297,6 +297,10 @@
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-cursor"]
   :doc "Guest browser pointer (ADR-0236) on KERNEL.ELF under QEMU: after the dictionary, C writes each tablet event's position into surface words 2046 (x + 1) and 2047 (y) and browser-frame2 ends every list with a 12-row arrow there, over everything. The host moves to (400, 300) (700, 450) (1276, 796), presses at (1000, 600) on no window and releases; every frame's op count and #111111 census equal the frame model's, the arrow's tip #111111 and fill #ffffff are read back from the framebuffer. No frame before the stage had a pointer (before=0). Tablet profile, 1080 s wall clock."}
 
+ :browser-desktop-cursor-shape
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-cursor-shape"]
+  :doc "Guest browser cursor shape (ADR-0252) on KERNEL.ELF under QEMU, after F11: the pointer is a resize cursor over a window's resize handle and the arrow away from it, decided by Kotoba in browser-frame2; the two frames equal browser-frame-model.cljk's and the arrow comes back identical to frame 19."}
+
  :browser-desktop-maximize-control
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-maximize-control"]
   :doc "Guest browser maximize control (ADR-0251) on KERNEL.ELF under QEMU, after the double presses: a press on the 16 x 16 control left of the close control maximizes the window, F11 answers (Kotoba) the press at the control's centre and restores the exact rect, both through the same browser-reduce pointer/down; the four frames equal browser-frame-model.cljk's."}

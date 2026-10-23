@@ -221,20 +221,35 @@
                               (when (= ring k) (ring-ops hc x 2 96 24))))))
                   [1 2 3 4]))))
 
+(defn- resize-handle?
+  "ADR-0252: the pointer [x y] is on the resize handle (the last 16 px of both axes,
+  inclusive) of the topmost window containing it, with 6 px of room on every side."
+  [{:keys [vw vh stack]} [x y]]
+  (and (>= x 6) (>= y 6) (< (+ x 6) vw) (< (+ y 6) vh)
+       (when-let [{wx :x wy :y ww :w wh :h}
+                  (last (filter (fn [{wx :x wy :y ww :w wh :h}]
+                                  (and (<= wx x (+ wx ww)) (<= wy y (+ wy wh))))
+                                stack))]
+         (and (>= x (- (+ wx ww) 16)) (>= y (- (+ wy wh) 16))))))
+
 (defn- pointer-sprite
   "ADR-0236: the pointer's arrow, tip at [x y], 12 rows: row r an outline
-  (r + 1 wide, #111111) and in rows 2..10 a white fill (r - 1 wide from
-  x + 1) over it. Rows at or past vh are left out; every rect is cut at vw,
-  and a fill with no width left is left out."
-  [{:keys [vw vh pointer]}]
+  (r + 1 wide, ink) and in rows 2..10 a white fill (r - 1 wide from x + 1) over
+  it. Rows at or past vh are left out; every rect is cut at vw, and a fill with no
+  width left is left out. ADR-0252: over a resize handle it is the resize cursor."
+  [{:keys [vw vh pointer] :as scene}]
   (when-let [[x y] pointer]
-    (vec (for [r (range 12)
-               :when (< (+ y r) vh)
-               op [[:rect x (+ y r) (min (inc r) (- vw x)) 1 ink]
-                   (when (and (<= 2 r 10) (pos? (min (dec r) (- vw x 1))))
-                     [:rect (inc x) (+ y r) (min (dec r) (- vw x 1)) 1 0xffffff])]
-               :when op]
-           op))))
+    (if (resize-handle? scene [x y])
+      (into (vec (for [i (range 10)] [:rect (+ (- x 5) i) (+ (- y 5) i) 2 2 ink]))
+            [[:rect (- x 6) (- y 6) 5 1 ink] [:rect (- x 6) (- y 6) 1 5 ink]
+             [:rect (+ x 1) (+ y 5) 5 1 ink] [:rect (+ x 5) (+ y 1) 1 5 ink]])
+      (vec (for [r (range 12)
+                 :when (< (+ y r) vh)
+                 op [[:rect x (+ y r) (min (inc r) (- vw x)) 1 ink]
+                     (when (and (<= 2 r 10) (pos? (min (dec r) (- vw x 1))))
+                       [:rect (inc x) (+ y r) (min (dec r) (- vw x 1)) 1 0xffffff])]
+                 :when op]
+             op)))))
 
 (defn- dock
   "JUN-143 dock (browser-frame2.kotoba dock, dock-icon): with an app register,
@@ -667,7 +682,10 @@
        ;; ADR-0251: a press on the maximize control at (476, 146) maximizes, F11 on
        ;; the maximized window presses its control and restores
        ["control-max" (c (assoc base :stack (stack-with maxed)))] ["release" s4]
-       ["f11-restore" s5] ["f11-up" s5]])))
+       ["f11-restore" s5] ["f11-up" s5]
+       ;; ADR-0252: the pointer moves onto window 1's resize handle at (500, 320), where it
+       ;; is the resize cursor, and back to (380, 142), where it is the arrow
+       ["move-to-handle" (at base [500 320])] ["move-away" (at base [380 142])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
