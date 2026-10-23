@@ -2461,8 +2461,13 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
   int64_t fo;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
-  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_GO frames=2\r\n");
-  for (i = 0; i < 2; i++) {
+  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_GO frames=3\r\n");
+  for (i = 0; i < 3; i++) {
+    if (i == 2) {
+      /* ADR-0266: the network state, as the boot's own enumeration left it: 1 no adapter, 2 an adapter whose
+         ARP exchange completed but no IPv4 echo, 3 both. The enumeration ran long before this stage. */
+      surface[1969] = aiueos_virtio_net_ready() ? (aiueos_ipv4_ready() ? 3U : 2U) : 1U;
+    }
     if (i == 1) {
       rtc_set_time(12, 34);
       m = rtc_minute_of_day();
@@ -2484,6 +2489,8 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
     serial_decimal(i + 1U);
     serial_string(" status=");
     serial_decimal(surface[1968]);
+    serial_string(" net=");
+    serial_decimal(surface[1969]);
     serial_string(" ops=");
     serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
     serial_string(" text-px=");
@@ -2493,8 +2500,9 @@ static int browser_clock_stage(uint32_t *surface, const uint8_t *font, uint64_t 
     serial_string("\r\n");
   }
   surface[1968] = 0;
+  surface[1969] = 0;
   debug_string("AIUEOS_GUEST_BROWSER_CLOCK_OK\n");
-  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2\r\n");
+  serial_string("AIUEOS_GUEST_BROWSER_CLOCK_OK frames=3\r\n");
   return 1;
 }
 
