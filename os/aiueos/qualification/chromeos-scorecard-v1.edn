@@ -184,8 +184,9 @@
    :procedure "Raise a notification from an app."
    :expected "It appears, can be dismissed, and is listed."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-notify" "ADR-0268" "receipt os/aiueos/qualification/receipts/vm-20261024/notify/receipt.edn"]
+   :note "Two notifications are raised, drawn as toasts; F8 dismisses the newest, F7 opens a list that still holds the dismissed one and F7 closes it; every frame equals a model written apart from the Kotoba. The raise is a test hook writing the surface words, not a real app call; keyboard-only; no timeout, sound or pointer dismiss."
    }
   {:id :C8 :category :shell :title "Settings"
    :weight 1 :required true :required-level :device
