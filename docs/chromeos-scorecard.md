@@ -21,12 +21,12 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 21%.** Twelve rows are `:pass`, each by a receipt of a run in the reference VM (below): C1, C2, C3, C4, C5, C10, D1, D2, D4, D7, G4 and I5
-(weight 21 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 23%.** Thirteen rows are `:pass`, each by a receipt of a run in the reference VM (below): B2, C1, C2, C3, C4, C5, C10, D1, D2, D4, D7, G4 and I5
+(weight 23 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 43% of the required weight (it counts the rows above too) (a row whose behaviour is gated
+Beside the score, and never added to it, the **QEMU-level progress** is 45% of the required weight (it counts the rows above too) (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
 security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
 
@@ -62,7 +62,7 @@ weights that do not sum to 100.
 | A4 | A second install is refused | 1 | release | pass |
 | A5 | First-run setup | 1 | release | pass |
 | B1 | Sign in with a device-bound passkey | 3 | device | partial |
-| B2 | Lock and unlock the screen | 2 | device | none |
+| B2 | Lock and unlock the screen | 2 | device | pass |
 | B3 | Sign out | 1 | device | none |
 | C1 | Launch an app from the launcher and the dock | 2 | device | pass |
 | C2 | Move, resize, focus and raise windows | 4 | device | pass |

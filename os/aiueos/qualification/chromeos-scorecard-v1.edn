@@ -108,8 +108,9 @@
    :procedure "Lock; try to use the machine; unlock."
    :expected "Nothing is reachable while locked; unlock restores the session."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-screen-lock" "ADR-0258" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "Locked: only the lock screen is drawn, pointer and keys change nothing; a wrong PIN is refused, the right one unlocks and the session is as it was (windows, focus, stack; the focus ring is cleared). The credential is a four-digit PIN against the TEST PIN's SHA-256 baked into the image: no first-run provisioning, no attempt limit, no idle lock, no passkey (B1)."
    }
   {:id :B3 :category :identity :title "Sign out"
    :weight 1 :required true :required-level :device
