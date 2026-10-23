@@ -819,6 +819,39 @@
        ["4" (lk2 3 [456 146])] ["4-up" (lk2 3 [456 146])] ["2" (lk2 4 [456 146])] ["2-up" (lk2 4 [456 146])]
        ["enter-signed-in" (at clean [456 146])] ["enter-up" (at clean [456 146])]])))
 
+;; ADR-0261: the UI scale stage, after the sign-out stage. Kotoba lays the clean session out in the logical
+;; viewport (1280 x 800 over the scale) and C magnifies what it paints. F11 maximizes the window; Ctrl+= twice
+;; takes the scale to 125 then 150 and fits the window into the shrinking viewport; a third Ctrl+= changes
+;; nothing (150 is the top); Ctrl+- twice takes it back to 100 (the window stays where the fit left it); F11 again
+;; restores the rect it had before it was maximized.
+(def scale-frames
+  (let [clean (second (last max-frames))
+        w1 (first (:stack clean))
+        at (fn [pct vw vh x y w h]
+             (assoc clean :vw vw :vh vh :scale pct :stack [(assoc w1 :x x :y y :w w :h h)]))
+        s0 (at 100 1280 800 80 80 520 360)
+        m (at 100 1280 800 0 28 1280 720)
+        z125 (at 125 1024 640 0 28 1024 612)
+        z150 (at 150 853 533 0 28 853 505)
+        z125b (at 125 1024 640 0 28 853 505)
+        z100 (at 100 1280 800 0 28 853 505)]
+    [["f11" m] ["f11-up" m] ["ctrl" m]
+     ["ctrl=" z125] ["=-up" z125] ["ctrl=" z150] ["=-up" z150] ["ctrl=-max" z150] ["=-up" z150]
+     ["ctrl--" z125b] ["--up" z125b] ["ctrl--" z100] ["--up" z100]
+     ["ctrl-up" z100] ["f11-restore" s0] ["f11-up" s0]]))
+
+(defn- scale-ops
+  "What aiueos_desktop_present_ops2 paints at `pct` percent: a rect covers [x s / 100, ceil ((x + w) s / 100))
+  on each axis, and each set bit of a glyph is the block of the same rule, in the glyph's colour."
+  [pct ops]
+  (let [sc (fn [v] (quot (* v pct) 100)) ce (fn [v] (quot (+ (* v pct) 99) 100))]
+    (vec (mapcat (fn [[k x y a b c]]
+                   (if (= k :rect)
+                     [[:rect (sc x) (sc y) (- (ce (+ x a)) (sc x)) (- (ce (+ y b)) (sc y)) c]]
+                     (for [[dx dy] (bits a) :when (< dx b)]
+                       [:rect (sc (+ x dx)) (sc (+ y dy)) (- (ce (+ x dx 1)) (sc (+ x dx))) (- (ce (+ y dy 1)) (sc (+ y dy))) (or c ink)])))
+                 ops))))
+
 ;; ADR-0260: after the sign-out stage the settings stage: the clean session (one window 1) with the
 ;; high-contrast palette on -- chosen with F10 on the first boot, restored from the volume on the second.
 (def settings-frames
@@ -1085,6 +1118,14 @@
   ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
   ;; list for the cursor, focus and scroll frames -- the kernel prints the
   ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[i [ev scene]] (map-indexed vector scale-frames)
+          :let [ops (frame scene)
+                pct (:scale scene)
+                c (assoc (census (if (= pct 100) ops (scale-ops pct ops))) :ops (count ops))
+                w (first (:stack scene))]]
+    (println (str "scale-frame n=" (inc i) " " ev " pct=" pct " vw=" (:vw scene) " vh=" (:vh scene)
+                  " win=" (:x w) "," (:y w) "," (:w w) "," (:h w)
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector settings-frames)
           :let [ops (frame scene)
                 c (census 0 ops)]]

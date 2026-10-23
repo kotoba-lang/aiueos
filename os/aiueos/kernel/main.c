@@ -2195,6 +2195,85 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
 extern int aiueos_settings_read(uint32_t *);
 extern int aiueos_settings_write(uint32_t);
 
+/* ADR-0261: the UI scale stage. Kotoba chooses the scale (Ctrl+= and Ctrl+-, browser-ime.kotoba) and answers
+   200000000 + the percent; C magnifies what it paints (framebuffer.c), sets the logical viewport -- surface words 3
+   and 4, which the tablet's mapping, Kotoba's layout and the rect checks all read -- to the physical size over the
+   scale, and sends a value-2 key event with code 3 back so that Kotoba fits the windows into it. The host sends
+   sixteen keys: F11 (maximize), Ctrl+= three times (125, 150, and 150 again), Ctrl+- twice (125, 100), Ctrl up and
+   F11 (restore). The kernel prints what it painted; the classifier knows what the model says it should be. */
+extern int aiueos_desktop_set_scale(uint32_t);
+extern uint32_t aiueos_desktop_scale(void);
+
+static int browser_scale_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                               uint64_t dict, uint64_t dict_length) {
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t physw = aiueos_desktop_width(), physh = aiueos_desktop_height();
+  uint32_t se = 0, sidle = 0;
+  (void)aiueos_tablet_drain(4000000U);
+  (void)aiueos_keyboard_drain(4000000U);
+  serial_string("AIUEOS_GUEST_BROWSER_SCALE_GO events=16\r\n");
+  while (se < 16 && sidle < 60000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
+    int64_t kr, fo;
+    if (!key) { sidle++; continue; }
+    sidle = 0;
+    if ((key >> 2) == 88U) continue;
+    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+    if (kr >= 200000000LL && kr < 200000200LL) {
+      uint32_t pct = (uint32_t)(kr - 200000000LL);
+      if (aiueos_desktop_set_scale(pct)) {
+        surface[3] = physw * 100U / pct;
+        surface[4] = physh * 100U / pct;
+        (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+      }
+    } else if (kr >= 65536) {
+      uint32_t at = (uint32_t)(kr - 65536);
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, 1, at >> 11, at & 2047U);
+    }
+    fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+      hash = aiueos_desktop_colour_census(0x333333U, &px);
+      (void)aiueos_desktop_show();
+    }
+    se++;
+    {
+      const uint32_t *wr = surface + 5 + 5 * (surface[1] - 1) + 1;
+      serial_string("AIUEOS_GUEST_BROWSER_SCALE n=");
+      serial_decimal(se);
+      serial_string(" key=");
+      serial_decimal(key);
+      serial_string(" pct=");
+      serial_decimal(aiueos_desktop_scale());
+      serial_string(" vw=");
+      serial_decimal(surface[3]);
+      serial_string(" vh=");
+      serial_decimal(surface[4]);
+      serial_string(" win=");
+      serial_decimal(wr[0]);
+      serial_string(",");
+      serial_decimal(wr[1]);
+      serial_string(",");
+      serial_decimal(wr[2]);
+      serial_string(",");
+      serial_decimal(wr[3]);
+      serial_string(" ops=");
+      serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
+      serial_string(" text-px=");
+      serial_decimal(px);
+      serial_string(" hash=");
+      serial_hex32(hash);
+      serial_string("\r\n");
+    }
+  }
+  if (se == 16) {
+    debug_string("AIUEOS_GUEST_BROWSER_SCALE_OK\n");
+    serial_string("AIUEOS_GUEST_BROWSER_SCALE_OK events=16\r\n");
+    return 1;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_SCALE leftover=events-missing\r\n");
+  return 0;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
@@ -5889,7 +5968,8 @@ qwen_runtime_boot_complete:
                                                 if (browser_clipboard_stage(surface, font, font_length, dict, dict_length))
                                                   if (browser_damage_stage(surface, font, font_length, dict, dict_length))
                                                     if (browser_uiux_stage(surface, font, font_length, dict, dict_length))
-                                                      browser_settings_stage(surface, font, font_length, dict, dict_length);
+                                                      if (browser_scale_stage(surface, font, font_length, dict, dict_length))
+                                                        browser_settings_stage(surface, font, font_length, dict, dict_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");

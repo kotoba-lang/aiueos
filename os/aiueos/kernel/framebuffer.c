@@ -508,6 +508,29 @@ static uint32_t font_word(const uint8_t *font, uint64_t index) {
          ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
+/* ADR-0261: the UI scale. Kotoba lays the desktop out in a logical viewport (surface words 3 and 4) and chooses
+   the scale in percent; C only magnifies what it paints. At 100 nothing below differs from before. Above it a
+   rect (x, y, w, h) covers [x s / 100, ceil ((x + w) s / 100)) on each axis and each set bit of a glyph is the
+   block of the same rule -- the ceiling leaves no seam and the last logical column reaches the physical edge. */
+static uint32_t desktop_ui_scale = 100;
+int aiueos_desktop_set_scale(uint32_t pct) {
+  if (!desktop_surface_ready || pct < 100 || pct > 200) return 0;
+  desktop_ui_scale = pct;
+  return 1;
+}
+uint32_t aiueos_desktop_scale(void) { return desktop_ui_scale; }
+
+static void scaled_fill(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t colour) {
+  uint32_t s = desktop_ui_scale;
+  uint32_t a = x0 * s / 100U, b = (x1 * s + 99U) / 100U;
+  uint32_t c = y0 * s / 100U, d = (y1 * s + 99U) / 100U;
+  if (b > desktop_surface.width) b = desktop_surface.width;
+  if (d > desktop_surface.height) d = desktop_surface.height;
+  for (uint32_t row = c; row < d; row++)
+    for (uint32_t column = a; column < b; column++)
+      desktop_surface_pixels[(uint64_t)row * desktop_surface.stride + column] = colour;
+}
+
 int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
                                 const uint8_t *font, uint64_t font_length) {
   uint64_t glyphs;
@@ -529,17 +552,25 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
   for (uint64_t i = 0; i < count; i++) {
     const uint32_t *op = ops + i * 6;
     if (op[0] == 1) {
-      rectangle(desktop_surface_pixels, desktop_surface.stride,
-                desktop_surface.pixel_format, op[1], op[2], op[3], op[4], op[5]);
+      if (desktop_ui_scale == 100)
+        rectangle(desktop_surface_pixels, desktop_surface.stride,
+                  desktop_surface.pixel_format, op[1], op[2], op[3], op[4], op[5]);
+      else
+        scaled_fill(op[1], op[2], op[1] + op[3], op[2] + op[4],
+                    pixel(op[5], desktop_surface.pixel_format));
     } else {
       const uint8_t *bits = font + 16 + glyphs * 4 + (uint64_t)op[3] * 32;
       uint32_t colour = pixel(op[5], desktop_surface.pixel_format);
       for (uint32_t row = 0; row < 16; row++) {
         uint32_t line = ((uint32_t)bits[row * 2] << 8) | bits[row * 2 + 1];
         for (uint32_t column = 0; column < op[4]; column++)
-          if (line & (0x8000U >> column))
-            desktop_surface_pixels[(uint64_t)(op[2] + row) * desktop_surface.stride +
-                                   op[1] + column] = colour;
+          if (line & (0x8000U >> column)) {
+            if (desktop_ui_scale == 100)
+              desktop_surface_pixels[(uint64_t)(op[2] + row) * desktop_surface.stride +
+                                     op[1] + column] = colour;
+            else
+              scaled_fill(op[1] + column, op[2] + row, op[1] + column + 1, op[2] + row + 1, colour);
+          }
       }
     }
   }

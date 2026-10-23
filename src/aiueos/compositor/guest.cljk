@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings"])
+   "guest-browser-settings" "guest-browser-ui-scale"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1526,6 +1526,71 @@
       {:green? true :exit 0 :reason :guest-browser-settings
        :leftover [:contrast-only :no-settings-window :no-scale :no-network :restored-at-the-settings-stage-not-at-boot]})))
 
+;; Guest browser UI scale (ADR-0261): after the sign-out stage the host sends F11 (the clean session's window is
+;; maximized), Ctrl+= three times and Ctrl+- twice (125, 150, 150, 125, 100) and F11 again. Kotoba chooses the
+;; scale and fits the windows into the logical viewport (1280 x 800 over the scale); C magnifies what it paints and
+;; sets the viewport words. The kernel prints AIUEOS_GUEST_BROWSER_SCALE n= key= pct= vw= vh= win= ops= text-px=
+;; hash= for the sixteen keys. Green needs the sign-out gate green on the same serial, the lines equal to
+;; browser-frame-model.cljk's ("scale-frame": the model paints the scale as the present does), and, apart from it:
+;; the window is inside the logical viewport in every frame, the scale never passes 150 nor falls below 100, the
+;; text census grows with the scale (more ink pixels at 150 than at 100 for the same text) and, back at 100 and
+;; restored, the frame is the one before the stage.
+
+(def ^:private scale-want
+  [{:n 1 :key 349 :pct 100 :vw 1280 :vh 800 :win "0,28,1280,720" :ops 71 :px 582 :hash "25c93f77"}
+   {:n 2 :key 348 :pct 100 :vw 1280 :vh 800 :win "0,28,1280,720" :ops 71 :px 582 :hash "25c93f77"}
+   {:n 3 :key 117 :pct 100 :vw 1280 :vh 800 :win "0,28,1280,720" :ops 71 :px 582 :hash "25c93f77"}
+   {:n 4 :key 53 :pct 125 :vw 1024 :vh 640 :win "0,28,1024,612" :ops 70 :px 1536 :hash "48a15000"}
+   {:n 5 :key 52 :pct 125 :vw 1024 :vh 640 :win "0,28,1024,612" :ops 70 :px 1536 :hash "48a15000"}
+   {:n 6 :key 53 :pct 150 :vw 853 :vh 533 :win "0,28,853,505" :ops 70 :px 1828 :hash "67c770b1"}
+   {:n 7 :key 52 :pct 150 :vw 853 :vh 533 :win "0,28,853,505" :ops 70 :px 1828 :hash "67c770b1"}
+   {:n 8 :key 53 :pct 150 :vw 853 :vh 533 :win "0,28,853,505" :ops 70 :px 1828 :hash "67c770b1"}
+   {:n 9 :key 52 :pct 150 :vw 853 :vh 533 :win "0,28,853,505" :ops 70 :px 1828 :hash "67c770b1"}
+   {:n 10 :key 49 :pct 125 :vw 1024 :vh 640 :win "0,28,853,505" :ops 72 :px 1536 :hash "48a15000"}
+   {:n 11 :key 48 :pct 125 :vw 1024 :vh 640 :win "0,28,853,505" :ops 72 :px 1536 :hash "48a15000"}
+   {:n 12 :key 49 :pct 100 :vw 1280 :vh 800 :win "0,28,853,505" :ops 72 :px 582 :hash "25c93f77"}
+   {:n 13 :key 48 :pct 100 :vw 1280 :vh 800 :win "0,28,853,505" :ops 72 :px 582 :hash "25c93f77"}
+   {:n 14 :key 116 :pct 100 :vw 1280 :vh 800 :win "0,28,853,505" :ops 72 :px 582 :hash "25c93f77"}
+   {:n 15 :key 349 :pct 100 :vw 1280 :vh 800 :win "80,80,520,360" :ops 72 :px 582 :hash "60620c8b"}
+   {:n 16 :key 348 :pct 100 :vw 1280 :vh 800 :win "80,80,520,360" :ops 72 :px 582 :hash "60620c8b"}])
+
+(defn- scale-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SCALE n=(\d+) key=(\d+) pct=(\d+) vw=(\d+) vh=(\d+) win=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key pct vw vh win ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :pct (parse-long pct) :vw (parse-long vw) :vh (parse-long vh)
+                :win win :ops (parse-long ops) :px (parse-long px) :hash hash}))))
+
+(defn- inside-viewport? [{:keys [win vw vh]}]
+  (let [[x y w h] (mapv parse-long (str/split win #","))]
+    (and (<= 0 x) (<= 0 y) (<= (+ x w) vw) (<= (+ y h) vh))))
+
+(defn guest-browser-ui-scale-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (scale-lines serial)
+        sign-out (guest-browser-sign-out-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? sign-out))
+      (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-ui-scale-absent :leftover [:guest-browser-ui-scale-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SCALE_OK events=16" (or serial "")))
+      {:green? false :exit 1 :reason :ui-scale-ok-missing :leftover [:ui-scale-ok-missing]}
+      (not= ls scale-want)
+      {:green? false :exit 1 :reason :ui-scale-differs-from-model :leftover [:ui-scale-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) scale-want)))}
+      (not (every? inside-viewport? ls))
+      {:green? false :exit 1 :reason :window-outside-the-viewport :leftover [:window-outside-the-viewport]}
+      (not (every? #(<= 100 (:pct %) 150) ls))
+      {:green? false :exit 1 :reason :scale-out-of-range :leftover [:scale-out-of-range]}
+      (not (< (:px (nth ls 2)) (:px (nth ls 5))))
+      {:green? false :exit 1 :reason :text-did-not-grow :leftover [:text-did-not-grow]}
+      (not (and (= 100 (:pct (last ls))) (= "80,80,520,360" (:win (last ls)))))
+      {:green? false :exit 1 :reason :not-back-to-the-start :leftover [:not-back-to-the-start]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-ui-scale
+       :leftover [:two-steps-only :nearest-neighbour-magnification :not-persisted :draw-list-census-not-pixels-of-a-panel]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -1972,6 +2037,9 @@
     ;; ADR-0260: two boots of the same volume (the runner sets the phase and keeps the volume).
     "guest-browser-settings" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0261: the scale keys come after the sign-out stage.
+    "guest-browser-ui-scale" {"AIUEOS_GUEST_BROWSER" "1"
+                              "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2017,6 +2085,7 @@
     "guest-browser-screen-lock" (guest-browser-screen-lock-result opts)
     "guest-browser-sign-out" (guest-browser-sign-out-result opts)
     "guest-browser-settings" (guest-browser-settings-result opts)
+    "guest-browser-ui-scale" (guest-browser-ui-scale-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2063,6 +2132,7 @@
     "guest-browser-screen-lock" "AIUEOS_GUEST_BROWSER_LOCK"
     "guest-browser-sign-out" "AIUEOS_GUEST_BROWSER_SIGNOUT"
     "guest-browser-settings" "AIUEOS_GUEST_BROWSER_SETTINGS"
+    "guest-browser-ui-scale" "AIUEOS_GUEST_BROWSER_SCALE"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2109,6 +2179,7 @@
     "guest-browser-screen-lock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCREEN_LOCK_OK"
     "guest-browser-sign-out" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SIGN_OUT_OK"
     "guest-browser-settings" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SETTINGS_OK"
+    "guest-browser-ui-scale" "AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"
