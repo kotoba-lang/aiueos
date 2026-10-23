@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the settings window (ADR-0269)
+- Window 2 is the settings app (Contrast / Scale / Network), opened from launcher button 2 and rebuilt after every key; F5 flips the
+  network setting (a flag the settings stage holds), which the status area follows (OFFLINE while it is off). The settings record keeps all three across a
+  reboot. `guest-browser-settings` attaches a NIC and checks both boots' frames against the frame model.
+
 ### desktop: notifications, toasts and a list (ADR-0268)
 - Surface words 1971..2003 carry four notification entries and a list flag; browser-frame2 draws toasts (or the list) above the windows;
   F8 dismisses the newest toast, F7 opens and closes the list, a dismissed notification stays listed. `guest-browser-notify` raises two,

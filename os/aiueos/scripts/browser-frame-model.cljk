@@ -1107,14 +1107,26 @@
      ;; Escape closes the focused window (ADR-0248): window 1 alone again, as the stage found it
      ["esc" one] ["esc-up" one]]))
 
-;; ADR-0260: after the sign-out stage the settings stage: the clean session (one window 1) with the
-;; high-contrast palette on -- chosen with F10 on the first boot, restored from the volume on the second.
+;; ADR-0260/0269: the settings stage, after the notification stage, in the same session: window 2 is the settings app, opened by a
+;; press on launcher button 2 (its title slot says "Settings", which is also the button's label), focused, on top of window 1 at the
+;; default rect. Its body is the three settings, rebuilt after every key. First boot: F10 (contrast high), Ctrl+= (125 %), F5
+;; (network off); the status area says ONLINE until the network setting is off, then OFFLINE. Second boot of the same volume: the
+;; window opens with the stored values and only Alt is pressed.
 (def settings-frames
-  (let [clean (second (last edit-frames))   ; ADR-0263: the session as the editing stage left it
-        hc (assoc clean :hc true)
-        ;; ADR-0265: Ctrl+= then takes the scale to 125, kept on the volume with the contrast choice
-        z (assoc hc :vw 1024 :vh 640 :scale 125)]
-    [["f10" hc] ["f10-up" hc] ["ctrl" hc] ["ctrl=" z] ["=-up" z] ["ctrl-up" z]]))
+  (let [base (second (last layout-frames))   ; the session as the layout and notification stages left it
+        w1 (first (:stack base))
+        cps (fn [text] (mapv #(.charCodeAt % 0) text))
+        body (fn [hc pct off] (cps (str "Contrast: " (if hc "High" "Normal") "\nScale: " pct "%\nNetwork: " (if off "Off" "On"))))
+        sc (fn [hc pct off]
+             (assoc base :hc hc :scale pct :vw (quot (* 1280 100) pct) :vh (quot (* 800 100) pct) :focus 2
+                    :net (if off 1 3)
+                    :titles (assoc (:titles base) 2 (cps "Settings"))
+                    :stack [w1 {:id 2 :x 80 :y 80 :w 520 :h 360 :title (cps "Settings") :body (body hc pct off)}]))
+        fr (fn [label hc pct off] [label (sc hc pct off) hc off])]
+    [(fr "open" false 100 false)
+     (fr "f10 down" true 100 false) (fr "f10 up" true 100 false)
+     (fr "ctrl down" true 100 false) (fr "= down" true 125 false) (fr "= up" true 125 false) (fr "ctrl up" true 125 false)
+     (fr "f5 down" true 125 true) (fr "f5 up" true 125 true)]))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
@@ -1420,12 +1432,12 @@
     (println (str "scale-frame n=" (inc i) " " ev " pct=" pct " vw=" (:vw scene) " vh=" (:vh scene)
                   " win=" (:x w) "," (:y w) "," (:w w) "," (:h w)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
-  (doseq [[i [ev scene]] (map-indexed vector settings-frames)
+  (doseq [[i [ev scene hc off]] (map-indexed vector settings-frames)
           :let [ops (frame scene)
                 pct (or (:scale scene) 100)
-                c (assoc (census 0 (if (= pct 100) ops (scale-ops pct ops))) :ops (count ops))]]
-    (println (str "settings-frame n=" (inc i) " " ev " pct=" pct " ops=" (:ops c) " text-px=" (:text-px c)
-                  " hash=" (:hash c))))
+                c (assoc (census (if hc 0 ink) (if (= pct 100) ops (scale-ops pct ops))) :ops (count ops))]]
+    (println (str "settings-frame n=" (inc i) " " ev " hc=" (if hc 1 0) " pct=" pct " net=" (if off 1 0)
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector uiux-frames)
           :let [ops (frame scene)
                 c (if (:hc scene) (census 0 ops) (census ops))]]

@@ -933,18 +933,19 @@ while time.time() < end:
                 recv_obj()
                 globals()["notify_sent"] = k + 1
                 log("notify event " + str(k + 1) + " sent")
-        # ADR-0260/0265: two keys (second boot) or six (first boot) after the sign-out stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
+        # ADR-0260/0265/0269: two keys (second boot) or eight (first boot) after the notification stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
         # stored record says so.
-        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (6 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
+        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (8 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
             k = globals().get("settings_sent", 0)
-            if k == 0 or (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % k) in serial_now:
+            # the stage's first line (n=1) is the window opening by itself; each key waits for the line before it
+            if (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % (k + 1)) in serial_now:
                 time.sleep(0.5)
                 phase = os.environ.get("AIUEOS_SETTINGS_PHASE", "1")
-                # ADR-0265: first boot F10 (high contrast) then Ctrl+= (125 %), both kept on the volume.
-                qc = ("f10", "f10", "ctrl", "equal", "equal", "ctrl")[k] if phase == "1" else "alt"
-                dn = (True, False, True, True, False, False)[k] if phase == "1" else k == 0
+                # ADR-0269: first boot F10 (high contrast), Ctrl+= (125 %), F5 (network off), all kept on the volume
+                qc = ("f10", "f10", "ctrl", "equal", "equal", "ctrl", "f5", "f5")[k] if phase == "1" else "alt"
+                dn = (True, False, True, True, False, False, True, False)[k] if phase == "1" else k == 0
                 ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())

@@ -1469,42 +1469,49 @@
       {:green? true :exit 0 :reason :guest-browser-sign-out
        :leftover [:memory-read-from-the-surface-not-the-ram :clipboard-not-cleared :test-pin-hash-in-the-image :draw-list-not-pixels]})))
 
-;; Guest browser settings (ADR-0260): the high-contrast choice survives a reboot. The gate boots the SAME volume
-;; twice (the harness keeps the first serial as :serial1). First boot: no record on the volume, the host presses
-;; F10, Kotoba flips the palette (surface word 2039) and C writes the choice to the settings sector with readback.
-;; Second boot: the settings stage reads the record, applies it, and the host sends only Alt -- the frame is
-;; high-contrast because the volume said so. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid= contrast=
-;; and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= text-px= hash= written= stored=. Green needs the sign-out gate
-;; green on the second serial, both boots' frames equal to browser-frame-model.cljk's ("settings-frame"), and, apart
-;; from the model: boot one starts with no record (valid=0) and ends having written the choice (stored=1); boot two
-;; starts with the record (valid=1 contrast=1), its keys are Alt and not F10, it writes nothing, and its frames are
-;; the frames boot one drew.
+;; Guest browser settings (ADR-0260, ADR-0265, ADR-0269): contrast, scale and the network setting survive a reboot, and are changed in
+;; a settings window. The gate boots the SAME volume twice (the harness keeps the first serial as :serial1). The stage opens window 2,
+;; the settings app (title "Settings", body "Contrast: .. / Scale: ..% / Network: .."), by a press on launcher button 2 through the
+;; reducer. First boot: no record on the volume, the host presses F10 (contrast high), Ctrl+= (125 %) and F5 (network off); C writes
+;; the record after each change with readback; the status area says ONLINE (a NIC is attached) until the network setting is off, then
+;; OFFLINE. Second boot: the stage reads the record, applies all three before the first frame and the host sends only Alt -- the window
+;; shows the stored values and the frame is the one boot one ended on. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT
+;; valid= contrast= scale= net= and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= pct= net= win= text-px= hash= written= stored=.
+;; Green needs the sign-out gate green on the same serial, both boots' frames equal to browser-frame-model.cljk's ("settings-frame"),
+;; and, apart from the model: boot one starts with no record, writes after each of the three changes and ends with all three stored;
+;; boot two starts with the record (valid=1 contrast=1 scale=125 net=1), is not told by the keys, writes nothing, and draws what boot
+;; one ended on.
 
-(def ^:private settings-want
-  (let [a {:hc 1 :ops 77 :pct 100 :px 668 :hash "bed963dd"}
-        z {:hc 1 :ops 77 :pct 125 :px 1757 :hash "244cc84c"}]
-    [(assoc a :n 1) (assoc a :n 2) (assoc a :n 3) (assoc z :n 4) (assoc z :n 5) (assoc z :n 6)]))
+(def ^:private settings-want-1
+  [{:n 1 :key 0 :hc 0 :pct 100 :net 0 :ops 158 :px 1467 :hash "979da48d" :written 0 :stored "none"}
+   {:n 2 :key 273 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
+   {:n 3 :key 272 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
+   {:n 4 :key 117 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
+   {:n 5 :key 53 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
+   {:n 6 :key 52 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
+   {:n 7 :key 116 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
+   {:n 8 :key 253 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 3 :stored 1}
+   {:n 9 :key 252 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 3 :stored 1}])
 (def ^:private settings-want-2
-  (mapv #(assoc (last settings-want) :n %) [1 2]))
+  [{:n 1 :key 0 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 2 :key 225 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 3 :key 224 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}])
 
 (defn- settings-lines [s]
-  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) pct=(\d+) text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
-       (mapv (fn [[_ n key hc ops pct px hash written stored]]
-               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :ops (parse-long ops) :pct (parse-long pct) :px (parse-long px)
-                :hash hash :written (parse-long written) :stored (if (= stored "none") "none" (parse-long stored))}))))
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) pct=(\d+) net=(\d+) win=2,2 text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
+       (mapv (fn [[_ n key hc ops pct net px hash written stored]]
+               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :pct (parse-long pct) :net (parse-long net)
+                :ops (parse-long ops) :px (parse-long px) :hash hash :written (parse-long written)
+                :stored (if (= stored "none") "none" (parse-long stored))}))))
 
 (defn- settings-boot [s]
-  (when-let [[_ v c] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+) scale=(\d+)" (or s ""))]
-    [(parse-long v) (parse-long c)]))
-(defn- settings-scale [s]
-  (when-let [[_ v] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=\d+ contrast=\d+ scale=(\d+)" (or s ""))]
-    (parse-long v)))
+  (when-let [[_ v c sc nt] (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=(\d+) contrast=(\d+) scale=(\d+) net=(\d+)" (or s ""))]
+    (mapv parse-long [v c sc nt])))
 
 (defn guest-browser-settings-result
   [{:keys [serial serial1 qemu-unmeasured?] :as opts}]
   (let [l1 (settings-lines serial1)
         l2 (settings-lines serial)
-        shape (fn [ls] (mapv #(select-keys % [:n :hc :ops :pct :px :hash]) ls))
         sign-out (guest-browser-sign-out-result opts)]
     (cond
       qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
@@ -1512,30 +1519,34 @@
       (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
       (or (empty? l1) (empty? l2)) {:green? false :exit 1 :reason :guest-browser-settings-absent
                                     :leftover [:guest-browser-settings-absent]}
-      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6" (or serial1 ""))
+      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=8" (or serial1 ""))
                 (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial ""))))
       {:green? false :exit 1 :reason :settings-ok-missing :leftover [:settings-ok-missing]}
-      (not= (settings-boot serial1) [0 0])
+      (not= (settings-boot serial1) [0 0 100 0])
       {:green? false :exit 1 :reason :first-boot-had-a-record :leftover [:first-boot-had-a-record]}
-      (not= (settings-boot serial) [1 1])
-      {:green? false :exit 1 :reason :second-boot-did-not-read-the-choice :leftover [:second-boot-did-not-read-the-choice]}
-      (not= (shape l1) settings-want)
-      {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]}
-      (not= (shape l2) settings-want-2)
-      {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]}
-      (not= (settings-scale serial) 125)
-      {:green? false :exit 1 :reason :second-boot-did-not-read-the-scale :leftover [:second-boot-did-not-read-the-scale]}
-      (not= (settings-scale serial1) 100)
-      {:green? false :exit 1 :reason :first-boot-had-a-scale :leftover [:first-boot-had-a-scale]}
-      (not= (mapv (juxt :written :stored) l1) [[1 1] [1 1] [1 1] [2 1] [2 1] [2 1]])
-      {:green? false :exit 1 :reason :choice-not-written :leftover [:choice-not-written]}
-      (not= (vec (take 2 (mapv :key l1))) [273 272])
+      (not= (settings-boot serial) [1 1 125 1])
+      {:green? false :exit 1 :reason :second-boot-did-not-read-the-settings :leftover [:second-boot-did-not-read-the-settings]}
+      (not= l1 settings-want-1)
+      {:green? false :exit 1 :reason :first-boot-differs-from-model :leftover [:first-boot-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat l1 (repeat nil)) settings-want-1)))}
+      (not= l2 settings-want-2)
+      {:green? false :exit 1 :reason :second-boot-differs-from-model :leftover [:second-boot-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat l2 (repeat nil)) settings-want-2)))}
+      ;; the rules, by name (independent of the tables above)
+      (not= (mapv :written l1) [0 1 1 1 2 2 2 3 3])
+      {:green? false :exit 1 :reason :a-change-was-not-written :leftover [:a-change-was-not-written]}
+      (not= (vec (take 3 (mapv :key l1))) [0 273 272])
       {:green? false :exit 1 :reason :first-boot-did-not-press-f10 :leftover [:first-boot-did-not-press-f10]}
-      (or (some #{273 272} (map :key l2)) (not= (mapv (juxt :written :stored) l2) [[0 1] [0 1]]))
+      (or (some #{273 272 253 252} (map :key l2)) (some pos? (map :written l2)))
       {:green? false :exit 1 :reason :second-boot-was-told-or-wrote :leftover [:second-boot-was-told-or-wrote]}
+      (not= (select-keys (last l1) [:hc :pct :net :ops :px :hash]) (select-keys (first l2) [:hc :pct :net :ops :px :hash]))
+      {:green? false :exit 1 :reason :second-boot-is-not-where-boot-one-ended :leftover [:second-boot-is-not-where-boot-one-ended]}
       :else
       {:green? true :exit 0 :reason :guest-browser-settings
-       :leftover [:contrast-and-scale-only :no-settings-window :no-network :restored-at-the-settings-stage-not-at-boot]})))
+       :leftover [:network-setting-is-a-shell-flag-not-the-adapter :changed-by-keys-not-by-controls-in-the-window
+                  :restored-at-the-settings-stage-not-at-boot]})))
 
 ;; Guest browser UI scale (ADR-0261): after the sign-out stage the host sends F11 (the clean session's window is
 ;; maximized), Ctrl+= three times and Ctrl+- twice (125, 150, 150, 125, 100) and F11 again. Kotoba chooses the
@@ -2447,7 +2458,9 @@
     "guest-browser-sign-out" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0260: two boots of the same volume (the runner sets the phase and keeps the volume).
+    ;; ADR-0269: a NIC is attached so the status area can say ONLINE until the network setting is turned off.
     "guest-browser-settings" {"AIUEOS_GUEST_BROWSER" "1"
+                              "AIUEOS_TEST_NET" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0261: the scale keys come after the sign-out stage.
     "guest-browser-ui-scale" {"AIUEOS_GUEST_BROWSER" "1"
