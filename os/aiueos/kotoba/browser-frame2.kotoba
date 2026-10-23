@@ -866,6 +866,37 @@
     (if (> (sw s (+ 2039 id)) 65535) 0
       (scroll-ok s (+ id 1)))))
 
+;; ADR-0258: the lock screen. With word 2030 = 1 the frame is only this: a dark background, the
+;; word ロック中 in white, four dots (the PIN digits typed so far white, the rest grey) and, after a refusal
+;; (word 2026), a red bar under them; no window, launcher or dock is drawn, and the pointer is the arrow.
+(defn lock-bg [s] (if (= (hc s) 1) 0 2040880))
+
+(defn lock-glyph [s f cp x y]
+  (let [gi (glyph-of s f cp)
+        gw (glyph-width s f gi)]
+    (do (put-glyph s x y gi gw) gw)))
+
+(defn lock-dot [s i vw vh]
+  (do (sput s 422 (if (< i (bit-and (sw s 2031) 7)) 16777215 (if (= (hc s) 1) 8421504 5593702)))
+      (put-rect s (+ (- (quot vw 2) 44) (* 24 i)) (quot vh 2) 12 12)))
+
+(defn lock-screen [s f vw vh]
+  (let [x0 (- (quot vw 2) 32)
+        y0 (- (quot vh 2) 48)]
+    (do (sput s 422 (lock-bg s))
+        (put-rect s 0 0 vw vh)
+        (sput s 422 16777215)
+        (let [x1 (+ x0 (lock-glyph s f 12525 x0 y0))
+              x2 (+ x1 (lock-glyph s f 12483 x1 y0))
+              x3 (+ x2 (lock-glyph s f 12463 x2 y0))]
+          (lock-glyph s f 20013 x3 y0))
+        (lock-dot s 0 vw vh) (lock-dot s 1 vw vh) (lock-dot s 2 vw vh) (lock-dot s 3 vw vh)
+        (if (= (sw s 2026) 1)
+          (do (sput s 422 14233637)
+              (put-rect s (- (quot vw 2) 44) (+ (quot vh 2) 24) 84 4))
+          0)
+        (if (= (sw s 2046) 0) 0 (arrow s (- (sw s 2046) 1) (sw s 2047) 0)))))
+
 (defn aiueos-browser-frame2 [s sb f fb]
   (if (= s 0) -1
     (if (= f 0) -1
@@ -886,13 +917,15 @@
                       (if (= (font-ok s f fb) 0) -6
                         (do (sput s 416 0)
                             (sput s 427 0)
-                            (sput s 422 (bg-rgb s))
-                            (put-rect s 0 0 vw vh)
-                            (launcher s f vw)
-                            (emit s f 0)
-                            (dock s f vw vh)
-                            (tray s f 1 0 vh)
-                            (pointer s)
+                            (if (= (sw s 2030) 1)
+                              (lock-screen s f vw vh)
+                              (do (sput s 422 (bg-rgb s))
+                                  (put-rect s 0 0 vw vh)
+                                  (launcher s f vw)
+                                  (emit s f 0)
+                                  (dock s f vw vh)
+                                  (tray s f 1 0 vh)
+                                  (pointer s)))
                             (if (= (sw s 427) 1) -5 (sw s 416)))))))))))))))))))
 
 (defn main [] 0)

@@ -566,6 +566,7 @@
 
 (defn aiueos-browser-reduce [st sb kind a b]
   (if (= st 0) -1
+    (if (= (if (= sb 8192) (sv-at st 2030) 0) 1) 0
     (if (= (if (= sb 128) 1 (if (= sb 8192) 1 0)) 0) -1
       (let [abi (w-at st 0)
             n (w-at st 1)
@@ -582,6 +583,6 @@
                         (if (= kind 4) (release st)
                           (if (= kind 5) (focus-id st n a)
                             (if (= kind 6) (wheel st sb (hit st (- n 1) a b) 1)
-                              (if (= kind 7) (wheel st sb (hit st (- n 1) a b) 0) -5)))))))))))))))))
+                              (if (= kind 7) (wheel st sb (hit st (- n 1) a b) 0) -5))))))))))))))))))
 
 (defn main [] 0)

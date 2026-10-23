@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: the screen locks and a PIN unlocks it (ADR-0258)
+- Ctrl+Alt+L locks: only the lock screen is drawn, pointer and keys are swallowed; a four-digit PIN (SHA-256 checked by C against
+  the test PIN\'s hash) unlocks and the session is as it was. `guest-browser-screen-lock` gates it (30 more events).
+
 ### scorecard: the owner's VM is the reference; ten rows pass by receipt (17%)
 - Reference = the owner's Mac VM (QEMU + UEFI), counted as :device-level evidence when a receipt is kept
   (`scripts/vm-receipt.cljk`, `os/aiueos/qualification/receipts/vm-20261023/`). C1 C2 C3 C4 D1 D2 D4 D7 G4 I5 are :pass;
