@@ -1144,7 +1144,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_reduce
   fd355f2da0d3b5a77c39ee2f7d1c888a127c1af67122b354773bb260cc9c9677 \
   kotoba_aiueos_browser_reduce
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_frame2_object" \
-  bcd823f7d638955731bc82fe9a9d8ef2164eb4ef1c26404d8bc0c7ab4c7dc010 \
+  f1d01a7e2dd451f49a032ebf4b6ccdd6eaa46bd3e3740d77dde1317c86af6bd7 \
   kotoba_aiueos_browser_frame2
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_browser_ime_object" \
   149baa028afda9e59eda198f7a9e5ee50439a9f5d6fa66121280be747cba0589 \

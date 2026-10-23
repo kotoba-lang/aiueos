@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1801,6 +1801,45 @@
       {:green? true :exit 0 :reason :guest-browser-text-edit
        :leftover [:undo-is-one-step :english-direct-typing-only :no-composition-in-the-middle :no-up-down :no-mouse-caret :draw-list-not-pixels]})))
 
+;; Guest browser clock (ADR-0264): after the editing stage the stage sets the machine's real-time clock to 12:34, reads it
+;; back through the CMOS registers, reports the minute of the day + 1 in surface word 1968, and browser-frame2 draws
+;; HH:MM at the right end of the launcher row. The kernel prints AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=<h>:<m>
+;; and AIUEOS_GUEST_BROWSER_CLOCK n=<1|2> status= ops= text-px= hash= for the frame without and with the clock. Green
+;; needs the text-edit gate green on the same serial, the clock read back as set, both frames equal to
+;; browser-frame-model.cljk's ("clock-frame"), and, apart from it, the clock frame being the other frame plus the
+;; five glyphs of HH:MM and the status word being the minute of the day + 1 (755).
+
+(def ^:private clock-want
+  [{:n 1 :status 0 :ops 77 :px 668 :hash "bed963dd"}
+   {:n 2 :status 755 :ops 82 :px 755 :hash "9eb22e19"}])
+
+(defn guest-browser-clock-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        ls (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK n=(\d+) status=(\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+                (mapv (fn [[_ n status ops px hash]]
+                        {:n (parse-long n) :status (parse-long status) :ops (parse-long ops) :px (parse-long px) :hash hash})))
+        rtc (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK_RTC set=12:34 read=(\d+):(\d+)\s*$" s)
+        edit (guest-browser-text-edit-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? edit))
+      (assoc edit :reason :no-text-edit :leftover (into [:no-text-edit] (:leftover edit)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-clock-absent :leftover [:guest-browser-clock-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CLOCK_OK frames=2" s))
+      {:green? false :exit 1 :reason :clock-ok-missing :leftover [:clock-ok-missing]}
+      (not= ["12" "34"] (some-> rtc (subvec 1)))
+      {:green? false :exit 1 :reason :clock-did-not-read-back :leftover [:clock-did-not-read-back]}
+      (not= ls clock-want)
+      {:green? false :exit 1 :reason :clock-differs-from-model :leftover [:clock-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) clock-want)))}
+      (not= 5 (- (:ops (second ls)) (:ops (first ls))))
+      {:green? false :exit 1 :reason :clock-is-not-five-glyphs :leftover [:clock-is-not-five-glyphs]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-clock
+       :leftover [:clock-only-no-power-or-network :set-by-the-test-hook :not-refreshed-each-minute :draw-list-not-pixels]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2256,6 +2295,9 @@
     ;; ADR-0263: the editing keys come after the keyboard-only stage.
     "guest-browser-text-edit" {"AIUEOS_GUEST_BROWSER" "1"
                                "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0264: the clock stage needs no keys; it follows the editing stage.
+    "guest-browser-clock" {"AIUEOS_GUEST_BROWSER" "1"
+                           "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2304,6 +2346,7 @@
     "guest-browser-ui-scale" (guest-browser-ui-scale-result opts)
     "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
     "guest-browser-text-edit" (guest-browser-text-edit-result opts)
+    "guest-browser-clock" (guest-browser-clock-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2353,6 +2396,7 @@
     "guest-browser-ui-scale" "AIUEOS_GUEST_BROWSER_SCALE"
     "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
     "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
+    "guest-browser-clock" "AIUEOS_GUEST_BROWSER_CLOCK"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2402,6 +2446,7 @@
     "guest-browser-ui-scale" "AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK"
     "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
     "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
+    "guest-browser-clock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CLOCK_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

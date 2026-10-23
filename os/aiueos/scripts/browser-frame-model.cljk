@@ -232,19 +232,26 @@
   "ADR-0233: with an app register (:apps, bit k-1 = app k), the launcher row
   under every window -- #edf0f5 across the top 28 px -- and one #e4e8ef
   96 x 24 button per registered app at x 6 + 102(k-1), y 2, its title
-  (:titles k) from (x + 6, 6), one line, clipped at x + 90."
-  [{:keys [vw apps titles pointer hc ring down]}]
+  (:titles k) from (x + 6, 6), one line, clipped at x + 90. ADR-0264: then the
+  clock -- HH:MM from (vw - 48, 6) in the ink -- when `status`, the minute of the day, is given."
+  [{:keys [vw apps titles pointer hc ring down status]}]
   (when (pos? (or apps 0))
-    (into [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
-          (mapcat (fn [k]
-                    (let [x (+ 6 (* 102 (dec k)))]
-                      (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
-                        (into (into [[:rect x 2 96 24 (ctl-colour hc down (hot? pointer x 2 96 24))]]
-                                    (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
-                                                     :bottom 28 :wrap? false}
-                                                    (take 32 (get titles k)))))
-                              (when (= ring k) (ring-ops hc x 2 96 24))))))
-                  [1 2 3 4]))))
+    (let [buttons (mapcat (fn [k]
+                            (let [x (+ 6 (* 102 (dec k)))]
+                              (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
+                                (into (into [[:rect x 2 96 24 (ctl-colour hc down (hot? pointer x 2 96 24))]]
+                                            (:ops (lay-line {:x (+ x 6) :y 6 :left (+ x 6) :right (+ x 90)
+                                                             :bottom 28 :wrap? false}
+                                                            (take 32 (get titles k)))))
+                                      (when (= ring k) (ring-ops hc x 2 96 24))))))
+                          [1 2 3 4])
+          clock (when status
+                  (let [h (quot status 60) m (mod status 60)]
+                    (:ops (lay-line {:x (- vw 48) :y 6 :left (- vw 48) :right vw :bottom 28 :wrap? false}
+                                    [(+ 48 (quot h 10)) (+ 48 (mod h 10)) 58 (+ 48 (quot m 10)) (+ 48 (mod m 10))]))))]
+      (-> [[:rect 0 0 vw 28 (if hc 0xffffff 0xf1f1f2)]]
+          (into buttons)
+          (into clock)))))
 
 (defn- resize-handle?
   "ADR-0252: the pointer [x y] is on the resize handle (the last 16 px of both axes,
@@ -979,6 +986,12 @@
 (defn- ed-text [body]
   (apply str (map #(case % 32 "_" 10 "|" (str (char %))) body)))
 
+;; ADR-0264: the clock stage, after the editing stage: the same session, then the launcher row with the time the stage
+;; set the machine's clock to, 12:34 (the minute of the day, 754).
+(def clock-frames
+  (let [last-edit (second (last edit-frames))]
+    [["no-status" last-edit] ["12:34" (assoc last-edit :status 754)]]))
+
 ;; ADR-0262: the keyboard-only stage, after the scale stage (the clean session, window 1 alone). F6 moves the
 ;; focus ring through every shell control that exists, Enter activates the one it is on, all through the same
 ;; press path as the pointer. F6 F6 puts the ring on launcher button 2 and Enter opens window 2; F6 four times
@@ -1278,6 +1291,11 @@
   ;; ADR-0246: the hover colour (#d9d9d9) rects counted in the model's own op
   ;; list for the cursor, focus and scroll frames -- the kernel prints the
   ;; same count beside each frame (AIUEOS_GUEST_BROWSER_HOT).
+  (doseq [[i [ev scene]] (map-indexed vector clock-frames)
+          :let [ops (frame scene)
+                c (census ops)]]
+    (println (str "clock-frame n=" (inc i) " " ev " status=" (if (:status scene) (inc (:status scene)) 0)
+                  " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
   (doseq [[i [ev scene]] (map-indexed vector edit-frames)
           :let [ops (frame scene)
                 c (census ops)

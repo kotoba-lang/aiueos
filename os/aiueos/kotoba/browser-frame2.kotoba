@@ -65,7 +65,8 @@
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 254 ops (words 480..2003; 255 until ADR-0261, which
+;;                  capacity 248 ops (words 480..1967; 254 until ADR-0264, which took
+;;                  1968..2003 -- 1968 is the status word; 255 until ADR-0261, which
 ;;                  took 2004..2009 -- 2009 is the UI scale, browser-ime's; 259 until ADR-0248,
 ;;                  261 until ADR-0238,
 ;;                  260 until ADR-0240)
@@ -175,7 +176,7 @@
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 0..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
-;;   -5 more than 254 ops                      -6 font refused (magic, version,
+;;   -5 more than 248 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
 ;;   -7 a window id outside 1..4               -8 the IME's lengths are past
 ;;                                                its buffers (romaji > 8 or
@@ -237,7 +238,7 @@
 (defn put-op [s kind x y a]
   ;; b and rgb come from the caller through scratch 429 and 422.
   (let [j (sw s 416)]
-    (if (>= j 254)
+    (if (>= j 248)
       (do (sput s 427 1) 0)
       (let [base (+ 480 (* 6 j))]
         (do (sput s base kind)
@@ -591,11 +592,35 @@
           (text-block s f (+ 32 (* 32 (- k 1))) (+ x 6) 6)
           (if (= (sw s 2032) k) (put-ring s x 2 96 24) 0)))))
 
+;; ADR-0264: the status area, at the right end of the launcher row. Word 1968 is the status C reports (0 = none
+;; reported, nothing drawn): the minute of the day + 1. Today it is the clock, HH:MM in the ink from (vw - 48, 6).
+(defn clock-glyph [s f cp x]
+  (let [gi (glyph-of s f cp)
+        gw (glyph-width s f gi)]
+    (do (put-glyph s x 6 gi gw) (+ x gw))))
+
+(defn clock [s f vw]
+  (let [v (sw s 1968)]
+    (if (= v 0) 0
+      (if (> v 1440) 0
+        (let [m (- v 1)
+              h (quot m 60)
+              mm (- m (* h 60))
+              h1 (quot h 10)
+              m1 (quot mm 10)]
+          (do (sput s 422 (ink s))
+              (let [x1 (clock-glyph s f (+ 48 h1) (- vw 48))
+                    x2 (clock-glyph s f (+ 48 (- h (* h1 10))) x1)
+                    x3 (clock-glyph s f 58 x2)
+                    x4 (clock-glyph s f (+ 48 m1) x3)]
+                (clock-glyph s f (+ 48 (- mm (* m1 10))) x4))))))))
+
 (defn launcher [s f vw]
   (if (= (sw s 31) 0) 0
     (do (sput s 422 (bg-rgb s))
         (put-rect s 0 0 vw 28)
-        (button s f 1) (button s f 2) (button s f 3) (button s f 4))))
+        (button s f 1) (button s f 2) (button s f 3) (button s f 4)
+        (clock s f vw))))
 
 ;; The dock follows the same retained-op path as the launcher and windows.
 ;; App colours and initial glyphs are presentation data; the native presenter
