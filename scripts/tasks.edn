@@ -300,6 +300,9 @@
  :chromeos-scorecard
  {:cmd ["kbb" "--backend" "sci" "scripts/chromeos-scorecard.cljk"]
   :doc "Validate and score the ChromeOS-grade scorecard (JUN-90): required weights sum to 100, a :pass row needs evidence and a confirmed reference machine, dead evidence links fail. Prints the SCORE (0% until a row passes on the real machine) and, beside it, the QEMU-level progress."}
+ :browser-desktop-suspend
+ {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-suspend"]
+  :doc "Guest browser suspend-to-idle (ADR-0273) on KERNEL.ELF under QEMU, after the audio stage: the sleep key blanks the screen and idles the machine in HLT, the wake key redraws the desktop; the host's screendumps (black while asleep, byte-identical awake before/after) and the measured resume time (< 3 s) gate it."}
  :browser-desktop-audio
  {:cmd ["kbb" "--backend" "sci" "--classpath" "src" "scripts/compositor-guest.cljk" "guest-browser-audio"]
   :doc "Guest browser sound (ADR-0272) on KERNEL.ELF under QEMU with a virtio sound card writing a WAV: a 440 Hz burst at volume 100, the volume-down key twice, the burst again at 50; the host measures the WAV (two 440 Hz bursts, the second at half the RMS level)."}

@@ -31,6 +31,25 @@
   (binding [*out* *err*] (println msg))
   (.exit js/process 3))
 
+(defn- ppm-pixels [^js buf]
+  ;; "P6\n<w> <h>\n255\n" then the bytes; returns the offset of the first pixel byte
+  (loop [off 0 newlines 0]
+    (cond (>= off (.-length buf)) off
+          (= 10 (aget buf off)) (if (= newlines 2) (inc off) (recur (inc off) (inc newlines)))
+          :else (recur (inc off) newlines))))
+
+(defn- suspend-evidence
+  "ADR-0273: the three screendumps the host took around the suspend and the resume time it measured."
+  []
+  (let [read (fn [n] (let [f (.join path out n)] (when (.existsSync fs f) (.readFileSync fs f))))
+        sha (fn [b] (when b (-> (.createHash (js/require "node:crypto") "sha256") (.update b) (.digest "hex"))))
+        before (read "suspend-before.ppm") during (read "suspend-during.ppm") after (read "suspend-after.ppm")
+        timing (when (.existsSync fs (.join path out "suspend-timing.txt"))
+                 (re-find #"resume_ms=(\d+)" (str (.readFileSync fs (.join path out "suspend-timing.txt") "utf8"))))
+        black? (fn [b] (when b (let [o (ppm-pixels b)] (loop [i o] (cond (>= i (.-length b)) true (not= 0 (aget b i)) false :else (recur (inc i)))))))]
+    {:before-sha (sha before) :during-sha (sha during) :after-sha (sha after) :during-black? (black? during) :before-black? (black? before)
+     :resume-ms (some-> timing second parse-long)}))
+
 (defn- profile-arg []
   (let [args (vec *command-line-args*)
         args (if (= "--" (first args)) (subvec args 1) args)]
@@ -103,7 +122,8 @@
                                    :hosted-wm? false
                                    :hosted-ime? false
                                    :wav (let [f (.join path out "audio.wav")]
-                                          (when (and (= profile "guest-browser-audio") (.existsSync fs f)) (.readFileSync fs f)))
+                                          (when (and (contains? #{"guest-browser-audio" "guest-browser-suspend"} profile) (.existsSync fs f)) (.readFileSync fs f)))
+                                   :suspend (when (= profile "guest-browser-suspend") (suspend-evidence))
                                    :flow-parity parity
                                    :damage-shots (when (= profile "guest-browser-damage")
                                                    (damage-shots started))})

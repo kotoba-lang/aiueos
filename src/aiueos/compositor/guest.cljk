@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup" "guest-browser-audio"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup" "guest-browser-audio" "guest-browser-suspend"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -2192,6 +2192,37 @@
       {:green? true :exit 0 :reason :guest-browser-audio :bursts (:bursts w)
        :leftover [:volume-is-a-software-gain-in-the-stage :one-output-stream :no-mixer-ui :no-mute-or-devices :no-input]})))
 
+;; Guest browser suspend and resume (ADR-0273): suspend-to-idle. After the audio stage the host takes a screendump of the awake desktop, presses the
+;; sleep key (the lid), takes a screendump of the sleeping screen, presses the wake key, times it until the guest's RESUME line, and takes a
+;; screendump of the awake desktop again. The kernel prints SUSPEND_GO / _ENTER / _RESUME with the frame hash and a fingerprint of the surface
+;; words before and after. Green needs the audio gate green on the same serial, the kernel's own frame-intact and state-intact, and the HOST's
+;; evidence: the sleeping screen all black, the awake screens before and after byte-identical (equal SHA-256), the resume in under 3 s.
+
+(defn guest-browser-suspend-result
+  [{:keys [serial suspend qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SUSPEND_GO ops=(\d+) hash=([0-9a-f]{8}) state=([0-9a-f]{8})\s*$" s)
+        enter (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SUSPEND_ENTER screen=black\s*$" s)
+        res (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SUSPEND_RESUME ops=(\d+) hash=([0-9a-f]{8}) state=([0-9a-f]{8}) frame-intact=(\d) state-intact=(\d)\s*$" s)
+        audio (guest-browser-audio-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? audio))
+      (assoc audio :reason :no-audio :leftover (into [:no-audio] (:leftover audio)))
+      (not (and go enter res)) {:green? false :exit 1 :reason :guest-browser-suspend-absent :leftover [:guest-browser-suspend-absent]}
+      (not (and (= "1" (nth res 4)) (= "1" (nth res 5)) (= (nth go 2) (nth res 2)) (= (nth go 3) (nth res 3))))
+      {:green? false :exit 1 :reason :frame-or-state-changed :leftover [:frame-or-state-changed]}
+      (nil? suspend) {:green? false :exit 1 :reason :no-host-evidence :leftover [:no-host-evidence]}
+      (not (and (:before-sha suspend) (:during-sha suspend) (:after-sha suspend) (:resume-ms suspend)))
+      {:green? false :exit 1 :reason :host-evidence-incomplete :leftover [:host-evidence-incomplete]}
+      (:before-black? suspend) {:green? false :exit 1 :reason :awake-screen-was-black :leftover [:awake-screen-was-black]}
+      (not (:during-black? suspend)) {:green? false :exit 1 :reason :sleeping-screen-not-black :leftover [:sleeping-screen-not-black]}
+      (not= (:before-sha suspend) (:after-sha suspend)) {:green? false :exit 1 :reason :screen-after-resume-differs :leftover [:screen-after-resume-differs]}
+      (>= (:resume-ms suspend) 3000) {:green? false :exit 1 :reason :resume-too-slow :leftover [:resume-too-slow] :resume-ms (:resume-ms suspend)}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-suspend :resume-ms (:resume-ms suspend)
+       :leftover [:suspend-to-idle-not-acpi-s3 :ram-stays-powered :the-lid-is-a-key :devices-are-not-powered-down :resume-time-includes-the-harness]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2675,6 +2706,11 @@
                            "AIUEOS_TEST_NET" "1"
                            "AIUEOS_TEST_AUDIO" "1"
                            "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0273: the suspend stage follows the audio stage, so the sound card is attached here too.
+    "guest-browser-suspend" {"AIUEOS_GUEST_BROWSER" "1"
+                             "AIUEOS_TEST_NET" "1"
+                             "AIUEOS_TEST_AUDIO" "1"
+                             "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2729,6 +2765,7 @@
     "guest-browser-passkey" (guest-browser-passkey-result opts)
     "guest-browser-backup" (guest-browser-backup-result opts)
     "guest-browser-audio" (guest-browser-audio-result opts)
+    "guest-browser-suspend" (guest-browser-suspend-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2784,6 +2821,7 @@
     "guest-browser-passkey" "AIUEOS_GUEST_BROWSER_PASSKEY"
     "guest-browser-backup" "AIUEOS_GUEST_BROWSER_BACKUP"
     "guest-browser-audio" "AIUEOS_GUEST_BROWSER_AUDIO"
+    "guest-browser-suspend" "AIUEOS_GUEST_BROWSER_SUSPEND"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2839,6 +2877,7 @@
     "guest-browser-passkey" "AIUEOS_COMPOSITOR_GUEST_BROWSER_PASSKEY_OK"
     "guest-browser-backup" "AIUEOS_COMPOSITOR_GUEST_BROWSER_BACKUP_OK"
     "guest-browser-audio" "AIUEOS_COMPOSITOR_GUEST_BROWSER_AUDIO_OK"
+    "guest-browser-suspend" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SUSPEND_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

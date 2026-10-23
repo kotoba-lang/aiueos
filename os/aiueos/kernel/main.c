@@ -3194,8 +3194,91 @@ static int browser_audio_stage(void) {
   serial_string("\r\n");
   return 1;
 }
+
+/* ADR-0273: suspend and resume (suspend-to-idle). The "lid" is the sleep key (evdev 142); the wake is the wake key (143). Asleep, the
+   machine shows a black screen and idles in HLT (nothing is drawn, no input but the wake key is taken); awake, it draws the frame again
+   from the same surface -- whose words the stage fingerprints before and after, so the state is shown intact, not assumed. This is
+   suspend-to-idle (CPUs halted, display blanked), not ACPI S3: the RAM stays powered. */
+extern uint32_t aiueos_desktop_width(void);
+extern uint32_t aiueos_desktop_height(void);
+extern int aiueos_desktop_present_ops(const uint32_t *, uint64_t);
+extern int aiueos_desktop_show_full(void);
+extern uint64_t kotoba_aiueos_fnv1a(const uint8_t *, uint64_t);
+
+/* A fingerprint of the 2048 surface words: the fnv1a object takes short inputs, so fold 128-byte pieces. */
+static uint64_t suspend_state_digest(const uint32_t *surface) {
+  uint64_t d = 1469598103934665603ULL;
+  for (uint32_t off = 0; off < 8192U; off += 128U)
+    d = (d ^ kotoba_aiueos_fnv1a((const uint8_t *)surface + off, 128)) * 1099511628211ULL;
+  return d;
+}
+
+static uint32_t suspend_frame(uint32_t *surface, const uint8_t *font, uint64_t font_length, uint32_t *ops_out) {
+  uint32_t px = 0, hash = 0;
+  int64_t fo = (int64_t)kotoba_aiueos_browser_frame2((uint64_t)(uintptr_t)surface, 8192, (uint64_t)(uintptr_t)font, font_length);
+  *ops_out = (uint32_t)(fo < 0 ? -fo : fo);
+  if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
+    hash = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &px);
+    (void)aiueos_desktop_show_full();
+  }
+  return hash;
+}
+
+static int browser_suspend_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) {
+  uint32_t ops = 0, ops2 = 0, hash0, hash1, idle = 0, got = 0;
+  uint64_t d0, d1;
+  uint32_t black[6] = {1, 0, 0, aiueos_desktop_width(), aiueos_desktop_height(), 0};
+  (void)aiueos_keyboard_drain(4000000U);
+  hash0 = suspend_frame(surface, font, font_length, &ops);
+  d0 = suspend_state_digest(surface);
+  serial_string("AIUEOS_GUEST_BROWSER_SUSPEND_GO ops=");
+  serial_decimal(ops);
+  serial_string(" hash=");
+  serial_hex32(hash0);
+  serial_string(" state=");
+  serial_hex32((uint32_t)d0);
+  serial_string("\r\n");
+  while (!got && idle < 120000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    if (!key) { idle++; continue; }
+    idle = 0;
+    if (key == 142U * 4U + 1U) got = 1;
+  }
+  if (!got) { serial_string("AIUEOS_GUEST_BROWSER_SUSPEND leftover=no-sleep-key\r\n"); return 0; }
+  (void)aiueos_desktop_present_ops(black, 1);
+  (void)aiueos_desktop_show_full();
+  serial_string("AIUEOS_GUEST_BROWSER_SUSPEND_ENTER screen=black\r\n");
+  got = 0; idle = 0;
+  while (!got && idle < 400000U) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    if (key == 143U * 4U + 1U) { got = 1; break; }
+    if (!key) { idle++; __asm__ volatile("sti; hlt; cli" ::: "memory"); }
+  }
+  if (!got) { serial_string("AIUEOS_GUEST_BROWSER_SUSPEND leftover=no-wake-key\r\n"); return 0; }
+  hash1 = suspend_frame(surface, font, font_length, &ops2);
+  d1 = suspend_state_digest(surface);
+  serial_string("AIUEOS_GUEST_BROWSER_SUSPEND_RESUME ops=");
+  serial_decimal(ops2);
+  serial_string(" hash=");
+  serial_hex32(hash1);
+  serial_string(" state=");
+  serial_hex32((uint32_t)d1);
+  serial_string(" frame-intact=");
+  serial_decimal(hash0 == hash1 && ops == ops2 ? 1U : 0U);
+  serial_string(" state-intact=");
+  serial_decimal(d0 == d1 ? 1U : 0U);
+  serial_string("\r\n");
+  /* hold the resumed frame until the host has taken its screendump of it (F1): the persistent desktop that follows draws its own */
+  for (idle = 0, got = 0; !got && idle < 400000U;) {
+    uint32_t key = aiueos_keyboard_next_key(1024U);
+    if (key == 59U * 4U + 1U) got = 1; else if (!key) idle++;
+  }
+  serial_string("AIUEOS_GUEST_BROWSER_SUSPEND_DONE\r\n");
+  return hash0 == hash1 && d0 == d1;
+}
 #else
 static int browser_audio_stage(void) { return 0; }
+static int browser_suspend_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) { (void)surface; (void)font; (void)font_length; return 0; }
 #endif
 
 
@@ -6842,7 +6925,7 @@ qwen_runtime_boot_complete:
                                                                 if (browser_notify_stage(surface, font, font_length, dict, dict_length))
                                                                   if (browser_passkey_stage(surface, font, font_length, dict, dict_length))
                                                                     if (browser_settings_stage(surface, font, font_length, dict, dict_length))
-                                                                      if (browser_backup_stage()) (void)browser_audio_stage();
+                                                                      if (browser_backup_stage()) if (browser_audio_stage()) (void)browser_suspend_stage(surface, font, font_length);
                                           } else if (fe < 12) {
                                             debug_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing\n");
                                             serial_string("AIUEOS_GUEST_BROWSER_FOCUS leftover=events-missing events=");
