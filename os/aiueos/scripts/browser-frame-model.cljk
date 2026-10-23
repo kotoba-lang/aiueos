@@ -1117,16 +1117,21 @@
         w1 (first (:stack base))
         cps (fn [text] (mapv #(.charCodeAt % 0) text))
         body (fn [hc pct off] (cps (str "Contrast: " (if hc "High" "Normal") "\nScale: " pct "%\nNetwork: " (if off "Off" "On"))))
-        sc (fn [hc pct off]
-             (assoc base :hc hc :scale pct :vw (quot (* 1280 100) pct) :vh (quot (* 800 100) pct) :focus 2
-                    :net (if off 1 3)
-                    :titles (assoc (:titles base) 2 (cps "Settings"))
-                    :stack [w1 {:id 2 :x 80 :y 80 :w 520 :h 360 :title (cps "Settings") :body (body hc pct off)}]))
-        fr (fn [label hc pct off] [label (sc hc pct off) hc off])]
-    [(fr "open" false 100 false)
-     (fr "f10 down" true 100 false) (fr "f10 up" true 100 false)
-     (fr "ctrl down" true 100 false) (fr "= down" true 125 false) (fr "= up" true 125 false) (fr "ctrl up" true 125 false)
-     (fr "f5 down" true 125 true) (fr "f5 up" true 125 true)]))
+        sc (fn [hc pct off at]
+             (cond-> (assoc base :hc hc :scale pct :vw (quot (* 1280 100) pct) :vh (quot (* 800 100) pct) :focus 2
+                            :net (if off 1 3)
+                            :titles (assoc (:titles base) 2 (cps "Settings"))
+                            :stack [w1 {:id 2 :x 80 :y 80 :w 520 :h 360 :title (cps "Settings") :body (body hc pct off)}])
+               at (assoc :pointer at)))
+        fr (fn [label hc pct off at] [label (sc hc pct off at) hc off])]
+    ;; first boot: three clicks, a press and a release each, on the lines of the window's body (contrast at (200, 131),
+    ;; scale at (200, 151), network at (200, 171)); the second boot only presses Alt
+    [(fr "open" false 100 false nil)
+     (fr "click contrast" true 100 false [200 131]) (fr "release" true 100 false [200 131])
+     (fr "click scale" true 125 false [200 151])
+     ;; the release carries no position: the tablet is where it was in the 32768 units, which the 1024 x 640 viewport reads as (160, 120)
+     (fr "release" true 125 false [160 120])
+     (fr "click network" true 125 true [200 171]) (fr "release" true 125 true [200 171])]))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct

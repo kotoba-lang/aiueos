@@ -6,7 +6,7 @@ All notable changes to **aiueos** are documented here. The format follows
 ## [Unreleased]
 
 ### desktop: the settings window (ADR-0269)
-- Window 2 is the settings app (Contrast / Scale / Network), opened from launcher button 2 and rebuilt after every key; F5 flips the
+- Window 2 is the settings app (Contrast / Scale / Network), opened from launcher button 2 and rebuilt after every key; a press on its Contrast / Scale / Network lines changes that setting (F10, Ctrl+= and F5 still do); F5 flips the
   network setting (a flag the settings stage holds), which the status area follows (OFFLINE while it is off). The settings record keeps all three across a
   reboot. `guest-browser-settings` attaches a NIC and checks both boots' frames against the frame model.
 

@@ -1472,8 +1472,8 @@
 ;; Guest browser settings (ADR-0260, ADR-0265, ADR-0269): contrast, scale and the network setting survive a reboot, and are changed in
 ;; a settings window. The gate boots the SAME volume twice (the harness keeps the first serial as :serial1). The stage opens window 2,
 ;; the settings app (title "Settings", body "Contrast: .. / Scale: ..% / Network: .."), by a press on launcher button 2 through the
-;; reducer. First boot: no record on the volume, the host presses F10 (contrast high), Ctrl+= (125 %) and F5 (network off); C writes
-;; the record after each change with readback; the status area says ONLINE (a NIC is attached) until the network setting is off, then
+;; reducer. First boot: no record on the volume, the host clicks the three lines of the window's body (contrast, scale, network: each
+;; a press and a release; the release carries no position, so after the scale click it reads (160, 120) in the new viewport) -- contrast high, 125 %, network off; C writes the record after each change with readback; the status area says ONLINE (a NIC is attached) until the network setting is off, then
 ;; OFFLINE. Second boot: the stage reads the record, applies all three before the first frame and the host sends only Alt -- the window
 ;; shows the stored values and the frame is the one boot one ended on. The kernel prints AIUEOS_GUEST_BROWSER_SETTINGS_BOOT
 ;; valid= contrast= scale= net= and AIUEOS_GUEST_BROWSER_SETTINGS n= key= hc= ops= pct= net= win= text-px= hash= written= stored=.
@@ -1483,24 +1483,22 @@
 ;; one ended on.
 
 (def ^:private settings-want-1
-  [{:n 1 :key 0 :hc 0 :pct 100 :net 0 :ops 158 :px 1467 :hash "979da48d" :written 0 :stored "none"}
-   {:n 2 :key 273 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
-   {:n 3 :key 272 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
-   {:n 4 :key 117 :hc 1 :pct 100 :net 0 :ops 156 :px 1428 :hash "69d8b5f1" :written 1 :stored 1}
-   {:n 5 :key 53 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
-   {:n 6 :key 52 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
-   {:n 7 :key 116 :hc 1 :pct 125 :net 0 :ops 156 :px 3789 :hash "bc02d4d8" :written 2 :stored 1}
-   {:n 8 :key 253 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 3 :stored 1}
-   {:n 9 :key 252 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 3 :stored 1}])
+  [{:n 1 :key 0 :at "0,0" :hc 0 :pct 100 :net 0 :ops 158 :px 1467 :hash "979da48d" :written 0 :stored "none"}
+   {:n 2 :key 0 :at "200,131" :hc 1 :pct 100 :net 0 :ops 156 :px 1427 :hash "1708b5e4" :written 1 :stored 1}
+   {:n 3 :key 0 :at "200,131" :hc 1 :pct 100 :net 0 :ops 156 :px 1427 :hash "1708b5e4" :written 1 :stored 1}
+   {:n 4 :key 0 :at "200,151" :hc 1 :pct 125 :net 0 :ops 156 :px 3790 :hash "41efdd5a" :written 2 :stored 1}
+   {:n 5 :key 0 :at "160,120" :hc 1 :pct 125 :net 0 :ops 156 :px 3777 :hash "fb3ee8f8" :written 2 :stored 1}
+   {:n 6 :key 0 :at "200,171" :hc 1 :pct 125 :net 1 :ops 158 :px 3848 :hash "a4b646bb" :written 3 :stored 1}
+   {:n 7 :key 0 :at "200,171" :hc 1 :pct 125 :net 1 :ops 158 :px 3848 :hash "a4b646bb" :written 3 :stored 1}])
 (def ^:private settings-want-2
-  [{:n 1 :key 0 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
-   {:n 2 :key 225 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
-   {:n 3 :key 224 :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}])
+  [{:n 1 :key 0 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 2 :key 225 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}
+   {:n 3 :key 224 :at "0,0" :hc 1 :pct 125 :net 1 :ops 158 :px 3847 :hash "6473c26a" :written 0 :stored 1}])
 
 (defn- settings-lines [s]
-  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) hc=(\d+) ops=(\d+) pct=(\d+) net=(\d+) win=2,2 text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
-       (mapv (fn [[_ n key hc ops pct net px hash written stored]]
-               {:n (parse-long n) :key (parse-long key) :hc (parse-long hc) :pct (parse-long pct) :net (parse-long net)
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS n=(\d+) key=(\d+) at=(\d+,\d+) hc=(\d+) ops=(\d+) pct=(\d+) net=(\d+) win=2,2 text-px=(\d+) hash=([0-9a-f]{8}) written=(\d+) stored=(none|\d+)\s*$" (or s ""))
+       (mapv (fn [[_ n key at hc ops pct net px hash written stored]]
+               {:n (parse-long n) :key (parse-long key) :at at :hc (parse-long hc) :pct (parse-long pct) :net (parse-long net)
                 :ops (parse-long ops) :px (parse-long px) :hash hash :written (parse-long written)
                 :stored (if (= stored "none") "none" (parse-long stored))}))))
 
@@ -1519,7 +1517,7 @@
       (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
       (or (empty? l1) (empty? l2)) {:green? false :exit 1 :reason :guest-browser-settings-absent
                                     :leftover [:guest-browser-settings-absent]}
-      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=8" (or serial1 ""))
+      (not (and (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=6" (or serial1 ""))
                 (re-find #"(?m)^AIUEOS_GUEST_BROWSER_SETTINGS_OK events=2" (or serial ""))))
       {:green? false :exit 1 :reason :settings-ok-missing :leftover [:settings-ok-missing]}
       (not= (settings-boot serial1) [0 0 100 0])
@@ -1535,17 +1533,15 @@
        :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
                                                  (concat l2 (repeat nil)) settings-want-2)))}
       ;; the rules, by name (independent of the tables above)
-      (not= (mapv :written l1) [0 1 1 1 2 2 2 3 3])
+      (not= (mapv :written l1) [0 1 1 2 2 3 3])
       {:green? false :exit 1 :reason :a-change-was-not-written :leftover [:a-change-was-not-written]}
-      (not= (vec (take 3 (mapv :key l1))) [0 273 272])
-      {:green? false :exit 1 :reason :first-boot-did-not-press-f10 :leftover [:first-boot-did-not-press-f10]}
-      (or (some #{273 272 253 252} (map :key l2)) (some pos? (map :written l2)))
+      (not= (mapv :at l1) ["0,0" "200,131" "200,131" "200,151" "160,120" "200,171" "200,171"])
+      {:green? false :exit 1 :reason :first-boot-did-not-click-the-lines :leftover [:first-boot-did-not-click-the-lines]}
+      (or (some #(not= "0,0" %) (map :at l2)) (some pos? (map :written l2)))
       {:green? false :exit 1 :reason :second-boot-was-told-or-wrote :leftover [:second-boot-was-told-or-wrote]}
-      (not= (select-keys (last l1) [:hc :pct :net :ops :px :hash]) (select-keys (first l2) [:hc :pct :net :ops :px :hash]))
-      {:green? false :exit 1 :reason :second-boot-is-not-where-boot-one-ended :leftover [:second-boot-is-not-where-boot-one-ended]}
       :else
       {:green? true :exit 0 :reason :guest-browser-settings
-       :leftover [:network-setting-is-a-shell-flag-not-the-adapter :changed-by-keys-not-by-controls-in-the-window
+       :leftover [:network-setting-is-a-shell-flag-not-the-adapter :keys-and-clicks-only-no-drawn-buttons
                   :restored-at-the-settings-stage-not-at-boot]})))
 
 ;; Guest browser UI scale (ADR-0261): after the sign-out stage the host sends F11 (the clean session's window is

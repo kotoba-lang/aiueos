@@ -1518,8 +1518,8 @@
   "rows: guest-browser-settings-want rows; the OK line says how many key events (rows minus the opening frame)"
   [boot-line rows]
   (str boot-line
-       (apply str (map (fn [{:keys [n key hc ops pct net px hash written stored]}]
-                         (str "AIUEOS_GUEST_BROWSER_SETTINGS n=" n " key=" key " hc=" hc " ops=" ops " pct=" pct " net=" net
+       (apply str (map (fn [{:keys [n key at hc ops pct net px hash written stored]}]
+                         (str "AIUEOS_GUEST_BROWSER_SETTINGS n=" n " key=" key " at=" at " hc=" hc " ops=" ops " pct=" pct " net=" net
                               " win=2,2 text-px=" px " hash=" hash " written=" written " stored=" stored "\r\n"))
                        rows))
        "AIUEOS_GUEST_BROWSER_SETTINGS_OK events=" (dec (count rows)) "\r\n"))
@@ -1551,9 +1551,12 @@
     (testing "a second boot that did not read the network setting is red"
       (is (= :second-boot-did-not-read-the-settings
              (:reason (run {:serial (.replace boot2 "scale=125 net=1" "scale=125 net=0") :serial1 boot1})))))
-    (testing "a second boot told by the keys and not by the volume is red"
+    (testing "a second boot told by clicks and not by the volume is red"
       (is (= :second-boot-differs-from-model
-             (:reason (run {:serial (.replace boot2 "key=225" "key=253") :serial1 boot1})))))
+             (:reason (run {:serial (.replace boot2 "at=0,0" "at=200,171") :serial1 boot1})))))
+    (testing "a first boot whose clicks missed the lines is red"
+      (is (= :first-boot-differs-from-model
+             (:reason (run {:serial boot2 :serial1 (.replace boot1 "at=200,131" "at=200,100")})))))
     (testing "a first boot that already had a record proves nothing and is red"
       (is (= :first-boot-had-a-record
              (:reason (run {:serial boot2 :serial1 (.replace boot1 "valid=0 contrast=0 scale=100 net=0" "valid=1 contrast=1 scale=125 net=1")})))))

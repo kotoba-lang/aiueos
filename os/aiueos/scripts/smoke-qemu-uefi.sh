@@ -933,20 +933,31 @@ while time.time() < end:
                 recv_obj()
                 globals()["notify_sent"] = k + 1
                 log("notify event " + str(k + 1) + " sent")
-        # ADR-0260/0265/0269: two keys (second boot) or eight (first boot) after the notification stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
+        # ADR-0260/0265/0269: two keys (second boot) or six pointer events (first boot) after the notification stage. First boot (AIUEOS_SETTINGS_PHASE=1): F10 down and up,
         # the high-contrast choice goes on and is written to the volume. Second boot of the same volume
         # (PHASE=2): Alt down and up, which change nothing -- the frame is high-contrast because the
         # stored record says so.
-        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (8 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
+        if typing and b"AIUEOS_GUEST_BROWSER_SETTINGS_GO" in serial_now and globals().get("settings_sent", 0) < (6 if os.environ.get("AIUEOS_SETTINGS_PHASE", "1") == "1" else 2):
             k = globals().get("settings_sent", 0)
-            # the stage's first line (n=1) is the window opening by itself; each key waits for the line before it
+            # the stage's first line (n=1) is the window opening by itself; each event waits for the line before it
             if (b"AIUEOS_GUEST_BROWSER_SETTINGS n=%d " % (k + 1)) in serial_now:
                 time.sleep(0.5)
                 phase = os.environ.get("AIUEOS_SETTINGS_PHASE", "1")
-                # ADR-0269: first boot F10 (high contrast), Ctrl+= (125 %), F5 (network off), all kept on the volume
-                qc = ("f10", "f10", "ctrl", "equal", "equal", "ctrl", "f5", "f5")[k] if phase == "1" else "alt"
-                dn = (True, False, True, True, False, False, True, False)[k] if phase == "1" else k == 0
-                ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                if phase == "1":
+                    # ADR-0269: first boot, three clicks on the lines of the settings window's body, each a press and a release:
+                    # line 1 (contrast) at (200, 131), line 2 (scale) at (200, 151) -- both in the 1280 x 800 viewport -- and, after
+                    # the scale is 125 % (viewport 1024 x 640), line 3 (network) at (200, 171). Absolute values are the pixel times
+                    # 32768 over the viewport, rounded up so the guest's floor lands on the pixel.
+                    pts = ((5120, 5366), (5120, 6185), (6400, 8756))
+                    ax, ay = pts[k // 2]
+                    if k % 2 == 0:
+                        ev = [{"type": "abs", "data": {"axis": "x", "value": ax}},
+                              {"type": "abs", "data": {"axis": "y", "value": ay}},
+                              {"type": "btn", "data": {"down": True, "button": "left"}}]
+                    else:
+                        ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
+                else:
+                    ev = [{"type": "key", "data": {"down": k == 0, "key": {"type": "qcode", "data": "alt"}}}]
                 sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}})
                               + "\n").encode())
                 recv_obj()

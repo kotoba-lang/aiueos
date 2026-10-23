@@ -2644,7 +2644,8 @@ static int browser_notify_stage(uint32_t *surface, const uint8_t *font, uint64_t
 }
 
 /* ADR-0269: the settings window. Window 2 is the settings app: its title slot says "Settings" and its body is rebuilt from the
-   three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. F10 flips the contrast,
+   three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. A press on a line of its body flips that setting (contrast, scale 100 -> 125 -> 150 -> 100, network); F10, Ctrl+= / Ctrl+- and F5 do the same
+   from the keyboard. F10 flips the contrast,
    Ctrl+= and Ctrl+- the scale, F5 the network setting (a flag the stage holds, 1 = off); the status area shows OFFLINE while the network
    setting is off, whatever the adapter says. The stage opens the window by a press on launcher button 2 through the reducer, the
    same path a pointer press takes, and keeps all three settings on the volume. */
@@ -2702,21 +2703,46 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
   (void)settings_put(surface, 64, "Settings");
   settings_body(surface, surface[2039], aiueos_desktop_scale(), netoff);
   surface[1969] = settings_net_state(netoff);
-  want = valid ? 2U : 8U;
+  want = valid ? 2U : 6U;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_GO events=");
   serial_decimal(want);
   serial_string("\r\n");
   while (se < want && sidle < 60000U) {
-    uint32_t key = 0, px = 0, hash = 0;
+    uint32_t key = 0, px = 0, hash = 0, ax = 0, ay = 0, at_x = 0, at_y = 0, src;
     int64_t fo;
     if (shown == 0) {
       (void)kotoba_aiueos_browser_reduce(sp, 8192, 1, 156, 14);
       (void)kotoba_aiueos_browser_reduce(sp, 8192, 4, 0, 0);
+    } else if ((src = aiueos_tablet_next(256U, &ax, &ay)) != 0) {
+      /* a pointer event: the press on a line of the settings window's body is that line's control */
+      at_x = (uint32_t)(((uint64_t)ax * surface[3]) / 32768U);
+      at_y = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
+      surface[2046] = at_x + 1U;
+      surface[2047] = at_y;
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, src, at_x, at_y);
+      if (src == 1U && surface[1] >= 1U && surface[5 + 5 * (surface[1] - 1U)] == 2U) {
+        const uint32_t *wr = surface + 5 + 5 * (surface[1] - 1U);
+        if (at_x >= wr[1] + 14U && at_x + 14U < wr[1] + wr[3] && at_y >= wr[2] + 42U && at_y < wr[2] + 42U + 60U) {
+          uint32_t line = (at_y - (wr[2] + 42U)) / 20U;
+          if (line == 0) surface[2039] ^= 1U;
+          else if (line == 2) netoff ^= 1U;
+          else {
+            uint32_t pct = aiueos_desktop_scale() == 100U ? 125U : (aiueos_desktop_scale() == 125U ? 150U : 100U);
+            if (aiueos_desktop_set_scale(pct)) {
+              surface[3] = physw * 100U / pct;
+              surface[4] = physh * 100U / pct;
+              (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+            }
+          }
+        }
+      }
+      se++;
+      sidle = 0;
     } else {
       int64_t kr;
-      key = aiueos_keyboard_next_key(1024U);
+      key = aiueos_keyboard_next_key(256U);
       if (!key) { sidle++; continue; }
       sidle = 0;
       if ((key >> 2) == 88U) continue;
@@ -2752,6 +2778,10 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     serial_decimal(shown);
     serial_string(" key=");
     serial_decimal(key);
+    serial_string(" at=");
+    serial_decimal(at_x);
+    serial_string(",");
+    serial_decimal(at_y);
     serial_string(" hc=");
     serial_decimal(surface[2039]);
     serial_string(" ops=");
