@@ -5,6 +5,13 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: minimize and restore from the dock (ADR-0254)
+- A minimize control in the titlebar (left of maximize) marks the window in the minimized register
+  (surface word 31 bits 4..7): it is neither drawn nor hit, the focus goes to the topmost visible window,
+  and a press on its dock icon restores it raised and focused. Decided by Kotoba (browser-reduce,
+  browser-frame2, browser-ime for Alt+Tab). `guest-browser-minimize` gates it on QEMU; ladder 32 floors,
+  30 gated. Every earlier frame's op count grew by the control's two rects (ink census unchanged).
+
 ### JUN-34: a blank block volume formats itself at first boot (OCI needs no helper VM)
 - The object-store probe rejected any second virtio-blk disk whose sector 0
   was not a valid AIUEFS1 superblock, so an OCI block volume -- which arrives

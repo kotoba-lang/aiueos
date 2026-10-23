@@ -152,3 +152,7 @@ third. `:cursor-shape` (ADR-0252) is the first floor added from that list; the
 missing items are named in the floors file. Until a reference is fixed
 (JUN-90), "100%" means every floor in the file, and the file keeps growing.
 
+### 2026-10-23, `:minimize`
+
+`:minimize` (ADR-0254) is the second floor added from the scorecard list: a window can be minimized
+and restored from the dock. The ladder is 32 floors, 30 gated; `:browser-component` and `:p5` stay open.

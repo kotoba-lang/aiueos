@@ -265,7 +265,7 @@
   every registered app k a 36 x 36 tile at x + 8 + 44(k-1), y + 6 in the app's
   colour with the app's initial (M I Y A) as a white glyph, centred in the tile
   and 10 px down."
-  [{:keys [vw vh apps]}]
+  [{:keys [vw vh apps minimized hc]}]
   (when (pos? (or apps 0))
     (let [left (quot (- vw 184) 2) top (- vh 52)]
       (into [[:rect left top 184 48 0xe6e6e6]]
@@ -273,8 +273,12 @@
                       (when (pos? (bit-and apps (bit-shift-left 1 (dec k))))
                         (let [x (+ left 8 (* 44 (dec k)))
                               [gi gw] (glyph ({1 77 2 73 3 89 4 65} k))]
-                          [[:rect x (+ top 6) 36 36 ({1 3900159 2 3978018 3 10123472 4 14651230} k)]
-                           [:glyph (+ x (quot (- 36 gw) 2)) (+ top 16) gi gw 0xffffff]])))
+                          (concat
+                           [[:rect x (+ top 6) 36 36 ({1 3900159 2 3978018 3 10123472 4 14651230} k)]
+                            [:glyph (+ x (quot (- 36 gw) 2)) (+ top 16) gi gw 0xffffff]]
+                           ;; ADR-0254: a minimized app's icon carries a bar 12 x 3 under it
+                           (when (contains? (set minimized) k)
+                             [[:rect (+ x 12) (+ top 43) 12 3 (if hc 0x404040 0x595959)]])))))
                     [1 2 3 4])))))
 
 (defn- hc-ink
@@ -294,7 +298,12 @@
   "Ops for a scene: {:vw :vh :focus :stack [{:id :x :y :w :h :title :body}]
   :composition [cp ...] :apps register :titles {k [cp ...]} :pointer [x y]
   :selection [id k]} (stack bottom first)."
-  [{:keys [vw vh focus stack composition apps selection hc] :as scene}]
+  [{:keys [vw vh focus composition apps selection hc minimized] :as scene0}]
+  ;; ADR-0254: a minimized window (its id in :minimized) is neither drawn nor hit; the minimize
+  ;; control shows on a window at least 200 wide while two or more windows are visible.
+  (let [stack (vec (remove #(contains? (set minimized) (:id %)) (:stack scene0)))
+        scene (assoc scene0 :stack stack)
+        nvis (count stack)]
   (hc-ink hc (into (into (into [[:rect 0 0 vw vh (if hc 0xffffff 0xf1f1f2)]] (launcher scene))
         (mapcat
          (fn [{:keys [id x y w h title body scroll]}]
@@ -307,7 +316,8 @@
                  ;; before it.
                  chrome? (and (pos? (or apps 0)) (>= w 40))
                  t (lay-line {:x (+ x 8) :y (+ y 6) :left (+ x 8)
-                              :right (- (+ x w) (cond (and chrome? (>= w 160)) 48 chrome? 28 :else 8))
+                              :right (- (+ x w) (+ (cond (and chrome? (>= w 160)) 48 chrome? 28 :else 8)
+                                                    (if (and chrome? (>= w 200) (>= nvis 2)) 20 0)))
                               :bottom (+ y 28) :wrap? false} (take 32 title))
                  [xi xw] (glyph 215)
                  close (when chrome?
@@ -366,9 +376,16 @@
                          [[:rect cx (+ y 6) 16 16
                            (ctl-colour hc (:down scene) (hot? (:pointer scene) cx (+ y 6) 16 16))]
                           [:glyph (+ cx (quot (- 16 gw) 2)) (+ y 6) gi gw (if hc 0x404040 0x595959)]]))
+                     ;; ADR-0254: the minimize control, left of the maximize control: a 16 x 16
+                     ;; face and a bar 8 x 2 at (x + w - 60, y + 16) in the icon colour
+                     (when (and chrome? (>= w 200) (>= nvis 2))
+                       (let [cx (- (+ x w) 64)]
+                         [[:rect cx (+ y 6) 16 16
+                           (ctl-colour hc (:down scene) (hot? (:pointer scene) cx (+ y 6) 16 16))]
+                          [:rect (+ cx 4) (+ y 16) 8 2 (if hc 0x404040 0x595959)]]))
                      (:ops b) (:ops c) caret))))
         stack)
-        (concat (dock scene) (pointer-sprite scene)))))
+        (concat (dock scene) (pointer-sprite scene))))))
 
 ;; --- paint and census -----------------------------------------------------------
 
@@ -684,7 +701,10 @@
         s3 (at base [380 40])]
     (let [c (fn [scene] (at scene [476 146]))
           s4 (c (assoc base :stack (stack-with maxed)))
-          s5 (c base)]
+          s5 (c base)
+          mn (assoc base :minimized #{1} :focus (:id (last (butlast others))))
+          ;; the press at (380, 142) raises window 4 over the minimized window 1
+          mn2 (assoc mn :stack [(nth others 0) w1 (nth others 1)])]
       [["press" s0] ["release" s0] ["press-2-max" s1] ["release" s1]
        ["press" s2] ["release" s2] ["press-2-restore" s3] ["release" s3]
        ;; ADR-0251: a press on the maximize control at (476, 146) maximizes, F11 on
@@ -695,7 +715,14 @@
        ;; is the resize cursor, and back to (380, 142), where it is the arrow
        ["move-to-handle" (at base [500 320])] ["move-away" (at base [380 142])]
        ;; ADR-0253: the button goes down on launcher button 1 at (54, 14) and up again
-       ["press-launcher" (assoc (at base [54 14]) :down true)] ["release-launcher" (at base [54 14])]])))
+       ["press-launcher" (assoc (at base [54 14]) :down true)] ["release-launcher" (at base [54 14])]
+       ;; ADR-0254: a press on window 1's minimize control at (456, 146) minimizes it (focus to the
+       ;; window now on top, 4); a press at (380, 142), where window 1 was, lands on window 4
+       ;; (the minimized window is not hit); a press on app 1's dock icon at (574, 772) restores
+       ;; it, raised and focused
+       ["min-press" (assoc (at mn [456 146]) :down true)] ["release" (at mn [456 146])]
+       ["press-through" (assoc (at mn2 [380 142]) :down true)] ["release" (at mn2 [380 142])]
+       ["restore-press" (assoc (at base [574 772]) :down true)] ["release" (at base [574 772])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
@@ -964,13 +991,20 @@
   (doseq [[i [ev scene]] (map-indexed vector max-frames)
           :let [ops (frame scene)
                 c (census ops)
-                w (last (:stack scene))
+                w (first (filter #(= 1 (:id %)) (:stack scene)))
                 [px py] (:pointer scene)]]
     (println (str "max-frame n=" (+ 19 i) " " ev " at=" px "," py
                   " windows=" (count (:stack scene)) " focus=" (:focus scene)
                   " stack=" (apply str (map :id (:stack scene)))
                   " rect=" (:x w) "," (:y w) "," (:w w) "," (:h w)
                   " ops=" (:ops c) " text-px=" (:text-px c) " hash=" (:hash c))))
+  (doseq [[i [ev scene]] (map-indexed vector max-frames)
+          :when (>= i 16)
+          :let [ops (frame scene)
+                cnt (fn [a b col] (count (filter (fn [[k _ _ w h c]] (and (= k :rect) (= w a) (= h b) (= c col))) ops)))]]
+    (println (str "min-frame n=" (+ 19 i) " " ev
+                  " reg=" (reduce + (map #(bit-shift-left 1 (dec %)) (:minimized scene)))
+                  " minctl=" (cnt 8 2 0x595959) " dockbar=" (cnt 12 3 0x595959))))
   (doseq [[i [ev scene]] (map-indexed vector max-frames)
           :when (>= i 14)
           :let [ops (frame scene)
