@@ -23,7 +23,8 @@
    "guest-browser-title-active" "guest-browser-hover"
    "guest-browser-high-contrast" "guest-browser-focus-ring"
    "guest-browser-keyboard-activate"
-   "guest-browser-window-maximize" "guest-browser-maximize-control"])
+   "guest-browser-window-maximize" "guest-browser-maximize-control"
+   "guest-browser-cursor-shape"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1017,7 +1018,9 @@
      (e 27 1 "476,146" 1 "0,28,1280,720" 185 1699 "2eebb0d8")
      (e 28 4 "476,146" 0 "0,28,1280,720" 185 1699 "2eebb0d8")
      (e 29 0 "476,146" 1 "272,132,240,200" 186 2330 "7c707d0d")
-     (e 30 0 "476,146" "none" "272,132,240,200" 186 2330 "7c707d0d")]))
+     (e 30 0 "476,146" "none" "272,132,240,200" 186 2330 "7c707d0d")
+     (e 31 3 "500,320" 0 "272,132,240,200" 179 2343 "c2fbd1ab")
+     (e 32 3 "380,142" 0 "272,132,240,200" 186 2330 "e5cb1929")]))
 
 (defn guest-browser-window-maximize-result
   [{:keys [serial qemu-unmeasured?]}]
@@ -1071,7 +1074,7 @@
                          :reduce (if (= red "none") "none" (parse-long red))
                          :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
                          :ops (parse-long ops) :px (parse-long px) :hash hash}))
-                 (filter #(>= (:n %) 27))
+                 (filter #(<= 27 (:n %) 30))
                  vec)
         window-max (guest-browser-window-maximize-result opts)]
     (cond
@@ -1094,6 +1097,50 @@
       :else
       {:green? true :exit 0 :reason :guest-browser-maximize-control
        :leftover [:icon-in-op-list-not-pixels :f11-not-super-up :launcher-branch-only]})))
+
+;; Guest browser cursor shape (ADR-0252): after F11 the pointer moves onto window 1's
+;; resize handle at (500, 320) and back to (380, 142). Over the handle -- the last 16 px
+;; of both axes of the topmost window under the pointer, as browser-reduce takes it -- the
+;; pointer is a resize cursor (a diagonal with an L at each end, in the ink) instead of the
+;; arrow; Kotoba (browser-frame2) decides. The kernel prints AIUEOS_GUEST_BROWSER_MAX for
+;; both moves (src=3). Green needs the double-press and control gates green on the same
+;; serial, the two lines equal to browser-frame-model.cljk's ("max-frame" 31, 32), and the
+;; frame back at (380, 142) equal in ops, ink pixels and hash to frame 19, which has the
+;; same window state and the same pointer position: the arrow comes back exactly.
+
+(defn guest-browser-cursor-shape-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [s (or serial "")
+        want (subvec max-want 12 14)
+        lines (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_MAX n=(\d+) src=(\d+) at=(\d+,\d+) reduce=(none|\d+) windows=(\d+) focus=(\d+) stack=(\d*) rect=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" s)
+        parse (fn [[_ n src at red windows focus stack rect ops px hash]]
+                {:n (parse-long n) :src (parse-long src) :at at
+                 :reduce (if (= red "none") "none" (parse-long red))
+                 :windows (parse-long windows) :focus (parse-long focus) :stack stack :rect rect
+                 :ops (parse-long ops) :px (parse-long px) :hash hash})
+        all (mapv parse lines)
+        got (filterv #(>= (:n %) 31) all)
+        f19 (first (filter #(= 19 (:n %)) all))
+        ctl (guest-browser-maximize-control-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? ctl))
+      (assoc ctl :reason :no-maximize-control :leftover (into [:no-maximize-control] (:leftover ctl)))
+      (empty? got) {:green? false :exit 1 :reason :guest-browser-cursor-shape-absent
+                    :leftover [:guest-browser-cursor-shape-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_CURSOR_SHAPE_OK events=2 handle=resize away=arrow" s))
+      {:green? false :exit 1 :reason :cursor-shape-ok-missing :leftover [:cursor-shape-ok-missing]}
+      (not= got want)
+      {:green? false :exit 1 :reason :cursor-shape-differs-from-model :leftover [:cursor-shape-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat got (repeat nil)) want)))}
+      (not= (select-keys (second got) [:ops :px :hash]) (select-keys f19 [:ops :px :hash]))
+      {:green? false :exit 1 :reason :arrow-did-not-come-back :leftover [:arrow-did-not-come-back]}
+      (= (select-keys (first got) [:ops :px :hash]) (select-keys (second got) [:ops :px :hash]))
+      {:green? false :exit 1 :reason :cursor-did-not-change :leftover [:cursor-did-not-change]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-cursor-shape
+       :leftover [:resize-handle-only :one-shape-no-hotspot-fine-tuning :cursor-in-op-list-not-pixels]})))
 
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
@@ -1523,6 +1570,9 @@
     ;; ADR-0251: the control press and F11 come after the double presses.
     "guest-browser-maximize-control" {"AIUEOS_GUEST_BROWSER" "1"
                                       "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0252: the two pointer moves come after F11.
+    "guest-browser-cursor-shape" {"AIUEOS_GUEST_BROWSER" "1"
+                                  "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -1562,6 +1612,7 @@
     "guest-browser-hover" (guest-browser-hover-result opts)
     "guest-browser-window-maximize" (guest-browser-window-maximize-result opts)
     "guest-browser-maximize-control" (guest-browser-maximize-control-result opts)
+    "guest-browser-cursor-shape" (guest-browser-cursor-shape-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -1602,6 +1653,7 @@
     "guest-browser-hover" "AIUEOS_GUEST_BROWSER_HOT"
     "guest-browser-window-maximize" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-maximize-control" "AIUEOS_GUEST_BROWSER_MAX"
+    "guest-browser-cursor-shape" "AIUEOS_GUEST_BROWSER_MAX"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -1642,6 +1694,7 @@
     "guest-browser-hover" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HOVER_OK"
     "guest-browser-window-maximize" "AIUEOS_COMPOSITOR_GUEST_BROWSER_WINDOW_MAXIMIZE_OK"
     "guest-browser-maximize-control" "AIUEOS_COMPOSITOR_GUEST_BROWSER_MAXIMIZE_CONTROL_OK"
+    "guest-browser-cursor-shape" "AIUEOS_COMPOSITOR_GUEST_BROWSER_CURSOR_SHAPE_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

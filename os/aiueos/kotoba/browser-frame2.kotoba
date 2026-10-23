@@ -613,9 +613,55 @@
       (do (arrow-row s x y r (sw s 3))
           (arrow s x y (+ r 1))))))
 
+;; ADR 0252: over the resize handle of the topmost window under it (the last 16 px of
+;; both axes, inclusive -- browser-reduce's in-handle on browser-reduce's topmost hit)
+;; the pointer is a resize cursor: a 2 x 2 diagonal from (x - 5, y - 5) to (x + 4,
+;; y + 4) with an L at each end, in the ink, instead of the arrow. It needs 6 px of
+;; room on every side; the arrow is kept where there is none.
+(defn top-at [s k px py]
+  (if (< k 0) -1
+    (let [b (+ 5 (* k 5))
+          x (sw s (+ b 1))
+          y (sw s (+ b 2))
+          w (sw s (+ b 3))
+          h (sw s (+ b 4))]
+      (if (< px x) (top-at s (- k 1) px py)
+        (if (> px (+ x w)) (top-at s (- k 1) px py)
+          (if (< py y) (top-at s (- k 1) px py)
+            (if (> py (+ y h)) (top-at s (- k 1) px py) k)))))))
+
+(defn on-handle [s px py]
+  (let [k (top-at s (- (sw s 1) 1) px py)]
+    (if (< k 0) 0
+      (let [b (+ 5 (* k 5))]
+        (if (< px (- (+ (sw s (+ b 1)) (sw s (+ b 3))) 16)) 0
+          (if (< py (- (+ (sw s (+ b 2)) (sw s (+ b 4))) 16)) 0 1))))))
+
+(defn cursor-resize? [s px py]
+  (if (< px 6) 0
+    (if (< py 6) 0
+      (if (>= (+ px 6) (sw s 3)) 0
+        (if (>= (+ py 6) (sw s 4)) 0
+          (on-handle s px py))))))
+
+(defn diag [s x y i]
+  (if (> i 9) 0
+    (do (put-rect s (+ (- x 5) i) (+ (- y 5) i) 2 2)
+        (diag s x y (+ i 1)))))
+
+(defn resize-cursor [s x y]
+  (do (sput s 422 (ink s))
+      (diag s x y 0)
+      (put-rect s (- x 6) (- y 6) 5 1)
+      (put-rect s (- x 6) (- y 6) 1 5)
+      (put-rect s (+ x 1) (+ y 5) 5 1)
+      (put-rect s (+ x 5) (+ y 1) 1 5)))
+
 (defn pointer [s]
   (if (= (sw s 2046) 0) 0
-    (arrow s (- (sw s 2046) 1) (sw s 2047) 0)))
+    (if (= (cursor-resize? s (- (sw s 2046) 1) (sw s 2047)) 1)
+      (resize-cursor s (- (sw s 2046) 1) (sw s 2047))
+      (arrow s (- (sw s 2046) 1) (sw s 2047) 0))))
 
 (defn pointer-ok [s vw vh]
   (if (= (sw s 2046) 0) 1

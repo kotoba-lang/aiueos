@@ -142,3 +142,13 @@ shortcut are `:maximize-control`, open. The ladder is 29 floors.
 on a real boot; the two open floors are `:browser-component` (blocked by amu,
 ADR 0373) and `:p5` (a real machine).
 
+### 2026-10-23, after 27/29
+
+The ladder is a list the work added to, not a fixed measure of "done": its UIUX
+floors were chosen by what the kernel desktop lacked when they were chosen. A
+scorecard of about forty desktop-shell behaviours (windows, input, feedback,
+visual design, accessibility, system UI, hardware) puts the gated work near a
+third. `:cursor-shape` (ADR-0252) is the first floor added from that list; the
+missing items are named in the floors file. Until a reference is fixed
+(JUN-90), "100%" means every floor in the file, and the file keeps growing.
+
