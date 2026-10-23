@@ -49,12 +49,14 @@ run_case() {
   # unmodified boot as having printed the wrong address, while the boot had in
   # fact printed exactly the right one.
   echo "--- dhcp case $mode ($label) ---" >&2
+  # AIUEOS_SMOKE_FINAL_PROBE=1 arms the end-of-boot probe that the persistent desktop loop disarmed in the default build (aiueos#436,
+  # kernel/main.c): the terminal evidence smoke-qemu-uefi.sh's normal path asserts. Without it this suite stalls at the loop (JUN-363).
   # A tampered boot still has to reach the DHCP stage, so the rest of the suite
   # runs unchanged and its exit status is still checked by smoke-qemu-uefi.sh.
   if [ "$mode" = 0 ]; then
-    AIUEOS_OUT="$case_out" AIUEOS_TEST_NET=1 "$aiueos/scripts/smoke-qemu-uefi.sh" >/dev/null
+    AIUEOS_OUT="$case_out" AIUEOS_TEST_NET=1 AIUEOS_SMOKE_FINAL_PROBE=1 "$aiueos/scripts/smoke-qemu-uefi.sh" >/dev/null
   else
-    AIUEOS_OUT="$case_out" AIUEOS_TEST_NET=1 AIUEOS_DHCP_TAMPER="$mode" \
+    AIUEOS_OUT="$case_out" AIUEOS_TEST_NET=1 AIUEOS_SMOKE_FINAL_PROBE=1 AIUEOS_DHCP_TAMPER="$mode" \
       "$aiueos/scripts/smoke-qemu-uefi.sh" >/dev/null
   fi
   serial="$case_out/kernel-serial.log"

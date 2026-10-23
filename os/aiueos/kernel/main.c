@@ -2650,6 +2650,7 @@ void *memset(void *d, int c, __SIZE_TYPE__ n) { volatile unsigned char *p = d; w
 void *memcpy(void *d, const void *s, __SIZE_TYPE__ n) { volatile unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
 #endif
 
+#ifdef AIUEOS_SIZE_BUILD
 /* ADR-0270: a device-bound passkey for the lock screen. The device key (an ECDSA P-256 scalar from the virtio-rng) is made the first
    time it is needed and kept in sector 1035 of this machine's volume with its public point; a passkey made on another device is a
    different key and does not verify against the registered public point. The ceremony is WebAuthn-shaped, with the key press as the
@@ -2833,6 +2834,16 @@ static int browser_passkey_stage(uint32_t *surface, const uint8_t *font, uint64_
   return 0;
 }
 
+#else
+/* ADR-0270: the passkey needs the ECDSA sign and public objects, which only the guest-browser build links (and has room for); every
+   other build skips the stage. */
+static int browser_passkey_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
+                                 uint64_t dict, uint64_t dict_length) {
+  (void)surface; (void)font; (void)font_length; (void)dict; (void)dict_length;
+  return 1;
+}
+#endif
+
 /* ADR-0269: the settings window. Window 2 is the settings app: its title slot says "Settings" and its body is rebuilt from the
    three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. A press on a line of its body flips that setting (contrast, scale 100 -> 125 -> 150 -> 100, network); F10, Ctrl+= / Ctrl+- and F5 do the same
    from the keyboard. F10 flips the contrast,
@@ -3006,6 +3017,7 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
   return 0;
 }
 
+#ifdef AIUEOS_SIZE_BUILD
 /* ADR-0271: backup and restore of the user's records. After the settings stage both records exist: the settings record (sector 1034)
    and the passkey record (1035). The stage copies each to its backup sector (1036, 1037) with readback, wipes the originals and checks
    that the machine now sees no settings and no passkey, restores the copies, and checks that the sectors read back byte for byte
@@ -3091,6 +3103,10 @@ static int browser_backup_stage(void) {
   serial_string("AIUEOS_GUEST_BROWSER_BACKUP leftover=restore-differs\r\n");
   return 0;
 }
+
+#else
+static int browser_backup_stage(void) { return 0; }
+#endif
 
 #ifdef AIUEOS_QWEN38_MODEL_HANDOFF
 static void aiueos_qwen35_progress(uint32_t completed_layers,
