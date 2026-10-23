@@ -156,8 +156,8 @@
    :procedure "Minimize a window; open it again from the window list."
    :expected "The window disappears and returns with its state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-browser-minimize" "ADR-0254"]
    }
   {:id :C6 :category :shell :title "Snap windows to halves of the screen"
    :weight 0 :required false :required-level :device

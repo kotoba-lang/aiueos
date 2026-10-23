@@ -79,6 +79,22 @@
 ;;                 With the whole surface a close zeroes the closed window's
 ;;                 offset: browser.surface close-window drops the window and
 ;;                 its scroll with it, and a later launch opens a new one at 0.
+;;   minimize (ADR-0254) word 31 bits 4..7 are the minimized register, bit 3 + id for
+;;                 window id 1..4 (bits 0..3 are still the app register; the
+;;                 register may be up to 255, -7 above). A minimized window
+;;                 stays in the stack but is not hit: a press goes to the window
+;;                 under it. A press inside the minimize control of a window
+;;                 (x + w - 64 .. x + w - 48, y + 6 .. y + 22, inclusive, window
+;;                 at least 200 wide, two or more windows visible) raises the
+;;                 window, sets its bit and focuses the topmost window that is
+;;                 not minimized (the answer). A press inside the dock icon of
+;;                 a minimized app (x (vw - 184) / 2 + 8 + 44 (k - 1) .. + 36,
+;;                 y vh - 46 .. + 36, inclusive) clears the bit and raises and
+;;                 focuses the window; the dock is above every window, so it is
+;;                 tried first. A launch of a minimized app does the same, and a
+;;                 close that would leave no window visible is refused (-8).
+;;                 Named differences: no window list, no animation, no
+;;                 keyboard minimize `:dock-restore-only`.
 ;; Not mirrored: text editing, IME. Named leftover `:no-text-edit`.
 ;; A move whose origin would be negative is refused (-6) and changes nothing:
 ;; the u32 surface has no negative coordinate; browser.surface would store it.
@@ -136,16 +152,37 @@
     (if (= (w-at st (+ 5 (* k 5))) id) 1
       (has-id st n (+ k 1) id))))
 
+;; ADR-0254: a window can be minimized. Word 31 bits 4..7 are the minimized register, bit
+;; 3 + id for window id 1..4 (the app register is bits 0..3); a minimized window stays in the
+;; stack, is neither drawn nor hit, and is restored from its dock icon or its launcher button.
+(defn min-bit [id]
+  (if (= id 1) 16 (if (= id 2) 32 (if (= id 3) 64 (if (= id 4) 128 0)))))
+
+(defn is-min [st id]
+  (if (= (bit-and (w-at st 31) (min-bit id)) 0) 0 1))
+
+(defn vis-count [st n k]
+  (if (>= k n) 0
+    (+ (if (= (is-min st (w-at st (+ 5 (* k 5)))) 1) 0 1)
+       (vis-count st n (+ k 1)))))
+
+;; The id of the topmost window that is not minimized at or below stack index k, or 0.
+(defn top-visible [st k]
+  (if (< k 0) 0
+    (let [id (w-at st (+ 5 (* k 5)))]
+      (if (= (is-min st id) 1) (top-visible st (- k 1)) id))))
+
 (defn inside [st k px py]
   (let [b (+ 5 (* k 5))
         x (w-at st (+ b 1))
         y (w-at st (+ b 2))
         w (w-at st (+ b 3))
         h (w-at st (+ b 4))]
+    (if (= (is-min st (w-at st b)) 1) 0
     (if (< px x) 0
       (if (> px (+ x w)) 0
         (if (< py y) 0
-          (if (> py (+ y h)) 0 1))))))
+          (if (> py (+ y h)) 0 1)))))))
 
 ;; Topmost first. Returns the stack index + 1, or 0.
 (defn hit [st k px py]
@@ -341,14 +378,14 @@
 ;; browser.surface close-window: remove, and if it had the focus, focus the
 ;; window now on top.
 (defn close [st sb n k]
-  (if (= n 1) -8
+  (if (< (vis-count st n 0) 2) -8
     (let [id (w-at st (+ 5 (* k 5)))]
       (do (drop-scroll st sb id)
           (shift-down st k n)
           (clear-rec st (- n 1))
           (w-put st 1 (- n 1))
           (if (= (w-at st 2) id)
-            (w-put st 2 (w-at st (+ 5 (* (- n 2) 5))))
+            (w-put st 2 (top-visible st (- n 2)))
             0)
           (release-all st)
           (w-at st 2)))))
@@ -374,6 +411,7 @@
 (defn launch [st n app]
   (if (= (has-id st n 0 app) 1)
     (do (release-all st)
+        (w-put st 31 (- (w-at st 31) (* (is-min st app) (min-bit app))))
         (raise st (index-of st n 0 app) n))
     (if (> 600 (w-at st 3)) -9
       (if (> 440 (w-at st 4)) -9
@@ -400,6 +438,45 @@
           (if (< py (+ y 6)) 0
             (if (> py (+ y 22)) 0 1)))))))
 
+;; ADR-0254: the minimize control of stack index k: x + w - 64 .. x + w - 48, y + 6 ..
+;; y + 22, inclusive, on a window at least 200 wide when another window is visible.
+(defn in-min [st k px py]
+  (let [b (+ 5 (* k 5))
+        r (+ (w-at st (+ b 1)) (w-at st (+ b 3)))
+        y (w-at st (+ b 2))]
+    (if (< (w-at st (+ b 3)) 200) 0
+      (if (< (vis-count st (w-at st 1) 0) 2) 0
+        (if (< px (- r 64)) 0
+          (if (> px (- r 48)) 0
+            (if (< py (+ y 6)) 0
+              (if (> py (+ y 22)) 0 1))))))))
+
+;; Minimize the window raised to the top: its bit goes up, the focus to the topmost visible.
+(defn minimize [st n]
+  (let [id (w-at st (+ 5 (* (- n 1) 5)))]
+    (do (w-put st 31 (+ (w-at st 31) (min-bit id)))
+        (release-all st)
+        (w-put st 2 (top-visible st (- n 1)))
+        (w-at st 2))))
+
+;; The dock icon of a minimized app under (px, py), or 0: x (vw - 184) / 2 + 8 + 44 (k - 1) ..
+;; + 36, y vh - 46 .. + 36, inclusive.
+(defn dock-at [st k px py]
+  (if (> k 4) 0
+    (let [x (+ (quot (- (w-at st 3) 184) 2) 8 (* 44 (- k 1)))
+          y (- (w-at st 4) 46)]
+      (if (= (bit-and (w-at st 31) (app-bit k)) 0) (dock-at st (+ k 1) px py)
+        (if (= (is-min st k) 0) (dock-at st (+ k 1) px py)
+          (if (< px x) (dock-at st (+ k 1) px py)
+            (if (> px (+ x 36)) (dock-at st (+ k 1) px py)
+              (if (< py y) (dock-at st (+ k 1) px py)
+                (if (> py (+ y 36)) (dock-at st (+ k 1) px py) k)))))))))
+
+(defn restore [st n id]
+  (do (release-all st)
+      (w-put st 31 (- (w-at st 31) (min-bit id)))
+      (raise st (index-of st n 0 id) n)))
+
 (defn title-press [st sb k px py]
   (if (not (= sb 8192)) 0
     (if (= (in-title st k px py) 0) 0
@@ -415,12 +492,16 @@
 
 (defn press [st sb k1 px py]
   (let [n (w-at st 1)]
+    (if (> (dock-at st 1 px py) 0) (restore st n (dock-at st 1 px py))
     (if (= k1 0) (press-miss st n px py)
       (if (= (w-at st 31) 0)
         (do (capture st (- k1 1) px py)
             (raise st (- k1 1) n))
         (if (= (in-close st (- k1 1) px py) 1)
           (close st sb n (- k1 1))
+          (if (= (in-min st (- k1 1) px py) 1)
+            (do (raise st (- k1 1) n)
+                (minimize st n))
           (if (= (max-press st sb (- k1 1) px py) 1)
             (do (raise st (- k1 1) n)
                 (toggle-max st (- n 1)))
@@ -432,7 +513,7 @@
                   (capture st (- k1 1) px py)
                   (raise st (- k1 1) n)))
             (do (capture st (- k1 1) px py)
-                (raise st (- k1 1) n)))))))))
+                (raise st (- k1 1) n)))))))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]
@@ -481,7 +562,7 @@
             (if (> n 4) -2
               (if (= (has-id st n 0 focus) 0) -3
                 (if (= (capture-ok st n) 0) -4
-                  (if (> (w-at st 31) 15) -7
+                  (if (> (w-at st 31) 255) -7
                   (if (= kind 1) (press st sb (hit st (- n 1) a b) a b)
                     (if (= kind 2) focus
                       (if (= kind 3) (drag st n a b)

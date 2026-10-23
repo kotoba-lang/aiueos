@@ -170,5 +170,8 @@
   {:id :pressed-state :gate "guest-browser-pressed-state" :adr "0253"
    :goal "a hot control is drawn pressed while the pointer's button is down over it and hot again after, decided by Kotoba from the button state C keeps in surface word 2033"
    :why "a press gave no sign until it took effect (scorecard row C10)"}
+  {:id :minimize :gate "guest-browser-minimize" :adr "0254"
+   :goal "a window can be minimized from a control in its titlebar and restored from its dock icon: a minimized window is not drawn and not hit, the focus goes to the topmost window that is not minimized, and the restore raises and focuses it, all decided by Kotoba"
+   :why "a window could only be closed or covered; scorecard row C5"}
   {:id :p5 :gate nil :needs-a-human "a real machine with an aiueos image; QEMU is not P5"
    :goal "the same desktop on physical hardware"}]}

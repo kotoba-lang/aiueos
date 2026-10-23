@@ -670,6 +670,15 @@
 (defn shift-code [code]
   (if (= code 42) 1 (if (= code 54) 1 0)))
 
+;; ADR-0254: Alt+Tab raises the bottom-most window that is not minimized (word 31 bits 4..7).
+(defn mbit [id]
+  (if (= id 1) 16 (if (= id 2) 32 (if (= id 3) 64 (if (= id 4) 128 0))))) 
+
+(defn first-vis [s n k]
+  (if (>= k n) (w s 5)
+    (let [id (w s (+ 5 (* k 5)))]
+      (if (= (bit-and (w s 31) (mbit id)) 0) id (first-vis s n (+ k 1))))))
+
 (defn wm-key [s code]
   (if (= code 15) (if (= (w s 431) 1) 1 0) 0))
 
@@ -769,7 +778,7 @@
       (if (= (quot ev 4) 64) (ring-move s)
       (if (= (quot ev 4) 87) (if (= (max-key-ok s) 1) (max-key-press s) 0)
       (if (= (kbd-act s (quot ev 4)) 1) (kbd-answer s (quot ev 4))
-      (if (= (wm-key s (quot ev 4)) 1) (+ 256 (w s 5))
+      (if (= (wm-key s (quot ev 4)) 1) (+ 256 (first-vis s (w s 1) 0))
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]

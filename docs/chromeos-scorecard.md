@@ -25,7 +25,7 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 (P5) is `:spec`, and the owner has not yet confirmed the reference machine (below). The checker refuses a `:pass` while it is
 unconfirmed.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 40% of the required weight (a row whose behaviour is gated
+Beside the score, and never added to it, the **QEMU-level progress** is 41% of the required weight (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
 security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
 
@@ -67,7 +67,7 @@ weights that do not sum to 100.
 | C2 | Move, resize, focus and raise windows | 4 | device | pass |
 | C3 | Switch windows from the keyboard | 1 | device | pass |
 | C4 | Maximize and restore | 1 | device | pass |
-| C5 | Minimize, and a list of open windows | 2 | device | none |
+| C5 | Minimize, and a list of open windows | 2 | device | partial |
 | C7 | Notifications | 1 | device | none |
 | C8 | Settings | 1 | device | none |
 | C9 | Status area: network, power, clock | 1 | device | none |

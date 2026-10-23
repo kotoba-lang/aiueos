@@ -764,7 +764,7 @@ while time.time() < end:
         # titlebar at (380, 142) -- press, release, press, release -- and one at
         # (380, 40), a press on the maximize control at (476, 146), F11 down and up --
         # each after the guest's line for the one before.
-        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 34:
+        if typing and b"AIUEOS_GUEST_BROWSER_UIUX_GO" in serial_now and globals().get("uiux_sent", 0) < 40:
             k = globals().get("uiux_sent", 0)
             seen = ((b"AIUEOS_GUEST_BROWSER_HC n=%d " % k) if k <= 4 else
                     (b"AIUEOS_GUEST_BROWSER_KEY n=%d " % k) if k <= 18 else
@@ -807,6 +807,14 @@ while time.time() < end:
                     # ADR-0253: the button goes down on launcher button 1 at (54, 14)
                     ev = [{"type": "abs", "data": {"axis": "x", "value": 1383}},
                           {"type": "abs", "data": {"axis": "y", "value": 574}},
+                          {"type": "btn", "data": {"down": True, "button": "left"}}]
+                elif k >= 34 and k % 2 == 0:
+                    # ADR-0254: a press on window 1's minimize control at (456, 146), one at
+                    # (380, 142) where the minimized window was, one on app 1's dock icon at
+                    # (574, 772); each followed by the release
+                    x, y = {34: (11674, 5981), 36: (9728, 5817), 38: (14695, 31622)}[k]
+                    ev = [{"type": "abs", "data": {"axis": "x", "value": x}},
+                          {"type": "abs", "data": {"axis": "y", "value": y}},
                           {"type": "btn", "data": {"down": True, "button": "left"}}]
                 else:
                     ev = [{"type": "btn", "data": {"down": False, "button": "left"}}]
