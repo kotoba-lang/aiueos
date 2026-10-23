@@ -1068,6 +1068,147 @@ static int virtio_rng(uint8_t b, uint8_t d, uint8_t f) {
   return 0;
 }
 
+/* Blank-volume format route (JUN-34). An OCI block volume arrives zeroed and
+   no helper VM is guaranteed to populate it before first boot, so the guest
+   provisions the object store itself. The discriminator is sector 0 all zero:
+   a blank volume, not a foreign disk -- the GPT boot disk's protective MBR is
+   never all zero, so it is never a format candidate. Nothing is written until
+   the carried app signature verifies over the recovery ELF and the carried
+   catalog signature (recovery/app-catalog.sig) verifies over the catalog
+   reconstructed byte for byte as scripts/make-aiuefs-image.py builds it; a
+   reconstruction that drifts from the signed catalog fails that signature and
+   the volume stays untouched. Every sector is read back and compared before
+   the volume rejoins the ordinary admission path below, which re-verifies
+   superblock, catalog digest and app signatures from the disk itself. The
+   superblock is written last, so a crash mid-format leaves sector 0 zeroed and
+   the next boot formats again. */
+static int object_store_formatted;
+int aiueos_object_store_formatted(void) { return object_store_formatted; }
+extern const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *);
+extern const uint8_t *aiueos_initramfs_recovery_signature(void);
+extern const uint8_t *aiueos_initramfs_recovery_catalog_signature(void);
+
+static int aiuefs_sector_all_zero(const uint8_t *sector) {
+  for (uint32_t i = 0; i < 512; i++) if (sector[i]) return 0;
+  return 1;
+}
+
+static void aiuefs_store_u32(uint8_t *bytes, uint32_t value) {
+  bytes[0] = (uint8_t)value; bytes[1] = (uint8_t)(value >> 8);
+  bytes[2] = (uint8_t)(value >> 16); bytes[3] = (uint8_t)(value >> 24);
+}
+
+static uint32_t aiuefs_fnv1a(const uint8_t *bytes, uint32_t length) {
+  uint32_t hash = 2166136261U;
+  for (uint32_t i = 0; i < length; i++) hash = (hash ^ bytes[i]) * 16777619U;
+  return hash;
+}
+
+/* One sector out, one sector back: what is written is what is read. */
+static int aiuefs_format_write(struct virtio_blk_request *request, uint8_t *sector,
+    uint8_t *status, struct virtq_desc *desc, struct virtq_avail *avail,
+    struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
+    uint64_t disk_sector, const uint8_t *data, uint32_t length) {
+  static uint8_t want[512];
+  if (length > 512) return 0;
+  for (uint32_t i = 0; i < 512; i++) want[i] = i < length ? data[i] : 0;
+  for (uint32_t i = 0; i < 512; i++) sector[i] = want[i];
+  if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,submitted,
+                            VIRTIO_BLK_T_OUT,disk_sector)) return 0;
+  for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
+  if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,submitted,
+                            VIRTIO_BLK_T_IN,disk_sector)) return 0;
+  for (uint32_t i = 0; i < 512; i++) if (sector[i] != want[i]) return 0;
+  return 1;
+}
+
+static int aiuefs_format_blank_volume(struct virtio_blk_request *request, uint8_t *sector,
+    uint8_t *status, struct virtq_desc *desc, struct virtq_avail *avail,
+    struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
+    uint64_t capacity) {
+  static uint8_t catalog[272] __attribute__((aligned(4)));
+  static uint8_t superblock[512];
+  static uint8_t digest[32];
+  static const char app_ids[2][16] = {"app/hello", "app/worker"};
+  static const uint8_t catalog_magic[8] = {'A','I','U','C','A','T','1',0};
+  static const uint8_t superblock_magic[8] = {'A','I','U','E','F','S','1',0};
+  static const uint8_t root[16] = {'K','O','T','O','B','A','S','E',
+                                   '-','R','O','O','T','-','V','1'};
+  struct aiuefs_app_catalog *catalog_header = (void *)catalog;
+  struct aiuefs_app_entry *entries =
+    (void *)(catalog + sizeof(struct aiuefs_app_catalog));
+  uint64_t elf_length = 0;
+  const uint8_t *elf = aiueos_initramfs_recovery_elf(&elf_length);
+  const uint8_t *app_signature = aiueos_initramfs_recovery_signature();
+  const uint8_t *catalog_signature = aiueos_initramfs_recovery_catalog_signature();
+  uint32_t data_sector[2], signature_sector[2], next_sector = 4;
+  uint32_t catalog_sector, catalog_signature_sector, catalog_length;
+  if (!elf || !app_signature || !catalog_signature || !elf_length || elf_length > 98304)
+    return 0;
+  /* The same RSA policy as a catalog app, applied before any write: only a
+     signed recovery payload may be provisioned onto a blank volume. */
+  if (!sha256(elf, elf_length, digest) || !rsa2048_sha256_verify(app_signature, digest))
+    return 0;
+  for (int app = 0; app < 2; app++) {
+    data_sector[app] = next_sector;
+    signature_sector[app] = data_sector[app] + (uint32_t)((elf_length + 511) / 512);
+    next_sector = signature_sector[app] + 1;
+  }
+  catalog_sector = next_sector;
+  catalog_signature_sector = catalog_sector + 1;
+  catalog_length = (uint32_t)(sizeof(struct aiuefs_app_catalog) +
+                              2 * sizeof(struct aiuefs_app_entry));
+  if (catalog_signature_sector >= capacity) return 0;
+  for (uint32_t i = 0; i < sizeof(catalog); i++) catalog[i] = 0;
+  for (uint32_t i = 0; i < 8; i++) catalog_header->magic[i] = catalog_magic[i];
+  catalog_header->version = 1;
+  catalog_header->count = 2;
+  for (int app = 0; app < 2; app++) {
+    for (uint32_t i = 0; i < 16; i++) entries[app].id[i] = (uint8_t)app_ids[app][i];
+    entries[app].sector = data_sector[app];
+    entries[app].length = (uint32_t)elf_length;
+    for (uint32_t i = 0; i < 32; i++) entries[app].sha256[i] = digest[i];
+    entries[app].signature_sector = signature_sector[app];
+    entries[app].signer_id = 1;
+  }
+  /* The carried signature decides what catalog may exist: only the exact
+     bytes that were signed verify, so a drifted reconstruction is refused
+     with the volume still blank. */
+  if (!sha256(catalog, catalog_length, digest) ||
+      !rsa2048_sha256_verify(catalog_signature, digest)) return 0;
+  for (int app = 0; app < 2; app++) {
+    for (uint32_t written = 0, index = 0; written < elf_length; index++) {
+      uint32_t take = (uint32_t)elf_length - written;
+      if (take > 512) take = 512;
+      if (!aiuefs_format_write(request,sector,status,desc,avail,used,doorbell,submitted,
+                               data_sector[app] + index, elf + written, take)) return 0;
+      written += take;
+    }
+    if (!aiuefs_format_write(request,sector,status,desc,avail,used,doorbell,submitted,
+                             signature_sector[app], app_signature, 256)) return 0;
+  }
+  if (!aiuefs_format_write(request,sector,status,desc,avail,used,doorbell,submitted,
+                           catalog_sector, catalog, catalog_length)) return 0;
+  if (!aiuefs_format_write(request,sector,status,desc,avail,used,doorbell,submitted,
+                           catalog_signature_sector, catalog_signature, 256)) return 0;
+  for (uint32_t i = 0; i < 512; i++) superblock[i] = 0;
+  for (uint32_t i = 0; i < 8; i++) superblock[i] = superblock_magic[i];
+  aiuefs_store_u32(superblock + 8, 3);                 /* version */
+  aiuefs_store_u32(superblock + 12, 108);              /* header_size */
+  aiuefs_store_u32(superblock + 16, 3);                /* object_count: root + 2 apps */
+  aiuefs_store_u32(superblock + 24, 128);              /* object_offset */
+  aiuefs_store_u32(superblock + 28, (uint32_t)sizeof(root)); /* object_length */
+  aiuefs_store_u32(superblock + 32, aiuefs_fnv1a(root, (uint32_t)sizeof(root)));
+  aiuefs_store_u32(superblock + 36, catalog_sector);
+  aiuefs_store_u32(superblock + 40, catalog_length);
+  for (uint32_t i = 0; i < 32; i++) superblock[44 + i] = digest[i];
+  aiuefs_store_u32(superblock + 76, catalog_signature_sector);
+  aiuefs_store_u32(superblock + 80, 1);                /* signer_id */
+  for (uint32_t i = 0; i < sizeof(root); i++) superblock[128 + i] = root[i];
+  return aiuefs_format_write(request,sector,status,desc,avail,used,doorbell,submitted,
+                             0, superblock, 512);
+}
+
 static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
   struct virtio_caps caps;
   volatile struct virtio_common_cfg *cfg;
@@ -1114,7 +1255,25 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
         return 0;
       const struct aiuefs_superblock *superblock = (const void *)sector;
       extern uint64_t kotoba_aiueos_superblock_valid(const void *, uint64_t);
-      if (!kotoba_aiueos_superblock_valid(superblock, 512)) return 0;
+      int volume_formatted = 0;
+      if (!kotoba_aiueos_superblock_valid(superblock, 512)) {
+        /* Not an AIUEFS1 volume. Blank (sector 0 all zero) volumes are
+           provisioned in place; anything else -- the GPT boot disk's
+           protective MBR, a foreign filesystem -- is simply not ours. One
+           object store per boot: a second blank disk after admission is not
+           a format candidate. */
+        if (object_store_ready || !aiuefs_sector_all_zero(sector) ||
+            !aiuefs_format_blank_volume(request,sector,status,desc,avail,used,doorbell,
+                                        &submitted,capacity)) return 0;
+        volume_formatted = 1;
+        for (uint32_t i = 0; i < 512; i++) sector[i] = 0;
+        if (!virtio_blk_sector_io(request,sector,status,desc,avail,used,doorbell,
+                                  &submitted,VIRTIO_BLK_T_IN,0)) return 0;
+        if (used->ring[0].id != 0 || used->ring[0].length != 513 ||
+            *status != VIRTIO_BLK_S_OK) return 0;
+        superblock = (const void *)sector;
+        if (!kotoba_aiueos_superblock_valid(superblock, 512)) return 0;
+      }
       uint32_t catalog_sector=superblock->catalog_sector,catalog_length=superblock->catalog_length;
       uint32_t catalog_signature_sector=superblock->catalog_signature_sector;
       uint8_t expected_catalog_sha[32],actual_sha[32],signature[256],catalog_bytes[272];
@@ -1217,6 +1376,7 @@ static int virtio_blk(uint8_t b, uint8_t d, uint8_t f) {
       }
       kotoba_app_count=catalog->count;
       object_store_ready = 1;
+      if (volume_formatted) object_store_formatted = 1;
       struct aiuefs_journal_record slots[2];
       struct aiuefs_journal_record *journal = (void *)sector;
       int valid[2] = {0, 0}, selected = -1;
