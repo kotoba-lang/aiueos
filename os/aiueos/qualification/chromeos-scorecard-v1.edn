@@ -531,8 +531,9 @@
    :procedure "Close the lid; open it."
    :expected "The session resumes in under 3 s with state intact."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-suspend" "ADR-0273" "receipt os/aiueos/qualification/receipts/vm-20261024/suspend/receipt.edn"]
+   :note "Suspend-to-idle. The sleep key (the lid) blanks the screen and idles the machine in HLT; the wake key redraws the desktop from the same surface. Measured by the HOST: a screendump while asleep is all black, the awake screens before and after are byte-identical (equal SHA-256 in the receipt), the resume took 51 ms from the wake key to the guest's RESUME line, and the kernel fingerprints the 2048 surface words before and after (state intact, not assumed). Limits, stated so the owner can reject this pass: this is not ACPI S3 (the RAM stays powered and no device is powered down), the lid is a key, the resume time includes the harness, and the session state that survives is the desktop's surface, with no application restart across a real power loss."
    }
   {:id :I2 :category :power :title "Battery and power management"
    :weight 1 :required true :required-level :device
