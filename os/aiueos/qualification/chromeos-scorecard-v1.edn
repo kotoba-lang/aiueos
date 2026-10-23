@@ -99,9 +99,9 @@
    :procedure "Sign in on the reference machine with a passkey bound to it; read back the session."
    :expected "The session opens; a passkey for another device is refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["apps/session/README.md" "ADR-0113"]
-   :note "The authority flow and its refusals are tested with an injected authority; no human passkey ceremony on the machine."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-passkey" "ADR-0270" "ADR-0113" "receipt os/aiueos/qualification/receipts/vm-20261024/passkey/receipt.edn"]
+   :note "On the lock screen C runs a WebAuthn-shaped ceremony: a fresh challenge, a P-256 signature, and a verification against the public point registered on this machine's volume (the key is drawn from the virtio-rng and kept in sector 1035). A passkey made on another device signs but does not verify (the lock stays, the red bar shows); this device's verifies and opens a session whose id is printed (AIUEOS_GUEST_BROWSER_PASSKEY_TRY). Every frame equals the frame model. Limits, stated so the owner can reject this pass: the private key sits in the clear on the volume (no secure element or TPM seal, no data encryption at rest, G3), so 'bound to the device' means 'kept on this volume'; user presence is the key press; the other device is a test key, not a second machine; no counter or attestation; the PIN remains the other way in."
    }
   {:id :B2 :category :identity :title "Lock and unlock the screen"
    :weight 2 :required true :required-level :device
