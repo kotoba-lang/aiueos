@@ -707,14 +707,41 @@
       (if (< i 0) 0
         (if (< (w s (+ 8 (* i 5))) 40) 0 1)))))
 
+(defn vis-n [s n k]
+  (if (>= k n) 0
+    (+ (if (= (bit-and (w s 31) (mbit (w s (+ 5 (* k 5))))) 0) 1 0)
+       (vis-n s n (+ k 1)))))
+
+(defn max-exists [s]
+  (if (= (w s 31) 0) 0
+    (let [i (idx s (w s 1) 0 (w s 2))]
+      (if (< i 0) 0
+        (if (< (w s (+ 8 (* i 5))) 160) 0 1)))))
+
+(defn min-exists [s]
+  (if (= (w s 31) 0) 0
+    (let [i (idx s (w s 1) 0 (w s 2))]
+      (if (< i 0) 0
+        (if (< (w s (+ 8 (* i 5))) 200) 0
+          (if (< (vis-n s (w s 1) 0) 2) 0 1))))))
+
+;; ADR-0262: the minimized windows by id (bits 4..7 of word 31) are the tray's buttons, 8 .. 11.
+(defn tray-count [s]
+  (let [m (quot (w s 31) 16)]
+    (+ (bit-and m 1) (+ (bit-and (quot m 2) 1) (+ (bit-and (quot m 4) 1) (bit-and (quot m 8) 1))))))
+
 (defn target-ok [s t]
   (if (< t 1) 0
     (if (< t 5)
       (if (= (bit-and (w s 31) (kbit t)) 0) 0 1)
-      (if (= t 5) (close-ok s) 0))))
+      (if (= t 5) (close-ok s)
+        (if (= t 6) (max-exists s)
+          (if (= t 7) (min-exists s)
+            (if (> t 11) 0
+              (if (< (- t 8) (tray-count s)) 1 0))))))))
 
 (defn next-from [s t]
-  (if (> t 5) 0
+  (if (> t 11) 0
     (if (= (target-ok s t) 1) t
       (next-from s (+ t 1)))))
 
@@ -726,7 +753,7 @@
 (defn ring-move [s]
   (do (wp s 2032
           (if (= (w s 2035) 1)
-            (prev-from s (if (= (w s 2032) 0) 5 (- (w s 2032) 1)))
+            (prev-from s (if (= (w s 2032) 0) 11 (- (w s 2032) 1)))
             (next-from s (+ (w s 2032) 1))))
       0))
 
@@ -737,11 +764,6 @@
         b (+ 5 (* i 5))]
     (press-at (- (+ (w s (+ b 1)) (w s (+ b 3))) 16) (+ (w s (+ b 2)) 14))))
 
-(defn ring-press [s]
-  (let [t (w s 2032)]
-    (if (= (target-ok s t) 0) 0
-      (if (= t 5) (close-press s)
-        (press-at (+ 54 (* 102 (- t 1))) 14)))))
 
 (defn hc-toggle [s]
   (do (wp s 2039 (if (= (w s 2039) 0) 1 0))
@@ -763,23 +785,26 @@
 ;; ADR-0256: Alt+- (evdev 12) presses the focused window's minimize control as a pointer press at
 ;; its centre (x + w - 56, y + 14) through browser-reduce, when the control exists: a window at
 ;; least 200 wide with a launcher while two or more windows are visible.
-(defn vis-n [s n k]
-  (if (>= k n) 0
-    (+ (if (= (bit-and (w s 31) (mbit (w s (+ 5 (* k 5))))) 0) 1 0)
-       (vis-n s n (+ k 1)))))
 
 (defn min-key-ok [s]
-  (if (= (w s 431) 0) 0
-    (if (= (w s 31) 0) 0
-      (let [i (idx s (w s 1) 0 (w s 2))]
-        (if (< i 0) 0
-          (if (< (w s (+ 8 (* i 5))) 200) 0
-            (if (< (vis-n s (w s 1) 0) 2) 0 1)))))))
+  (if (= (w s 431) 0) 0 (min-exists s)))
 
 (defn min-key-press [s]
   (let [i (idx s (w s 1) 0 (w s 2))
         b (+ 5 (* i 5))]
     (press-at (- (+ (w s (+ b 1)) (w s (+ b 3))) 56) (+ (w s (+ b 2)) 14))))
+
+(defn tray-press [s i]
+  (press-at (+ 66 (* 126 i)) (- (w s 4) 18)))
+
+(defn ring-press [s]
+  (let [t (w s 2032)]
+    (if (= (target-ok s t) 0) 0
+      (if (= t 5) (close-press s)
+        (if (= t 6) (max-key-press s)
+          (if (= t 7) (min-key-press s)
+            (if (> t 7) (tray-press s (- t 8))
+              (press-at (+ 54 (* 102 (- t 1))) 14))))))))
 
 (defn kbd-act [s code]
   (if (= (composing s) 1) 0

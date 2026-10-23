@@ -26,7 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
-   "guest-browser-settings" "guest-browser-ui-scale"])
+   "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only"])
 
 (defn gate-cmd
   "SPA-visible evidence command for a guest profile. Not clojure -M."
@@ -1591,6 +1591,89 @@
       {:green? true :exit 0 :reason :guest-browser-ui-scale
        :leftover [:two-steps-only :nearest-neighbour-magnification :not-persisted :draw-list-census-not-pixels-of-a-panel]})))
 
+;; Guest browser keyboard only (ADR-0262): after the UI scale stage, twenty-six keys -- F6 and Enter, down and up --
+;; use the shell with no pointer. F6 moves the focus ring (ADR-0248) through every shell control that exists: the
+;; launcher's buttons, the focused window's close, maximize and minimize controls and the tray's buttons; Enter
+;; activates the one it is on, as the press a pointer would make. The sequence opens window 2 from launcher button 2,
+;; maximizes it from its maximize control, minimizes it from its minimize control and restores it from the tray's
+;; button, then F6 puts the ring away. The kernel prints AIUEOS_GUEST_BROWSER_RING n= key= ring= windows= focus=
+;; stack= min= top= ops= text-px= hash=. Green needs the sign-out gate green on the same serial, the lines equal
+;; to browser-frame-model.cljk's ("ring-frame"), and, apart from it: every event is a keyboard event, the ring
+;; stood on each of the controls 1 .. 8, and each activation did its action (a window opened, the top window filled
+;; the work area, a window was minimized, the same window came back focused).
+
+(def ^:private ring-want
+  [{:n 1 :key 257 :ring 1 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 76 :px 582 :hash "60620c8b"}
+   {:n 2 :key 256 :ring 1 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 76 :px 582 :hash "60620c8b"}
+   {:n 3 :key 257 :ring 2 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 76 :px 582 :hash "60620c8b"}
+   {:n 4 :key 256 :ring 2 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 76 :px 582 :hash "60620c8b"}
+   {:n 5 :key 113 :ring 2 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 6 :key 112 :ring 2 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 7 :key 257 :ring 3 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 8 :key 256 :ring 3 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 9 :key 257 :ring 4 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 10 :key 256 :ring 4 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 11 :key 257 :ring 5 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 12 :key 256 :ring 5 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 13 :key 257 :ring 6 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 14 :key 256 :ring 6 :windows 2 :focus 2 :stack "12" :min 0 :top "80,80,520,360" :ops 96 :px 595 :hash "71f2d5d8"}
+   {:n 15 :key 113 :ring 6 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 95 :px 595 :hash "181f1694"}
+   {:n 16 :key 112 :ring 6 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 95 :px 595 :hash "181f1694"}
+   {:n 17 :key 257 :ring 7 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 95 :px 595 :hash "181f1694"}
+   {:n 18 :key 256 :ring 7 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 95 :px 595 :hash "181f1694"}
+   {:n 19 :key 113 :ring 7 :windows 2 :focus 1 :stack "12" :min 2 :top "0,28,1280,720" :ops 78 :px 702 :hash "1b23b022"}
+   {:n 20 :key 112 :ring 7 :windows 2 :focus 1 :stack "12" :min 2 :top "0,28,1280,720" :ops 78 :px 702 :hash "1b23b022"}
+   {:n 21 :key 257 :ring 8 :windows 2 :focus 1 :stack "12" :min 2 :top "0,28,1280,720" :ops 82 :px 702 :hash "1b23b022"}
+   {:n 22 :key 256 :ring 8 :windows 2 :focus 1 :stack "12" :min 2 :top "0,28,1280,720" :ops 82 :px 702 :hash "1b23b022"}
+   {:n 23 :key 113 :ring 8 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 91 :px 595 :hash "181f1694"}
+   {:n 24 :key 112 :ring 8 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 91 :px 595 :hash "181f1694"}
+   {:n 25 :key 257 :ring 0 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 91 :px 595 :hash "181f1694"}
+   {:n 26 :key 256 :ring 0 :windows 2 :focus 2 :stack "12" :min 0 :top "0,28,1280,720" :ops 91 :px 595 :hash "181f1694"}
+   {:n 27 :key 5 :ring 0 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 72 :px 582 :hash "60620c8b"}
+   {:n 28 :key 4 :ring 0 :windows 1 :focus 1 :stack "1" :min 0 :top "80,80,520,360" :ops 72 :px 582 :hash "60620c8b"}])
+
+(defn- ring-lines [s]
+  (->> (re-seq #"(?m)^AIUEOS_GUEST_BROWSER_RING n=(\d+) key=(\d+) ring=(\d+) windows=(\d+) focus=(\d+) stack=(\d*) min=(\d+) top=(\d+,\d+,\d+,\d+) ops=(\d+) text-px=(\d+) hash=([0-9a-f]{8})\s*$" (or s ""))
+       (mapv (fn [[_ n key ring windows focus stack mn top ops px hash]]
+               {:n (parse-long n) :key (parse-long key) :ring (parse-long ring) :windows (parse-long windows)
+                :focus (parse-long focus) :stack stack :min (parse-long mn) :top top :ops (parse-long ops)
+                :px (parse-long px) :hash hash}))))
+
+(defn guest-browser-keyboard-only-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [ls (ring-lines serial)
+        by-n (into {} (map (juxt :n identity) ls))
+        sign-out (guest-browser-sign-out-result opts)]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? sign-out))
+      (assoc sign-out :reason :no-sign-out :leftover (into [:no-sign-out] (:leftover sign-out)))
+      (empty? ls) {:green? false :exit 1 :reason :guest-browser-keyboard-only-absent
+                   :leftover [:guest-browser-keyboard-only-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_RING_OK events=28" (or serial "")))
+      {:green? false :exit 1 :reason :keyboard-only-ok-missing :leftover [:keyboard-only-ok-missing]}
+      (not= ls ring-want)
+      {:green? false :exit 1 :reason :keyboard-only-differs-from-model :leftover [:keyboard-only-differs-from-model]
+       :first-difference (first (remove nil? (map (fn [g w] (when (not= g w) {:kernel g :model w}))
+                                                 (concat ls (repeat nil)) ring-want)))}
+      (not (every? #{257 256 113 112 5 4} (map :key ls)))
+      {:green? false :exit 1 :reason :not-only-the-keyboard :leftover [:not-only-the-keyboard]}
+      (not (every? (set (map :ring ls)) (range 1 9)))
+      {:green? false :exit 1 :reason :ring-did-not-reach-every-control :leftover [:ring-did-not-reach-every-control]}
+      (not (and (= 1 (:windows (by-n 4))) (= 2 (:windows (by-n 5))) (= 2 (:focus (by-n 5)))))
+      {:green? false :exit 1 :reason :enter-did-not-open-a-window :leftover [:enter-did-not-open-a-window]}
+      (not= "0,28,1280,720" (:top (by-n 15)))
+      {:green? false :exit 1 :reason :enter-did-not-maximize :leftover [:enter-did-not-maximize]}
+      (not (and (= 2 (:min (by-n 19))) (= 1 (:focus (by-n 19)))))
+      {:green? false :exit 1 :reason :enter-did-not-minimize :leftover [:enter-did-not-minimize]}
+      (not (and (= 0 (:min (by-n 23))) (= 2 (:focus (by-n 23)))))
+      {:green? false :exit 1 :reason :enter-did-not-restore :leftover [:enter-did-not-restore]}
+      (not (and (= 1 (:windows (by-n 27))) (= "80,80,520,360" (:top (by-n 27)))))
+      {:green? false :exit 1 :reason :escape-did-not-close :leftover [:escape-did-not-close]}
+      :else
+      {:green? true :exit 0 :reason :guest-browser-keyboard-only
+       :leftover [:window-contents-have-nothing-to-focus :no-move-or-resize-by-key :draw-list-not-pixels]})))
+
 ;; Guest browser hover (ADR-0246): Kotoba `hot` decides, from the pointer in
 ;; surface words 2046/2047, that a launcher button or a close control under it
 ;; is drawn #d9d9d9 instead of #e6e6e6. On the scroll boot the kernel counts
@@ -2040,6 +2123,9 @@
     ;; ADR-0261: the scale keys come after the sign-out stage.
     "guest-browser-ui-scale" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; ADR-0262: the keyboard-only keys come after the scale stage.
+    "guest-browser-keyboard-only" {"AIUEOS_GUEST_BROWSER" "1"
+                                   "AIUEOS_QEMU_TIMEOUT" "6000"}
     "guest-scanout-two" {"AIUEOS_GUEST_SCANOUT_TWO" "1"
                          "AIUEOS_QEMU_TIMEOUT" "90"}
     nil))
@@ -2086,6 +2172,7 @@
     "guest-browser-sign-out" (guest-browser-sign-out-result opts)
     "guest-browser-settings" (guest-browser-settings-result opts)
     "guest-browser-ui-scale" (guest-browser-ui-scale-result opts)
+    "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
     "guest-browser-focus-ring" (guest-browser-focus-ring-result opts)
     "guest-browser-keyboard-activate" (guest-browser-keyboard-activate-result opts)
     "guest-browser-high-contrast" (guest-browser-high-contrast-result opts)
@@ -2133,6 +2220,7 @@
     "guest-browser-sign-out" "AIUEOS_GUEST_BROWSER_SIGNOUT"
     "guest-browser-settings" "AIUEOS_GUEST_BROWSER_SETTINGS"
     "guest-browser-ui-scale" "AIUEOS_GUEST_BROWSER_SCALE"
+    "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
     "guest-browser-focus-ring" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-keyboard-activate" "AIUEOS_GUEST_BROWSER_KEY"
     "guest-browser-high-contrast" "AIUEOS_GUEST_BROWSER_HC"
@@ -2180,6 +2268,7 @@
     "guest-browser-sign-out" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SIGN_OUT_OK"
     "guest-browser-settings" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SETTINGS_OK"
     "guest-browser-ui-scale" "AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK"
+    "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
     "guest-browser-focus-ring" "AIUEOS_COMPOSITOR_GUEST_BROWSER_FOCUS_RING_OK"
     "guest-browser-keyboard-activate" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ACTIVATE_OK"
     "guest-browser-high-contrast" "AIUEOS_COMPOSITOR_GUEST_BROWSER_HIGH_CONTRAST_OK"

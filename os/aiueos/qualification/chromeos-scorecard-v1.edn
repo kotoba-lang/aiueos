@@ -586,9 +586,9 @@
    :procedure "Use the shell without a pointer."
    :expected "Every shell control can be reached and activated."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-focus-ring" "gate guest-browser-keyboard-activate" "ADR-0248" "ADR-0249"]
-   :note "The launcher and the window controls are reachable; window contents are not traversable."
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-focus-ring" "gate guest-browser-keyboard-activate" "ADR-0248" "ADR-0249" "gate guest-browser-keyboard-only" "ADR-0262" "receipt os/aiueos/qualification/receipts/vm-20261023/ui/receipt.edn"]
+   :note "F6 moves the focus ring through every shell control that exists -- launcher buttons, the focused window's close, maximize and minimize controls, the tray's buttons -- and Enter activates it as the pointer press; a window is opened, maximized, minimized, restored and closed from the keyboard alone. Window contents (text) have nothing to focus, and a window cannot be moved or resized by key: no shell control does that."
    }
   {:id :I9 :category :power :title "Camera"
    :weight 0 :required false :required-level :device
