@@ -65,7 +65,8 @@
 ;;   480 + 6j       op j: kind x y a b rgb
 ;;                  kind 1 rect:  a = width, b = height
 ;;                  kind 2 glyph: a = glyph index in the font, b = 8 or 16
-;;                  capacity 255 ops (words 480..2009; 259 until ADR-0248,
+;;                  capacity 254 ops (words 480..2003; 255 until ADR-0261, which
+;;                  took 2004..2009 -- 2009 is the UI scale, browser-ime's; 259 until ADR-0248,
 ;;                  261 until ADR-0238,
 ;;                  260 until ADR-0240)
 ;;   2010..2025     ADR-0250: the rect a maximized window had, 4 words per window
@@ -174,7 +175,7 @@
 ;; ABI: [surface surface-bytes font font-bytes] -> op count, or
 ;;   -1 null region / surface not 8192 bytes   -2 abi or n outside 0..4
 ;;   -3 focus is not a window id               -4 a rect leaves the viewport
-;;   -5 more than 255 ops                      -6 font refused (magic, version,
+;;   -5 more than 254 ops                      -6 font refused (magic, version,
 ;;                                                count, length, no U+FFFD)
 ;;   -7 a window id outside 1..4               -8 the IME's lengths are past
 ;;                                                its buffers (romaji > 8 or
@@ -236,7 +237,7 @@
 (defn put-op [s kind x y a]
   ;; b and rgb come from the caller through scratch 429 and 422.
   (let [j (sw s 416)]
-    (if (>= j 255)
+    (if (>= j 254)
       (do (sput s 427 1) 0)
       (let [base (+ 480 (* 6 j))]
         (do (sput s base kind)

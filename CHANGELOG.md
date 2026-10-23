@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: a UI scale of 100/125/150 percent (ADR-0261)
+- Ctrl+= and Ctrl+- choose the scale (Kotoba); C magnifies what it paints and sets the logical viewport; Kotoba fits the
+  windows into it. `guest-browser-ui-scale` gates it with a model that paints the scale as the present does. The op
+  capacity is 254 (words 2004..2009 are free; 2009 is the scale).
+
 ### desktop: the contrast choice survives a reboot (ADR-0260)
 - A settings record (sector 1034 of the object-store volume, readback on write) holds the high-contrast choice;
   `guest-browser-settings` boots the same volume twice to prove it. The first persistent write the desktop makes.

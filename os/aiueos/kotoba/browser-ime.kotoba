@@ -829,6 +829,38 @@
       (wp s 31 (bit-and (w s 31) 15))
       (lock-now s)))
 
+;; ADR-0261: the UI scale. Ctrl+= (evdev 13) and Ctrl+- (evdev 12) step the scale 100 -> 125 -> 150 and back;
+;; word 2009 holds it (0 = 100). Kotoba decides the scale and answers 200000000 + the new percent for C, which
+;; magnifies what it paints, sets the logical viewport (surface words 3 and 4) to the physical size over the
+;; scale, and sends a value-2 key event with code 3 back; `fit-windows` then moves every window into the viewport.
+(defn zoom-chord [s code]
+  (if (= (w s 2038) 0) 0 (if (= (w s 431) 1) 0 (if (= code 13) 1 (if (= code 12) 1 0)))))
+
+(defn zoom-pct [s] (if (= (w s 2009) 0) 100 (w s 2009)))
+
+(defn zoom-next [s code]
+  (if (= code 13) (if (< (zoom-pct s) 150) (+ (zoom-pct s) 25) (zoom-pct s))
+    (if (> (zoom-pct s) 100) (- (zoom-pct s) 25) (zoom-pct s))))
+
+(defn zoom-step [s code]
+  (let [next (zoom-next s code)]
+    (if (= next (zoom-pct s)) 0
+      (do (wp s 2009 next) (+ 200000000 next)))))
+
+(defn fit-one [s k]
+  (let [b (+ 5 (* k 5))
+        vw (w s 3)
+        vh (w s 4)
+        w1 (if (< (w s (+ b 3)) vw) (w s (+ b 3)) vw)
+        h1 (if (< (w s (+ b 4)) (- vh 28)) (w s (+ b 4)) (- vh 28))
+        x1 (if (< (w s (+ b 1)) (- vw w1)) (w s (+ b 1)) (- vw w1))
+        y1 (if (< (w s (+ b 2)) (- vh h1)) (w s (+ b 2)) (- vh h1))]
+    (do (wp s (+ b 1) x1) (wp s (+ b 2) y1) (wp s (+ b 3) w1) (wp s (+ b 4) h1))))
+
+(defn fit-windows [s k]
+  (if (>= k (w s 1)) 0
+    (do (fit-one s k) (fit-windows s (+ k 1)))))
+
 (defn pin-digit [code]
   (if (< code 2) -1 (if (> code 11) -1 (if (= code 11) 0 (- code 1)))))
 
@@ -852,10 +884,11 @@
       (if (= code 28) (if (= (pin-count s) 4) (+ 100000000 (quot (w s 2031) 8)) 0) 0))))
 
 (defn verdict [s code]
+  (if (= code 3) (fit-windows s 0)
   (if (= (w s 2030) 0) 0
     (do (wp s 2031 0)
         (if (= code 1) (do (wp s 2030 0) (wp s 2026 0)) (wp s 2026 1))
-        0)))
+        0))))
 
 (defn press [s d ev]
   (if (= (bit-and ev 3) 2) (verdict s (quot ev 4))
@@ -865,6 +898,7 @@
     (if (not (= (bit-and ev 3) 1)) 0
       (if (= (w s 2030) 1) (locked-key s (quot ev 4))
       (if (= (signout-chord s (quot ev 4)) 1) (sign-out-now s)
+      (if (= (zoom-chord s (quot ev 4)) 1) (zoom-step s (quot ev 4))
       (if (= (lock-chord s (quot ev 4)) 1) (lock-now s)
       (if (= (quot ev 4) 68) (hc-toggle s)
       (if (= (quot ev 4) 64) (ring-move s)
@@ -875,7 +909,7 @@
         (if (= (w s 2038) 1) (ctrl-key s (quot ev 4))
           (do (wp s 478 0)
               (let [r (key s d (quot ev 4))]
-                (if (= (w s 478) 1) -8 r)))))))))))))))))))
+                (if (= (w s 478) 1) -8 r))))))))))))))))))))
 
 (defn admitted [s d ev]
   ;; after the surface checks: a dictionary that is there must be
