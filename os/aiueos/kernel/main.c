@@ -510,8 +510,15 @@ static int initramfs_hex_field(const uint8_t *field, uint64_t *value) {
    is still identity-mapped, sized by the same bound as catalog applications. */
 static uint8_t __attribute__((section(".high_bss"), aligned(16))) initramfs_recovery_elf[98304];
 static uint8_t initramfs_recovery_signature[256];
+/* The catalog signature (recovery/app-catalog.sig) that build-uefi.sh has
+   always packed into the archive. The blank-volume format route (JUN-34)
+   reconstructs the catalog byte for byte as scripts/make-aiuefs-image.py
+   builds it and must verify this signature over those exact bytes before a
+   zeroed volume receives a single sector. */
+static uint8_t initramfs_recovery_catalog_signature[256];
 static uint64_t initramfs_recovery_elf_length;
 static int initramfs_recovery_signature_present;
+static int initramfs_recovery_catalog_signature_present;
 
 /* The desktop font (ADR-0224), aiueos-font/v1 from os/aiueos/fonts/. Copied
    out of the archive for the same reason as the recovery ELF; 320 KiB bounds
@@ -542,6 +549,10 @@ const uint8_t *aiueos_initramfs_recovery_elf(uint64_t *length) {
 }
 const uint8_t *aiueos_initramfs_recovery_signature(void) {
   return initramfs_recovery_signature_present ? initramfs_recovery_signature : 0;
+}
+const uint8_t *aiueos_initramfs_recovery_catalog_signature(void) {
+  return initramfs_recovery_catalog_signature_present
+    ? initramfs_recovery_catalog_signature : 0;
 }
 
 static int initramfs_name_is(const uint8_t *name, uint64_t namesize, const char *wanted) {
@@ -600,6 +611,12 @@ static int initramfs_validate(uint64_t base, uint64_t size, uint64_t *files) {
       for (uint64_t i = 0; i < filesize; i++)
         initramfs_recovery_signature[i] = archive[data_offset + i];
       initramfs_recovery_signature_present = 1;
+    }
+    if (initramfs_name_is(archive + name_offset, namesize, "recovery/app-catalog.sig") &&
+        filesize == sizeof(initramfs_recovery_catalog_signature)) {
+      for (uint64_t i = 0; i < filesize; i++)
+        initramfs_recovery_catalog_signature[i] = archive[data_offset + i];
+      initramfs_recovery_catalog_signature_present = 1;
     }
     offset = (data_offset + filesize + 3) & ~3ULL;
     count++;
@@ -747,6 +764,7 @@ extern unsigned aiueos_rtl8125_liveness_error(void);
 extern uint32_t aiueos_rtl8125_liveness_sequence(void);
 extern int aiueos_catalog_policy_selftest_ok(void);
 extern int aiueos_object_store_ready(void);
+extern int aiueos_object_store_formatted(void);
 extern int aiueos_journal_ready(void);
 extern int aiueos_journal_recovered(void);
 extern uint32_t aiueos_journal_sequence(void);
@@ -4096,6 +4114,13 @@ qwen_runtime_boot_complete:
     }
     debug_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\n");
     serial_string("AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps\r\n");
+    /* Blank-volume format route evidence (JUN-34): this boot provisioned the
+       object store onto a zeroed volume instead of finding it pre-populated,
+       so the OCI block volume needs no helper VM to carry the image. */
+    if (aiueos_object_store_formatted()) {
+      debug_string("AIUEOS_OBJECT_STORE_FORMAT_OK blank-volume source=initramfs catalog=rsa2048 write-readback\n");
+      serial_string("AIUEOS_OBJECT_STORE_FORMAT_OK blank-volume source=initramfs catalog=rsa2048 write-readback\r\n");
+    }
     debug_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\n");
     serial_string("AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key\r\n");
     {

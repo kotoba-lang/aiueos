@@ -5,6 +5,27 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### JUN-34: a blank block volume formats itself at first boot (OCI needs no helper VM)
+- The object-store probe rejected any second virtio-blk disk whose sector 0
+  was not a valid AIUEFS1 superblock, so an OCI block volume -- which arrives
+  zeroed -- stopped the boot at `AIUEOS_VIRTIO_BLK_FAIL capacity-or-read`
+  (measured: `pci_result input-rng-base=010`, 2 runs). A disk whose sector 0
+  is ALL ZERO is now recognized as blank and provisioned in place: the
+  catalog is reconstructed byte for byte as `scripts/make-aiuefs-image.py`
+  builds it and the carried `recovery/app-catalog.sig` must verify over those
+  exact bytes, and the carried app signature must verify over the recovery
+  ELF, before a single sector is written. Every sector is read back and
+  compared; the superblock is written last, so a crash mid-format leaves a
+  blank volume that the next boot formats again. The volume then rejoins the
+  ordinary admission path, which re-verifies everything from disk. Measured
+  on a zeroed 50 GiB disk (the OCI block volume minimum) in the OCI dual
+  virtio-blk topology: `AIUEOS_OBJECT_STORE_FORMAT_OK blank-volume
+  source=initramfs catalog=rsa2048 write-readback`, full desktop boot with
+  sustained input (14 keys, ring n=31), 0 FAIL markers. A pre-populated
+  AIUEFS1 volume boots exactly as before (98 markers, no format marker).
+  Anything not all zero -- the GPT boot disk's protective MBR, a foreign
+  filesystem -- is still simply not ours.
+
 ### JUN-34: the persistent desktop pumps the key ring; the ring counter counts once
 - The desktop loop's keyboard section called `aiueos_keyboard_drain` every turn,
   and drain DISCARDS: every key that arrived between turns was thrown away
