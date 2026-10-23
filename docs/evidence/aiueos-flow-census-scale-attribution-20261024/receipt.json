@@ -1,0 +1,97 @@
+{
+ "receipt/format": "aiueos.flow-census-scale-attribution/v1",
+ "recorded-at": "2026-10-24T05:20:00+09:00",
+ "issue": "JUN-31",
+ "tree": {
+  "head": "c76675efd03c6969d056420a24df266dc8d3f205",
+  "scope": "os/aiueos",
+  "tree-digest": "1ced9c58bc5aa3c96d1976734c4fd87546b17dcba95a19cd45f0145aa54ae717"
+ },
+ "question": "Is the guest-browser FLOW census-miss caused by the selfhost kotoba kernel object route, or by stage history in the profile?",
+ "gate-pin": {
+  "source": "ADR-0234 (90f8b03, 2026-09-25)",
+  "text-px": 3593,
+  "hash": "a19f95a8",
+  "assumed-pct": 100
+ },
+ "measurements": {
+  "A-selfhost-full-profile": {
+   "object": {
+    "file": "kernel-probe-abi.o",
+    "sha256": "0e04108e3896b708aee59006e309416d82253f003117caffa23032325aa7f704",
+    "bytes": 841,
+    "symbol": "kotoba_aiueos_probe",
+    "route": "selfhost (amu selfhost compiler lineage; G1=G2=G3 asserted in prior JUN-31 evidence)"
+   },
+   "image": {
+    "KERNEL.ELF sha256": "ab5f25d0aabe7518dcefc097c7c4eead53d4a8f03b8daab469c3044d0826d6b6",
+    "bytes": 823944
+   },
+   "profile": "guest-browser full (AIUEOS_GUEST_BROWSER=1, synthetic=0), real virtio-keyboard + virtio-tablet via QMP",
+   "stage-order": "SCALE(100->125->150->100, SCALE_OK events=16) -> RING -> EDIT -> CLOCK -> SETTINGS(n=4 sets pct=125, written=2, stored=1, frame text-px 668->1757 = 2.63x) -> FLOW",
+   "flow": {
+    "verdict": "leftover=census-miss",
+    "ops": 182,
+    "text-px": 9564,
+    "hash": "b2fad8a7",
+    "vs-pin-ratio": 2.66
+   }
+  },
+  "B-selfhost-synthetic-profile": {
+   "object": "same selfhost object route",
+   "profile": "synthetic-input (no scale stage, scale stays pct=100)",
+   "flow": {
+    "verdict": "FLOW_OK",
+    "windows": 4,
+    "ops": 182,
+    "text-px": 3593,
+    "hash": "a19f95a8",
+    "matches-pin": true
+   }
+  },
+  "C-op-stream-identity": {
+   "words": "FLOW_OPS n=182 words=<8736 hex chars>",
+   "sha1": "42fd9ed630edc8c031119c0106a4a0c9ba510dd5",
+   "byte-identical-between": [
+    "A",
+    "B"
+   ],
+   "meaning": "the drawn op stream is the same in both runs; only the rendered magnification differs"
+  },
+  "D-object-containment": {
+   "method": "ELF .text extracted from each object; base offset located in KERNEL.ELF; byte compare; reloc-masked clean-window uniqueness search (51 B selfhost window, 28 B committed window)",
+   "selfhost-image-ab5f25d0": {
+    "text-base-file-offset": 325888,
+    "mismatch-bytes": "exactly .text+3..+5 (41 57 07 = lea r9,[rip+0x75741] displacement)",
+    "committed-text-present": false
+   },
+   "control-image-3e8bdb0e": {
+    "text-base-file-offset": 325888,
+    "mismatch-bytes": "exactly .text+3..+5",
+    "selfhost-text-present": false
+   }
+  },
+  "E-control-cell": {
+   "object": {
+    "file": "os/aiueos/kotoba/kernel-probe.o (committed, sha-pinned)",
+    "sha256": "3f7409bff00efaa79ec2e260b6734f740e9d7da002a9eb22a747344591e5d327",
+    "bytes": 864
+   },
+   "image": {
+    "KERNEL.ELF sha256": "3e8bdb0e94690638b0e219611338ab37872c0c864f78a3252e4d108ca40e183a",
+    "bytes": 823944,
+    "rebuilt-this-tick-byte-identical": true
+   },
+   "profile": "guest-browser full, same as A",
+   "status": "in-flight at commit time; boot started 2026-10-24 05:13 JST (detached, build/aiueos-d, run log control-run4.log); one earlier attempt (control-run2) stalled at AIUEOS_KOTOBA_ELF_PROCESS_OK = the known #108 HOST-FLAKE-SIGNATURE and was retried, not counted as evidence"
+  }
+ },
+ "attribution": "The FLOW census-miss tracks the SETTINGS stage's persisted UI scale (pct=125 active at the FLOW measurement, frame census magnified 2.63-2.66x), not the object route: the op stream is byte-identical, the same object route passes the pin at pct=100, and object containment is byte-proven per image.",
+ "gate-proposal": {
+  "option-a": "measure the FLOW census at a fixed pct (restore pct=100 before the FLOW stage) and keep the single pin 3593/a19f95a8",
+  "option-b": "scale-indexed pins (pct=100: 3593/a19f95a8; pct=125: 9564/b2fad8a7 as measured here)",
+  "recommendation": "option-a: one canonical pin keeps the census comparable across profile changes",
+  "root-cause-timeline": "pin calibrated ADR-0234 (90f8b03, 2026-09-25) at pct=100; scale stage landed later in ADR-0261 (62490d0, 2026-10-23 16:32, PR #470) - the FLOW pin predates the stage that changes the scale before FLOW"
+ },
+ "boundary": "kernel/*.c is still compiled by zig cc; the C-free claim covers the compiler lineage and the kotoba object route only. The #108 process-phase stall is a separate known flake and is not used as evidence here."
+}
