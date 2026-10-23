@@ -472,6 +472,18 @@
               (if (< py y) (dock-at st (+ k 1) px py)
                 (if (> py (+ y 36)) (dock-at st (+ k 1) px py) k)))))))))
 
+;; ADR-0255: the tray of minimized windows, bottom left: item i (0 first) is the i-th minimized
+;; window by id, 120 x 24 at (6 + 126 i, vh - 30), inclusive. The id under (px, py) from id k on, or 0.
+(defn tray-at [st k i px py]
+  (if (> k 4) 0
+    (if (= (is-min st k) 0) (tray-at st (+ k 1) i px py)
+      (let [x (+ 6 (* 126 i))
+            y (- (w-at st 4) 30)]
+        (if (< px x) (tray-at st (+ k 1) (+ i 1) px py)
+          (if (> px (+ x 120)) (tray-at st (+ k 1) (+ i 1) px py)
+            (if (< py y) (tray-at st (+ k 1) (+ i 1) px py)
+              (if (> py (+ y 24)) (tray-at st (+ k 1) (+ i 1) px py) k))))))))
+
 (defn restore [st n id]
   (do (release-all st)
       (w-put st 31 (- (w-at st 31) (min-bit id)))
@@ -493,6 +505,7 @@
 (defn press [st sb k1 px py]
   (let [n (w-at st 1)]
     (if (> (dock-at st 1 px py) 0) (restore st n (dock-at st 1 px py))
+    (if (> (tray-at st 1 0 px py) 0) (restore st n (tray-at st 1 0 px py))
     (if (= k1 0) (press-miss st n px py)
       (if (= (w-at st 31) 0)
         (do (capture st (- k1 1) px py)
@@ -513,7 +526,7 @@
                   (capture st (- k1 1) px py)
                   (raise st (- k1 1) n)))
             (do (capture st (- k1 1) px py)
-                (raise st (- k1 1) n)))))))))))
+                (raise st (- k1 1) n))))))))))))
 
 (defn move-to [st k nx ny]
   (let [b (+ 5 (* k 5))]

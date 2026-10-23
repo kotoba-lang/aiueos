@@ -281,6 +281,18 @@
                              [[:rect (+ x 12) (+ top 43) 12 3 (if hc 0x404040 0x595959)]])))))
                     [1 2 3 4])))))
 
+(defn- tray
+  "ADR-0255: one 120 x 24 button per minimized window, by id, at (6 + 126 i, vh - 30), its title in
+  the ink from (x + 6, y + 4), clipped at x + 114."
+  [{:keys [vh minimized pointer hc down titles]}]
+  (vec (mapcat (fn [i k]
+                 (let [x (+ 6 (* 126 i)) y (- vh 30)]
+                   (into [[:rect x y 120 24 (ctl-colour hc down (hot? pointer x y 120 24))]]
+                         (:ops (lay-line {:x (+ x 6) :y (+ y 4) :left (+ x 6) :right (+ x 114)
+                                          :bottom (+ y 26) :wrap? false}
+                                         (take 32 (get titles k)))))))
+               (range) (sort minimized))))
+
 (defn- hc-ink
   "ADR-0247: under the high-contrast palette the text colour is black: every
   glyph that names no colour, and every rect the model draws in the ink, is
@@ -385,7 +397,7 @@
                           [:rect (+ cx 4) (+ y 16) 8 2 (if hc 0x404040 0x595959)]]))
                      (:ops b) (:ops c) caret))))
         stack)
-        (concat (dock scene) (pointer-sprite scene))))))
+        (concat (dock scene) (tray scene) (pointer-sprite scene))))))
 
 ;; --- paint and census -----------------------------------------------------------
 
@@ -722,7 +734,11 @@
        ;; it, raised and focused
        ["min-press" (assoc (at mn [456 146]) :down true)] ["release" (at mn [456 146])]
        ["press-through" (assoc (at mn2 [380 142]) :down true)] ["release" (at mn2 [380 142])]
-       ["restore-press" (assoc (at base [574 772]) :down true)] ["release" (at base [574 772])]])))
+       ["restore-press" (assoc (at base [574 772]) :down true)] ["release" (at base [574 772])]
+       ;; ADR-0255: minimized again, the tray of minimized windows lists it by title, a press on
+       ;; its button at (60, 780) restores it
+       ["min-press-2" (assoc (at mn [456 146]) :down true)] ["release" (at mn [456 146])]
+       ["tray-restore" (assoc (at base [60 780]) :down true)] ["release" (at base [60 780])]])))
 
 ;; The colours the kernel reads out of a draw list for AIUEOS_GUEST_BROWSER_HC:
 ;; the background (op 0), the first glyph's colour (the ink), and the distinct
@@ -1004,7 +1020,8 @@
                 cnt (fn [a b col] (count (filter (fn [[k _ _ w h c]] (and (= k :rect) (= w a) (= h b) (= c col))) ops)))]]
     (println (str "min-frame n=" (+ 19 i) " " ev
                   " reg=" (reduce + (map #(bit-shift-left 1 (dec %)) (:minimized scene)))
-                  " minctl=" (cnt 8 2 0x595959) " dockbar=" (cnt 12 3 0x595959))))
+                  " minctl=" (cnt 8 2 0x595959) " dockbar=" (cnt 12 3 0x595959)
+                  " tray=" (count (filter (fn [[k _ _ w h _]] (and (= k :rect) (= w 120) (= h 24))) ops)))))
   (doseq [[i [ev scene]] (map-indexed vector max-frames)
           :when (>= i 14)
           :let [ops (frame scene)

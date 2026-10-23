@@ -5,6 +5,11 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### desktop: a tray of minimized windows (ADR-0255)
+- While a window is minimized, a titled 120 x 24 button per minimized window sits bottom left;
+  a press restores it (browser-reduce `tray-at`, browser-frame2 `tray`). `guest-browser-minimize`
+  grew from six to ten events. Scorecard C5 stays partial: the list holds minimized windows only.
+
 ### desktop: minimize and restore from the dock (ADR-0254)
 - A minimize control in the titlebar (left of maximize) marks the window in the minimized register
   (surface word 31 bits 4..7): it is neither drawn nor hit, the focus goes to the topmost visible window,
