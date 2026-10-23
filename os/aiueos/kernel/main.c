@@ -2192,8 +2192,8 @@ static int browser_uiux_stage(uint32_t *surface, const uint8_t *font, uint64_t f
    up on the first boot (the choice goes on and is written), Alt down and up on the second boot of the same
    volume (nothing changes the choice, and the frame is high-contrast because the record said so). The stage
    itself is boot-agnostic; the classifier knows which boot it read. */
-extern int aiueos_settings_read(uint32_t *, uint32_t *);
-extern int aiueos_settings_write(uint32_t, uint32_t);
+extern int aiueos_settings_read(uint32_t *, uint32_t *, uint32_t *);
+extern int aiueos_settings_write(uint32_t, uint32_t, uint32_t);
 
 /* ADR-0261: the UI scale stage. Kotoba chooses the scale (Ctrl+= and Ctrl+-, browser-ime.kotoba) and answers
    200000000 + the percent; C magnifies what it paints (framebuffer.c), sets the logical viewport -- surface words 3
@@ -2643,62 +2643,113 @@ static int browser_notify_stage(uint32_t *surface, const uint8_t *font, uint64_t
   return 0;
 }
 
+/* ADR-0269: the settings window. Window 2 is the settings app: its title slot says "Settings" and its body is rebuilt from the
+   three settings after every key -- "Contrast: High|Scale: 125%|Network: On" with 10 between the lines. F10 flips the contrast,
+   Ctrl+= and Ctrl+- the scale, F5 the network setting (a flag the stage holds, 1 = off); the status area shows OFFLINE while the network
+   setting is off, whatever the adapter says. The stage opens the window by a press on launcher button 2 through the reducer, the
+   same path a pointer press takes, and keeps all three settings on the volume. */
+static uint32_t settings_put(uint32_t *surface, uint32_t at, const char *text) {
+  while (*text) surface[at++] = (uint32_t)(uint8_t)*text++;
+  return at;
+}
+
+static void settings_body(uint32_t *surface, uint32_t contrast, uint32_t scale, uint32_t netoff) {
+  uint32_t at = 224;
+  at = settings_put(surface, at, contrast ? "Contrast: High" : "Contrast: Normal");
+  surface[at++] = 10U;
+  at = settings_put(surface, at, "Scale: ");
+  if (scale >= 100U) surface[at++] = 48U + scale / 100U;
+  surface[at++] = 48U + (scale / 10U) % 10U;
+  surface[at++] = 48U + scale % 10U;
+  surface[at++] = 37U;
+  surface[at++] = 10U;
+  at = settings_put(surface, at, netoff ? "Network: Off" : "Network: On");
+  while (at < 288U) surface[at++] = 0;
+}
+
+static uint32_t settings_net_state(uint32_t netoff) {
+  if (netoff) return 1U;
+  return aiueos_virtio_net_ready() ? (aiueos_ipv4_ready() ? 3U : 2U) : 1U;
+}
+
 static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length,
                                   uint64_t dict, uint64_t dict_length) {
   uint64_t sp = (uint64_t)(uintptr_t)surface;
-  uint32_t stored = 0, stored_scale = 100, last = 0xffffffffU, last_scale = 100, written = 0, se = 0, sidle = 0, want;
+  uint32_t stored = 0, stored_scale = 100, stored_netoff = 0, last = 0, last_scale = 100, last_netoff = 0, have = 0;
+  uint32_t written = 0, se = 0, sidle = 0, want, shown = 0, netoff = 0;
   uint32_t physw = aiueos_desktop_width(), physh = aiueos_desktop_height();
-  int valid = aiueos_settings_read(&stored, &stored_scale);
+  int valid = aiueos_settings_read(&stored, &stored_scale, &stored_netoff);
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=");
   serial_decimal(valid ? 1U : 0U);
   serial_string(" contrast=");
   serial_decimal(valid ? stored : 0U);
   serial_string(" scale=");
   serial_decimal(valid ? stored_scale : 100U);
+  serial_string(" net=");
+  serial_decimal(valid ? stored_netoff : 0U);
   serial_string("\r\n");
   if (valid) {
-    surface[2039] = stored; last = stored; last_scale = stored_scale;
+    surface[2039] = stored; last = stored; last_scale = stored_scale; last_netoff = stored_netoff; have = 1;
+    netoff = stored_netoff;
     if (stored_scale != 100U && aiueos_desktop_set_scale(stored_scale)) {
       surface[3] = physw * 100U / stored_scale;
       surface[4] = physh * 100U / stored_scale;
       (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
     }
   }
-  want = valid ? 2U : 6U;
+  /* the settings app: title "Settings" in window 2's slot (it is also launcher button 2's label), then the window */
+  for (unsigned i = 64; i < 96; i++) surface[i] = 0;
+  (void)settings_put(surface, 64, "Settings");
+  settings_body(surface, surface[2039], aiueos_desktop_scale(), netoff);
+  surface[1969] = settings_net_state(netoff);
+  want = valid ? 2U : 8U;
   (void)aiueos_tablet_drain(4000000U);
   (void)aiueos_keyboard_drain(4000000U);
   serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_GO events=");
   serial_decimal(want);
   serial_string("\r\n");
   while (se < want && sidle < 60000U) {
-    uint32_t key = aiueos_keyboard_next_key(1024U), px = 0, hash = 0;
-    int64_t kr, fo;
-    if (!key) { sidle++; continue; }
-    sidle = 0;
-    if ((key >> 2) == 88U) continue;
-    kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
-    if (kr >= 200000000LL && kr < 200000200LL) {
-      uint32_t pct = (uint32_t)(kr - 200000000LL);
-      if (aiueos_desktop_set_scale(pct)) {
-        surface[3] = physw * 100U / pct;
-        surface[4] = physh * 100U / pct;
-        (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+    uint32_t key = 0, px = 0, hash = 0;
+    int64_t fo;
+    if (shown == 0) {
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, 1, 156, 14);
+      (void)kotoba_aiueos_browser_reduce(sp, 8192, 4, 0, 0);
+    } else {
+      int64_t kr;
+      key = aiueos_keyboard_next_key(1024U);
+      if (!key) { sidle++; continue; }
+      sidle = 0;
+      if ((key >> 2) == 88U) continue;
+      if (key == 253U) netoff ^= 1U; /* F5 down: the network setting, a shell flag held here */
+      kr = (int64_t)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, key);
+      if (kr >= 200000000LL && kr < 200000200LL) {
+        uint32_t pct = (uint32_t)(kr - 200000000LL);
+        if (aiueos_desktop_set_scale(pct)) {
+          surface[3] = physw * 100U / pct;
+          surface[4] = physh * 100U / pct;
+          (void)kotoba_aiueos_browser_key(sp, 8192, dict, dict_length, 14U);
+        }
       }
+      se++;
     }
+    settings_body(surface, surface[2039], aiueos_desktop_scale(), netoff);
+    surface[1969] = settings_net_state(netoff);
     fo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
     if (fo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)fo, font, font_length)) {
       hash = aiueos_desktop_colour_census(surface[2039] ? 0x000000U : 0x333333U, &px);
       (void)aiueos_desktop_show();
     }
-    if (surface[2039] < 2U && (surface[2039] != last || aiueos_desktop_scale() != last_scale) &&
-        aiueos_settings_write(surface[2039], aiueos_desktop_scale())) {
+    if (surface[2039] < 2U && (surface[2039] != last || aiueos_desktop_scale() != last_scale || netoff != last_netoff) &&
+        aiueos_settings_write(surface[2039], aiueos_desktop_scale(), netoff)) {
       last = surface[2039];
       last_scale = aiueos_desktop_scale();
+      last_netoff = netoff;
+      have = 1;
       written++;
     }
-    se++;
+    shown++;
     serial_string("AIUEOS_GUEST_BROWSER_SETTINGS n=");
-    serial_decimal(se);
+    serial_decimal(shown);
     serial_string(" key=");
     serial_decimal(key);
     serial_string(" hc=");
@@ -2707,6 +2758,12 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     serial_decimal((uint32_t)(fo < 0 ? -fo : fo));
     serial_string(" pct=");
     serial_decimal(aiueos_desktop_scale());
+    serial_string(" net=");
+    serial_decimal(netoff);
+    serial_string(" win=");
+    serial_decimal(surface[1]);
+    serial_string(",");
+    serial_decimal(surface[2]);
     serial_string(" text-px=");
     serial_decimal(px);
     serial_string(" hash=");
@@ -2714,9 +2771,10 @@ static int browser_settings_stage(uint32_t *surface, const uint8_t *font, uint64
     serial_string(" written=");
     serial_decimal(written);
     serial_string(" stored=");
-    if (last > 1U) serial_string("none"); else serial_decimal(last);
+    if (!have) serial_string("none"); else serial_decimal(last);
     serial_string("\r\n");
   }
+  surface[1969] = 0;
   if (se == want) {
     debug_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK\n");
     serial_string("AIUEOS_GUEST_BROWSER_SETTINGS_OK events=");

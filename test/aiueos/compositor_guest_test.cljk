@@ -1514,25 +1514,15 @@
       (is (= :guest-browser-sign-out-absent (:reason (guest/classify "guest-browser-sign-out" {:serial (str lock-part sign-out-ok)}))))
       (is (= 3 (:exit (guest/classify "guest-browser-sign-out" {:serial ok :qemu-unmeasured? true})))))))
 
-(def ^:private settings-frame-a "hc=1 ops=77 pct=100 text-px=668 hash=bed963dd")
-(def ^:private settings-frame-z "hc=1 ops=77 pct=125 text-px=1757 hash=244cc84c")
-
 (defn- settings-serial
-  "rows: [key frame written stored]; the OK line says how many events were seen"
+  "rows: guest-browser-settings-want rows; the OK line says how many key events (rows minus the opening frame)"
   [boot-line rows]
   (str boot-line
-       (apply str (map-indexed
-                   (fn [i [key frame written stored]]
-                     (str "AIUEOS_GUEST_BROWSER_SETTINGS n=" (inc i) " key=" key " " frame
-                          " written=" written " stored=" stored "\r\n"))
-                   rows))
-       "AIUEOS_GUEST_BROWSER_SETTINGS_OK events=" (count rows) "\r\n"))
-
-(def ^:private settings-boot1-rows
-  [[273 settings-frame-a 1 1] [272 settings-frame-a 1 1] [117 settings-frame-a 1 1]
-   [53 settings-frame-z 2 1] [52 settings-frame-z 2 1] [116 settings-frame-z 2 1]])
-(def ^:private settings-boot2-rows
-  [[225 settings-frame-z 0 1] [224 settings-frame-z 0 1]])
+       (apply str (map (fn [{:keys [n key hc ops pct net px hash written stored]}]
+                         (str "AIUEOS_GUEST_BROWSER_SETTINGS n=" n " key=" key " hc=" hc " ops=" ops " pct=" pct " net=" net
+                              " win=2,2 text-px=" px " hash=" hash " written=" written " stored=" stored "\r\n"))
+                       rows))
+       "AIUEOS_GUEST_BROWSER_SETTINGS_OK events=" (dec (count rows)) "\r\n"))
 
 (deftest guest-browser-settings-classifier
   (let [base (str (apply str (map max-line max-rows)) max-ok (apply str (map max-line ctl-rows)) ctl-ok
@@ -1546,36 +1536,35 @@
         so (apply str (map so-line so-rows))
         so-states (apply str (map lock-state-line so-lock-rows))
         through-sign-out (str lock-part so so-states (so-state-lines 0) sign-out-ok)
-        boot1 (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0 scale=100\r\n" settings-boot1-rows)
-        boot2 (str through-sign-out (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1 scale=125\r\n" settings-boot2-rows))
+        w1 @#'guest/settings-want-1
+        w2 @#'guest/settings-want-2
+        boot1 (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=0 contrast=0 scale=100 net=0\r\n" w1)
+        boot2 (str through-sign-out (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1 scale=125 net=1\r\n" w2))
         run (fn [opts] (guest/classify "guest-browser-settings" opts))]
-    (testing "chosen and written on the first boot, read back on the second: green"
+    (testing "three changes made and written on the first boot, read back on the second: green"
       (let [r (run {:serial boot2 :serial1 boot1})]
         (is (= :guest-browser-settings (:reason r)))
         (is (= 0 (:exit r)))))
     (testing "a second boot that did not find the record is red"
-      (is (= :second-boot-did-not-read-the-choice
-             (:reason (run {:serial (.replace boot2 "valid=1 contrast=1 scale=125" "valid=0 contrast=0 scale=125") :serial1 boot1})))))
-    (testing "a second boot that was told by F10 and not by the volume is red"
-      (is (= :second-boot-was-told-or-wrote
-             (:reason (run {:serial (.replace (.replace boot2 "key=225" "key=273") "key=224" "key=272") :serial1 boot1})))))
-    (testing "a second boot that writes again is red"
-      (is (= :second-boot-was-told-or-wrote
-             (:reason (run {:serial (.replace boot2 "written=0" "written=1") :serial1 boot1})))))
+      (is (= :second-boot-did-not-read-the-settings
+             (:reason (run {:serial (.replace boot2 "valid=1 contrast=1 scale=125 net=1" "valid=0 contrast=0 scale=100 net=0") :serial1 boot1})))))
+    (testing "a second boot that did not read the network setting is red"
+      (is (= :second-boot-did-not-read-the-settings
+             (:reason (run {:serial (.replace boot2 "scale=125 net=1" "scale=125 net=0") :serial1 boot1})))))
+    (testing "a second boot told by the keys and not by the volume is red"
+      (is (= :second-boot-differs-from-model
+             (:reason (run {:serial (.replace boot2 "key=225" "key=253") :serial1 boot1})))))
     (testing "a first boot that already had a record proves nothing and is red"
       (is (= :first-boot-had-a-record
-             (:reason (run {:serial boot2 :serial1 (.replace boot1 "valid=0 contrast=0 scale=100" "valid=1 contrast=1 scale=100")})))))
-    (testing "a choice that was not written is red"
-      (is (= :choice-not-written
-             (:reason (run {:serial boot2 :serial1 (.replace boot1 "written=1 stored=1" "written=0 stored=none")})))))
+             (:reason (run {:serial boot2 :serial1 (.replace boot1 "valid=0 contrast=0 scale=100 net=0" "valid=1 contrast=1 scale=125 net=1")})))))
+    (testing "a change that was not written is red"
+      (is (= :first-boot-differs-from-model
+             (:reason (run {:serial boot2 :serial1 (.replace boot1 "written=3 stored=1" "written=2 stored=1")})))))
     (testing "frames off the model are red"
       (is (= :second-boot-differs-from-model
-             (:reason (run {:serial (.replace boot2 "hc=1 ops=77 pct=125 text-px=1757" "hc=1 ops=81 pct=125 text-px=1757") :serial1 boot1})))))
-    (testing "a second boot that did not read the scale back is red"
-      (is (= :second-boot-did-not-read-the-scale
-             (:reason (run {:serial (.replace boot2 "contrast=1 scale=125" "contrast=1 scale=100") :serial1 boot1})))))
+             (:reason (run {:serial (.replace boot2 "pct=125" "pct=100") :serial1 boot1})))))
     (testing "it needs the sign-out gate green first"
-      (is (= :no-sign-out (:reason (run {:serial (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1 scale=125\r\n" settings-boot2-rows)
+      (is (= :no-sign-out (:reason (run {:serial (settings-serial "AIUEOS_GUEST_BROWSER_SETTINGS_BOOT valid=1 contrast=1 scale=125 net=1\r\n" w2)
                                          :serial1 boot1})))))
     (testing "no lines is absent, unmeasured is exit 3"
       (is (= :guest-browser-settings-absent (:reason (run {:serial through-sign-out :serial1 boot1}))))
