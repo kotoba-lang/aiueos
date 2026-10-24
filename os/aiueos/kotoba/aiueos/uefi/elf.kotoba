@@ -135,14 +135,19 @@
                                     entry (entry-point base win)]
                                 (if (= f0 5)
                                   (if (= f1 6)
-                                    (if (if (< entry p0) 0
-                                          (if (< entry (+ p0 m0)) 1 0))
-                                      (if (if (> (+ p0 m0) p1)
-                                            (if (> (+ p1 m1) p0) 1 0)
-                                            0)
-                                        43
-                                        0)
-                                      42)
+                                    ;; entry must land in segment 0's memory
+                                    ;; window, and the two segments' memory
+                                    ;; windows must not overlap. Spelled as
+                                    ;; nested comparisons: the Kotoba subset
+                                    ;; rejects an :i64 used as an `if` test
+                                    ;; ("a number is never truthy"), and a
+                                    ;; 0/1 flag computed first is exactly that.
+                                    (if (< entry p0) 42
+                                      (if (< entry (+ p0 m0))
+                                        (if (> (+ p0 m0) p1)
+                                          (if (> (+ p1 m1) p0) 43 0)
+                                          0)
+                                        42))
                                     41)
                                   40)))))))
                     8)

@@ -35,8 +35,14 @@
 ;; K entry ran; H ImageHandle survived; S SystemTable survived; C ConOut found;
 ;; N ClearScreen+SetAttribute+OutputString all returned EFI_SUCCESS; A the real
 ;; kernel's headers were admitted; b..f each mutation refused with ITS OWN
-;; reason; Z kernel-system-table still answers, so R9 survived every call.
-(def default-markers "KHSCNAbcdefZ")
+;; reason; P a firmware-allocated page was written and read back; W the
+;; placement rule answered all five clauses; g the fixture's bytes hashed to
+;; the digest shasum computes; h a one-nibble-different digest refused with
+;; reason 4; Z kernel-system-table still answers, so R9 survived every call.
+;; The PWgh half was lost from loader-probe.kotoba by the 8e58e52 cleanup
+;; (2026-09-05) and restored from 2c34fd7 on 2026-10-24; see
+;; docs/evidence/aiueos-jun31-kotoba-loader-reachability-20261024/.
+(def default-markers "KHSCNAbcdefPWghZ")
 
 ;; The reasons `aiueos.uefi.elf/admit` gives for the six headers, in order.
 ;; Not "all non-zero": each names one clause, and swapping two of these
@@ -81,6 +87,14 @@
                           "--source-path" source-path
                           "--target" "x86_64-aiueos-uefi-v1"
                           "--artifact" "image"
+                          ;; The digest path hashes 176 bytes as x86-64 with a
+                          ;; 512-byte state, and amu meters fuel by default:
+                          ;; with the default budget the probe stops dead after
+                          ;; marker P/W and never reaches isa-debug-exit
+                          ;; (measured 2026-10-24, debugcon "KHSCNAbcdefPW",
+                          ;; QEMU exit 0). 8,000,000 completes the digest path
+                          ;; (debugcon "KHSCNAbcdefPWghZ", exit 33).
+                          "--fuel" "8000000"
                           "--output" efi
                           "--jvm-free"]
                          {})]
