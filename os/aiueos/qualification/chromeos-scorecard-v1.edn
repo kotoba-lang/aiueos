@@ -65,7 +65,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
-   :note "JUN-140: the virtio-gpu scanout binding is weak against display-info changes (zoom-to-fit gives a blue screen)."
+   :note "Measured 2026-10-24: the driver reads GET_DISPLAY_INFO once and never drains the controlq for VIRTIO_GPU_EVENT_DISPLAY; gpu_ctrl assumes exactly one used-ring entry per command. A host resize sends an async event the guest ignores and can desynchronise the next command; the present path rejects a changed width/height. A fix needs event draining plus a re-read and re-bind on display change."
    }
   {:id :A3 :category :boot :title "Install from USB"
    :weight 3 :required true :required-level :release
