@@ -54,9 +54,9 @@
    :procedure "Power on the reference machine with the release image; read back the display and the serial log."
    :expected "A usable desktop within 60 s of power-on; no evidence-job exit (the kernel does not qemu_exit on a failed stage); the serial log carries the boot markers."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["README.md capability table" "gate guest-session" "ADR-0220"]
-   :note "OVMF boots to ring 0 and to the guest desktop under QEMU; on this boot a failed stage ends the run (JUN-140). No physical boot has been run (README: P5 is :spec)."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/boot-times.log" "README.md capability table" "ADR-0220"]
+   :note "Measured 2026-10-24: a production release image (no test-only input define) reaches the guest desktop; the QMP injector delivers a real virtio-keyboard event (AIUEOS_VIRTIO_INPUT_OK), the desktop markers appear and no evidence stage stops. The boot log records 62 s from QEMU start to the 60 s timeout with the desktop up. Caveat: the display is read back from the serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists. A failed stage no longer ends the run."
    }
   {:id :A2 :category :boot :title "Desktop survives a display change"
    :weight 2 :required true :required-level :device

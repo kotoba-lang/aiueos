@@ -21,16 +21,16 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 38%.** Twenty-five rows are `:pass`, each by a receipt of a run in the reference VM (below): B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F4, G4, H4, I1, I4, I5, I7 and I8
-(weight 38 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 41%.** Twenty-six rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F4, G4, H4, I1, I4, I5, I7 and I8
+(weight 41 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
 **Current-tree receipt.** `os/aiueos/qualification/receipts/vm-20261024/ui-current` is one boot of the tree after the size-optimized guest-browser build (ADR-0270) and the backup stage (ADR-0271), with 33 profiles green: the 28 of the first `ui` receipt (vm-20261023) plus clock, layout, notify, passkey and backup. The rows' own receipts stay the ones they cite; this one shows the passes above still hold on the current build.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 57.5% of the required weight (it counts the rows above too) (a row whose behaviour is gated
-on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 9 of 15, input 7.5 of 12, boot 6.5 of 10, web 6 of 20,
-security 4 of 9, storage and network 4 of 9, identity 1.5 of 6, power and accessibility 1.5 of 10, update and recovery 0 of 9.
+Beside the score, and never added to it, the **QEMU-level progress** is 59% of the required weight (it counts the rows above too) (a row whose behaviour is gated
+on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 14.5 of 15, input 9 of 12, boot 8 of 10, web 6 of 20,
+security 4 of 9, storage and network 4.5 of 9, identity 6 of 6, power and accessibility 6 of 10, update and recovery 1 of 9.
 
 **Against the earlier "about 10%".** That figure was a provisional estimate of product readiness (JUN-89) with no scale behind it;
 it cannot be reproduced and is replaced. Under this scale the answer is 0%, because every required row needs the real machine or a
@@ -53,8 +53,9 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | D5 Other layouts | 1 | US and JIS in English mode | two layouts, English mode only, not persisted |
 | C7 Notifications | 1 | toasts, dismiss, a list; frames equal a model | raised by a test hook; keyboard-only |
 | F4 Ethernet and DHCP | 1 | lease 10.0.2.15 / router 10.0.2.2 and three refusals | a virtio NIC on SLIRP, not the RTL8125 |
+| A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The eight weigh 11 points: rejecting all of them would take the score from 38% to 27%. The 27% is the stricter figure; the 38% is what the checker prints.
+The nine weigh 14 points: rejecting all of them would take the score from 41% to 27%. The 27% is the stricter figure; the 41% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 
