@@ -114,16 +114,19 @@ negative control must refuse. Physical NIC and full ownership-policy
 qualification, empty/limit firmware execution and successor adoption remain
 open.
 
-The latest full15 kernel now stops at debug_link/submit-bus3-frame region
-proof(E7106, global SIR8339); the full27 live root stops at missing native
-kernel-value-provider-queue. Keep all source declarations and existing
-refusals. Explicit whole-graph region contracts and live queue/capability/
-domain layout must be closed before media or desktop/input acceptance.
+The full15 kernel now compiles and reproduces its ELF through the engineering
+native region-graph solver, then packages through the native PCI v6 EFI
+route. All functions and immutable owner dependencies are retained. See
+[DMA contracts](native-dma-region-contracts.md) for the corrected2048-byte
+RX buffer bounds and independently observed QEMU snapshot controls.
+The full27 live root still needs queue/capability/domain and entry ABI work.
+Native x86/controller adoption remains required before media/desktop acceptance.
 
 
 Latest baseline: main0486b715e/PR1535 is integrated. Fresh ARM full37
 F1=F2 is0066017a8330d960..., with all24 runtime and native fixture
 regressions. All13 prior QEMU artifact/observer identities match the new
 producer outputs exactly; latest compiler/source binding is recorded in
-Amu's aiueos-pci-current-main-20261024 evidence. Whole15/27 refuse at the
-same named boundaries and each still rejects6 lock corruptions.
+Amu's aiueos-pci-current-main-20261024 evidence. Those older whole-graph
+refusals and six lock corruptions remain immutable historical receipts;
+the newer DMA engineering candidate is recorded separately.

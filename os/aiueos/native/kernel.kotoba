@@ -1,10 +1,7 @@
 (ns aiueos.native.kernel
-  ;; `main` is the only name aiueos.native.value-runtime-kernel takes from this
-  ;; module, and `compile-project` refuses a module without an explicit export
-  ;; vector (ADR-0058). Adding it is inert for the production path: the
-  ;; single-source compile the build script runs emits byte-identical artifacts
-  ;; with and without it -- code sha c3bd9664…, binary sha b64afc94…, both
-  ;; unchanged, and the export symbol stays kotoba_aiueos_probe.
+  ;; The live root links main and the explicit vector-6 callback. Namespace
+  ;; exports are linker interfaces; only the selected image root owns the
+  ;; actual boot/interrupt ABI entries.
   (:require [native.watchdog :as watchdog]
              [native.rtl8125 :as rtl]
             [native.serial :as serial]
@@ -995,12 +992,14 @@
                                           wd-mark (stream/stream-log
                                                    stream-win stream-mmio
                                                    stream-log-frame
-                                                   (+ wd-byte (* 0 wd-m2)))]
+                                                   (+ wd-byte (* 0 wd-m2)))
+                                          bus3-ready (if (= dbg-init 0) 1 0)]
                                       (stream/stream-resident
                                        stream-win
                                        stream-mmio
                                        stream-scratch
-                                       (if (= dbg-init 0) bus3-dma-pages 0)
+                                       bus3-dma-pages
+                                       bus3-ready
                                        ;; The sequencing multiply rides the
                                        ;; CYCLE COUNT, not the DMA region: a
                                        ;; kernel memory base must NAME a region

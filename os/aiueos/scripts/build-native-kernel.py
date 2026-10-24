@@ -137,10 +137,21 @@ def main(amu):
             images.append(pin(image))
         if images[0] != images[1] or {p: pin(p) for p in sources} != sources or pin(compiler)['sha256'] != expected:
             raise ValueError('native reproduction or immutable input readback differs')
-        state.update(state='NATIVE_IMAGE_CANDIDATE', images=images,
+        efi_images = []
+        for name in ['BOOTX64.EFI', 'BOOTX64.reproduced.EFI']:
+            efi = out / name
+            run('package-' + name, ['package-aiueos-boot', out / 'KERNEL.ELF',
+                '--output', efi, '--pci-resources', 'v1'])
+            if not efi.is_file() or efi.read_bytes().count((out / 'KERNEL.ELF').read_bytes()) != 1:
+                raise ValueError('native EFI does not contain the exact kernel once')
+            efi_images.append(pin(efi))
+        if efi_images[0] != efi_images[1] or {p: pin(p) for p in sources} != sources or pin(compiler)['sha256'] != expected:
+            raise ValueError('native EFI reproduction or immutable input readback differs')
+        state.update(state='NATIVE_IMAGE_CANDIDATE', images=images, efiImages=efi_images,
+                     bootProtocol='pci-resources-v1',
                      qualification='native artifact reproduction only; ISR/live/runtime gates remain required')
         save()
-        print(state['state'], len(modules), 'locked modules')
+        print(state['state'], len(modules), 'locked modules; reproduced ELF and PCI v6 EFI')
     except Exception as exc:
         if not state['state'].startswith('BLOCKED_'):
             state['state'] = 'BLOCKED_INPUT_OR_REPRODUCTION'

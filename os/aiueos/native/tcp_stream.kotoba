@@ -44,6 +44,7 @@
             tcb-status tcb-init tcb-state-store held-table-store
             held-table-load accept-decision held-joinable delivery-advance
             deliver-held-run stage-payload-at
+            snapshot-rx-frame
             stream-connect stream-resident receive-established stream-log
             debug-run-cycles]))
 
@@ -304,9 +305,10 @@
       (rx-ring-zero ring (+ offset 1))
       0)))
 
-(defn rx-ring-descriptor-own [win index]
+(defn rx-ring-descriptor-own [win win-bytes index]
   ;; OWN-bit discipline (wait-rx-command's bit-31 poll), per descriptor.
-  (if (= (bit-and (kernel-load-u32-16k win dma-window-bytes
+  ;; This exported diagnostic has no kernel caller from which to infer size.
+  (if (= (bit-and (kernel-load-u32-16k win win-bytes
                                        (+ (rx-ring-descriptor-address 0 index) 28))
                   descriptor-own)
          0)
@@ -516,7 +518,7 @@
         (stage-payload-at win source-offset staging-offset (- count 1) staging)
         0))))
 
-(defn build-ack [tcb tx-frame]
+(defn build-ack [tcb-parent tcb-bytes frame-parent frame-bytes]
   ;; A pure-ACK segment for the fixed 4-tuple, stream seq/ack from the TCB.
   ;; Mirrors the diagnostics profile's frame discipline (link/frame bound,
   ;; IPv4 + TCP checksums over the same primitives) without touching it.
@@ -524,7 +526,10 @@
   ;; region) stays with the diagnostics profile's mechanics for this tranche;
   ;; the physical tranche wires the submit through the same two-TX-descriptor
   ;; ring ADR-0134 section 2 lays out.
-  (let [src 172818442
+  ;; Retain this diagnostic with explicit contracts even without a boot caller.
+  (let [tcb (kernel-subregion tcb-parent tcb-bytes 0 4096)
+        tx-frame (kernel-subregion frame-parent frame-bytes 0 4096)
+        src 172818442
         dst 172818433
         tcp-length 20
         total-length 40
@@ -619,17 +624,43 @@
      (* (kernel-load-u8-4k frame 4096 (+ offset 2)) 256)
      (kernel-load-u8-4k frame 4096 (+ offset 3))))
 
-(defn rx-buffer-region [win index]
-  ;; The frame helpers need a (base, 4096) pair whose base NAMES a region:
-  ;; each buffer is a static-offset subregion of the 16 KiB window (the same
-  ;; offsets rx-ring-init programmed into the descriptors).
-  (if (= index 0)
-    (kernel-subregion win 16384 rx-buffer-a-offset 4096)
-    (if (= index 1)
-      (kernel-subregion win 16384 rx-buffer-b-offset 4096)
-      (if (= index 2)
-        (kernel-subregion win 16384 rx-buffer-c-offset 4096)
-        (kernel-subregion win 16384 rx-buffer-d-offset 4096)))))
+(defn rx-buffer-region [win win-bytes index]
+  ;; All four DMA buffers are 2048 bytes. In particular the last starts at
+  ;;14336 and ends at16384; a4096-byte region there would cross the window.
+  (let [offset (if (= index 0) rx-buffer-a-offset
+                 (if (= index 1) rx-buffer-b-offset
+                   (if (= index 2) rx-buffer-c-offset rx-buffer-d-offset)))]
+    (kernel-subregion win win-bytes offset 2048)))
+
+(defn- clear-rx-snapshot [frame offset]
+  (if (= offset 4096) 1
+    (let [stored (kernel-store-u64-4k frame 4096 offset 0)]
+      (if (= (+ (kernel-load-u64-4k frame 4096 offset) (* 0 stored)) 0)
+        (clear-rx-snapshot frame (+ offset 8)) 0))))
+
+(defn- copy-rx-snapshot [source frame offset bytes]
+  (if (= offset bytes) 1
+    (let [byte (kernel-load-u8-4k source 2048 offset)
+          stored (kernel-store-u8-4k frame 4096 offset byte)]
+      (if (= (+ (kernel-load-u8-4k frame 4096 offset) (* 0 stored)) byte)
+        (copy-rx-snapshot source frame (+ offset 1) bytes) 0))))
+
+(defn snapshot-rx-frame [win index bytes]
+  ;; Page14 is separate from the DMA window(pages10..13), TX and staging.
+  ;; Snapshot exactly the received bytes, zeroing the remainder before parse.
+  ;; Validate before changing the snapshot; an invalid request leaves it intact.
+  (let [frame (kernel-owned-page 14)
+        win-end (+ win 16384) frame-end (+ frame 4096)]
+    (if (and (> win 0) (> win-end win) (> frame-end frame)
+             (or (<= frame-end win) (>= frame win-end))
+             (>= index 0) (< index 4) (> bytes 0) (<= bytes 2048))
+      (let [offset (if (= index 0) rx-buffer-a-offset
+                     (if (= index 1) rx-buffer-b-offset
+                       (if (= index 2) rx-buffer-c-offset rx-buffer-d-offset)))
+            source (kernel-subregion win 16384 offset 2048)
+            cleared (clear-rx-snapshot frame 0)]
+        (if (= cleared 1) (copy-rx-snapshot source frame 0 bytes) 0))
+      0)))
 
 (defn copy-device-mac-stream [frame frame-offset mmio index]
   (if (= index 6)
@@ -874,7 +905,8 @@
           (do (kernel-store-u64-4k tcb 4096 (* tcb-slot-tick 8) (- remaining 1))
               (receive-syn-ack win mmio scratch))
           (let [bytes (bit-and command 16383)
-                valid-command (and (= (bit-and command 1048576) 0)
+                copied (snapshot-rx-frame win head bytes)
+                valid-command (and (= copied 1) (= (bit-and command 1048576) 0)
                                    (not (= (bit-and command 33554432) 0))
                                    (not (= (bit-and command 16777216) 0))
                                    (>= bytes 58) (<= bytes 2048))
@@ -883,13 +915,7 @@
                 want-ack (seq-core/wrap (+ iss 1))
                 src 172818433
                 dst 172818442
-                peer-frame (if (= head 0)
-                             (kernel-subregion win 16384 rx-buffer-a-offset 4096)
-                             (if (= head 1)
-                               (kernel-subregion win 16384 rx-buffer-b-offset 4096)
-                               (if (= head 2)
-                                 (kernel-subregion win 16384 rx-buffer-c-offset 4096)
-                                 (kernel-subregion win 16384 rx-buffer-d-offset 4096))))
+                peer-frame (kernel-owned-page 14)
                 eth-ok (if (and (>= length 54)
                                 (= (frame-be16-stream peer-frame 12) 2048))
                          1
@@ -1018,12 +1044,17 @@
                                       30))))))))))))))))))))
 
 
-(defn zero-prefix-stream [frame bytes offset]
+(defn- zero-prefix-loop [frame bytes offset]
   (if (= offset bytes)
     1
     (if (= (kernel-load-u8-4k frame 4096 offset) 0)
-      (zero-prefix-stream frame bytes (+ offset 1))
+      (zero-prefix-loop frame bytes (+ offset 1))
       0)))
+
+(defn zero-prefix-stream [parent parent-bytes bytes offset]
+  ;; Keep the unused recursive diagnostic, with an explicit parent contract.
+  (let [frame (kernel-subregion parent parent-bytes 0 4096)]
+    (zero-prefix-loop frame bytes offset)))
 
 ;; ── stream netlog: the same UDP receipt the diagnostics profile emits, ──────
 ;; restated so the stream can report its own stages to the Mac's 7777 logger
@@ -1207,13 +1238,8 @@
           (+ (receive-established win mmio scratch (- remaining 1)) (* 0 l)))
         (let [bytes (bit-and command 16383)
               head-buffer (bit-and head 3)
-              frame (if (= head-buffer 0)
-                      (kernel-subregion win 16384 rx-buffer-a-offset 4096)
-                      (if (= head-buffer 1)
-                        (kernel-subregion win 16384 rx-buffer-b-offset 4096)
-                        (if (= head-buffer 2)
-                          (kernel-subregion win 16384 rx-buffer-c-offset 4096)
-                          (kernel-subregion win 16384 rx-buffer-d-offset 4096))))
+              copied (snapshot-rx-frame win head-buffer bytes)
+              frame (kernel-owned-page 14)
               ;; The segment says where its payload is; it was being assumed.
               ;; payload = bytes - 54 counted TCP options AND the Ethernet
               ;; pad/FCS as data (a 60-byte FIN read as 6 bytes of payload),
@@ -1225,7 +1251,7 @@
               payload-start (+ 34 doff)
               payload (- (- ip-total 20) doff)
               seg-seq (frame-be32-stream frame 38)
-              valid-command (and (= (bit-and command 1048576) 0)
+              valid-command (and (= copied 1) (= (bit-and command 1048576) 0)
                                  (not (= (bit-and command 33554432) 0))
                                  (not (= (bit-and command 16777216) 0))
                                  (>= bytes 58) (<= bytes 2048)
@@ -1467,7 +1493,7 @@
 ;; step, not the boot, is the unit and that the host holds the budget; when
 ;; that lands this function is deleted rather than tuned.
 
-(defn stream-resident [win mmio scratch bus3-dma remaining]
+(defn stream-resident [win mmio scratch bus3-dma bus3-ready remaining]
   ;; Plan A-2: the stream stage never halts the machine. Each cycle fully
   ;; re-arms (ring + TCB), connects, runs one ESTABLISHED window, logs the
   ;; outcome, and starts the next cycle. The cycle count rides
@@ -1476,13 +1502,13 @@
   ;; then needed only when the Mac-side artifact changes.
   ;;
   ;; LAN2 rides along: one non-blocking look at bus3's RX descriptor per
-  ;; cycle. `bus3-dma` is 0 unless debug-init returned ready, so a board
-  ;; without the second NIC skips it entirely and never touches that window.
+  ;; cycle. Keep the owned DMA region intact and carry readiness separately.
+  ;; A missing second NIC skips the operation without forging a null region.
   ;;
   ;; `tcb` is derived here rather than passed: it has always been
   ;; `win + 4096` (the stream lays its RX ring at +1024 and its buffers at
-  ;; +8192, leaving +4096..+8192 unused), and the native ABI caps a function
-  ;; at five parameters -- which this one was already using.
+  ;; +8192, leaving +4096..+8192 unused). Region identity and readiness
+  ;; remain independent arguments in the native project ABI.
   ;;
   ;; ONCE PER CYCLE is the honest latency, and a cycle is a whole connect plus
   ;; a receive window with 200M-iteration bounded waits. That is fine for
@@ -1620,16 +1646,16 @@
         ;; enqueues nothing, so a board that never says it is here is a board
         ;; that never gets a job. D8 is the sentinel, the byte after it is
         ;; debug-hello's status (0 = the line left the NIC).
-        hello (if (and (= cycles 0) (not (= bus3-dma 0)))
+        hello (if (and (= cycles 0) (= bus3-ready 1))
                 (debug/debug-hello bus3-dma nonce)
                 0)
-        hello-mark (if (and (= cycles 0) (not (= bus3-dma 0)))
+        hello-mark (if (and (= cycles 0) (= bus3-ready 1))
                      (stream-log win mmio log-frame 216)
                      0)
-        hello-logged (if (and (= cycles 0) (not (= bus3-dma 0)))
+        hello-logged (if (and (= cycles 0) (= bus3-ready 1))
                        (stream-log win mmio log-frame (+ hello (* 0 hello-mark)))
                        0)
-        bus3 (if (= bus3-dma 0)
+        bus3 (if (not (= bus3-ready 1))
                0
                (+ (debug/debug-tick bus3-dma nonce) (* 0 hello-logged)))
         ;; Quiet when nothing arrived -- which is every cycle until someone
@@ -1709,4 +1735,4 @@
                  connect)]
     (stream-log win mmio log-frame
                 (+ 12 result (* 0 (+ cycles bus3-logged reboot-ignored))))
-    (stream-resident win mmio scratch bus3-dma (- remaining 1)))))
+    (stream-resident win mmio scratch bus3-dma bus3-ready (- remaining 1)))))

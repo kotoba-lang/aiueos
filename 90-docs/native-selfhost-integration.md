@@ -68,9 +68,13 @@ the shared v5/v6 map offset160 and obtains scratch pages/windows through those c
 TX/RX descriptor pages are narrowed explicitly and use4KiB memory instructions.
 All-caller private helper extents now retain exact canonical region proof,
 including identity-only tail argument writes. Three-module native QEMU helper
-fixtures pass with exact result/fuel. The latest full15-module build refuses
-E7106 at `debug_link/submit-bus3-frame`, global SIR8339, with no artifact.
-The full27 live root stops at missing `kernel-value-provider-queue`.
+fixtures pass with exact result/fuel. The newer full15-module engineering
+build reproduces its ELF and native PCI v6 EFI. The source now uses separate
+readiness and bounded2048-byte RX buffers, copied into an owned4096-byte
+snapshot. All ten functional snapshot checks pass in QEMU, with independent
+memory readback and a valid-image refusal control. This is not full OS boot.
+See [DMA contracts](native-dma-region-contracts.md). The full27 live root
+still needs `kernel-value-provider-queue` and its context/export ABI.
 The retired type11 MMIO
 prototype was removed before public adoption: UEFI firmware classifications
 cannot grant OS device ownership. See `native-pci-resource-handoff.md` for

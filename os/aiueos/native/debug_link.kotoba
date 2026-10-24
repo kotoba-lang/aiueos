@@ -420,13 +420,17 @@
 ;; not, the fault is ours and no amount of cabling will fix it.
 (def tx-loopback-bits 393216)                  ; (1 << 17) | (1 << 18)
 
-(defn loopback-selftest [mmio dma-pages]
+(defn loopback-selftest [mmio-parent mmio-bytes dma-parent dma-bytes]
   ;; 0  the frame came back -- rings, DMA and both engines work
   ;; 1  the frame could not be built
   ;; 2  the transmit did not complete
   ;; 3  the transmit completed but nothing was received
   ;; 4  received, but the re-arm for normal operation failed
-  (let [rx (kernel-subregion dma-pages 16384 4096 4096)
+  ;; This retained diagnostic has no boot caller. Declare its two region
+  ;; pairs explicitly, then narrow them; an absent call cannot infer sizes.
+  (let [mmio (kernel-subregion mmio-parent mmio-bytes 0 512)
+        dma-pages (kernel-subregion dma-parent dma-bytes 0 16384)
+        rx (kernel-subregion dma-pages 16384 4096 4096)
         rx-frame (kernel-subregion dma-pages 16384 12288 4096)
         tx-frame (kernel-subregion dma-pages 16384 8192 4096)
         saved (kernel-load-u32 mmio 512 64)

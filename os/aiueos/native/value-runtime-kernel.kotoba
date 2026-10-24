@@ -7,7 +7,7 @@
             [aiueos.value-runtime-provider-policy :as provider]
             [aiueos.value-runtime-provider-transport :as transport]
             [aiueos.value-runtime-cas-verify :as cas])
-  (:export [main aiueos-value-runtime-entry aiueos-value-runtime-syscall-plan
+  (:export [main aiueos-isr-6 aiueos-value-runtime-entry aiueos-value-runtime-syscall-plan
             aiueos-value-runtime-publish-domain
             aiueos-value-runtime-provider-status
             aiueos-value-runtime-capability-grant
@@ -18,6 +18,11 @@
 ;; C-free integration image root. The ordinary boot entry remains the native
 ;; kernel's main function; the ValueRuntime entry is linked into the same
 ;; sealed KIR/native image instead of being supplied as a foreign object.
+
+;; A namespace export is a linker interface. The image root must explicitly
+;; retain the kernel's actual vector-6 callback in its interrupt entry table.
+(defn aiueos-isr-6 [vector :i64 error :i64 rip :i64 rsp :i64] :i64
+  (kernel/aiueos-isr-6 vector error rip rsp))
 
 (defn aiueos-value-runtime-entry
   [arena :i64 entry-profile :i64 user-page :i64
