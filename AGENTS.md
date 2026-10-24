@@ -12,11 +12,18 @@ C/Zig reference image build and installed NBB/babashka; `test` installed
 Java/Clojure/NBB and ran hosted contracts/lint/security-adoption; and
 `edn-contracts` used babashka. No disabled legacy workflow remains.
 
-There is currently **no replacement AIUEOS native CI gate**. Removal is not
+Native consumer CI runs in the existing private `kotoba-lang/org-ietf-tcp`
+repository because the final TCP dependency is private. Its workflow pins
+the exact AIUEOS/Amu sources and all five owner revisions, using the repo's
+existing read-only token without exporting private source to this public
+repository. Native Linux x86 reproduces
+the full kernel ELF/EFI and the full-graph DMA probe; QEMU must accept the
+actual snapshot mechanism and reject a valid image lacking its receipts.
+This is a component gate. Acceptance also requires the pinned Amu source's
+native x86/controller CI. Removal of the old workflow is not
 a passing check. Native kernel objects are a separate compiler capability;
 they do not qualify a complete selfhost-built kernel/EFI/GPT image or boot.
-Until the native closure and its positive plus failing controls execute,
-CDCI coverage is absent for hosted CLJC contracts, lint, security adoption,
+The new gate does not replace coverage for hosted CLJC contracts, lint, security adoption,
 example EDN reading, journal recovery, corrupted payload refusal, release
 media and Multiboot/GRUB boots previously declared by that workflow.
 
