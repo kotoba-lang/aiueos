@@ -396,9 +396,9 @@
    :procedure "Write and read back files on the internal disk across a reboot."
    :expected "Contents are intact; a power cut does not corrupt the disk."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["README.md capability table"]
-   :note "NVMe boot and read under QEMU; no physical disk."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/kernel-serial.log"]
+   :note "Measured 2026-10-24 in the A1 production boot: AIUEOS_VIRTIO_BLK_OK reads the internal disk; AIUEOS_JOURNAL_OK append-readback; AIUEOS_JOURNAL_RECOVERY_OK alternate-slot recovery; AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo across a reboot. Caveat: the durable payloads are journal/object records, not arbitrary files; the QEMU device is virtio-blk on the data image, not a physical NVMe; 'power cut' is the journal's crash-recovery path, not a host power loss."
    }
   {:id :F2 :category :storage :title "A durable file system"
    :weight 1 :required true :required-level :device
