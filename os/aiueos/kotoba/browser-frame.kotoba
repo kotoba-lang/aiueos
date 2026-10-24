@@ -41,7 +41,7 @@
 ;;   -5 ops region too small
 
 (ns aiueos.browser-frame
-  (:export [aiueos-browser-frame main]))
+  (:export [kotoba_aiueos_browser_frame]))
 
 ;; The state size is checked once at the entry (it must be 128), so the
 ;; helpers below read with the constant.
@@ -82,9 +82,10 @@
 (defn title-rgb [focused] (if (= focused 1) 14215167 14541546))
 
 (defn put-window-op [r st b height rgb]
-  (do (put-geom r (w-at st (+ b 1)) (w-at st (+ b 2))
-                (w-at st (+ b 3)) (if (= height 0) (w-at st (+ b 4)) height))
-      (put-kind-rgb r rgb)))
+  (let [x (w-at st (+ b 1)) y (w-at st (+ b 2)) w (w-at st (+ b 3))
+        h (if (= height 0) (w-at st (+ b 4)) height)]
+    (do (put-geom r x y w h)
+        (put-kind-rgb r rgb))))
 
 ;; Each op's 24-byte region is spelled `kernel-subregion` at the call: the
 ;; kernel-memory rule is that a base names a region, so neither a let-bound
@@ -100,23 +101,23 @@
     (do (emit-window st ops ob k)
         (emit st ops ob (+ k 1)))))
 
-(defn aiueos-browser-frame [st sb ops ob]
+(defn kotoba_aiueos_browser_frame [st sb ops ob]
   (if (= st 0) -1
     (if (= ops 0) -1
       (if (not (= sb 128)) -1
-        (let [abi (w-at st 0)
-              n (w-at st 1)
-              focus (w-at st 2)
-              vw (w-at st 3)
-              vh (w-at st 4)]
+        (let [s (kernel-subregion st sb 0 128)
+              abi (w-at s 0)
+              n (w-at s 1)
+              focus (w-at s 2)
+              vw (w-at s 3)
+              vh (w-at s 4)]
           (if (not (= abi 1)) -2
             (if (< n 1) -2
               (if (> n 4) -2
-                (if (= (has-id st n 0 focus) 0) -3
-                  (if (= (rects-ok st n 0 vw vh) 0) -4
+                (if (= (has-id s n 0 focus) 0) -3
+                  (if (= (rects-ok s n 0 vw vh) 0) -4
                     (if (< ob (* 24 (+ 1 (* 2 n)))) -5
                       (do (put-geom (kernel-subregion ops ob 0 24) 0 0 vw vh)
                           (put-kind-rgb (kernel-subregion ops ob 0 24) 16119544)
-                          (emit st ops ob 0)))))))))))))
+                          (emit s ops ob 0)))))))))))))
 
-(defn main [] 0)
