@@ -26,7 +26,12 @@ queue capacity, locking and ticket exhaustion. The independent QEMU observer
 reads the receipt, the private domain map, both arenas and queue state. This
 is a CPL0 mechanism test with a bounded fuel budget, not exact fuel parity.
 
-Typed live export admission and its actual guarded caller, owned user pages,
-CPL3/SYSCALL, canonical value/token binding and full kernel runtime remain
-required before native media or desktop/input can be qualified. A successful
-integrity check does not prove canonical decoding or token identity.
+The successor typed gate links eight exact root roles, separately from ISR
+roots. Its private call table is at30208,96-byte kernel request at32896 and
+four request pages at131072; the v2 RW extent is147456 bytes. Its sixteen
+actual guarded-call checks and the v3 private-page/CPL3 cases have separate
+receipts. The diagnostic media and desktop build on those mechanisms; see
+[the integration ledger](native-selfhost-integration.md) for exact-head
+native x86/controller adoption. Canonical value/token binding, preemptive
+scheduling and full kernel runtime remain separate. A successful integrity
+check does not prove canonical decoding or token identity.
