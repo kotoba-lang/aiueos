@@ -48,7 +48,7 @@
 ;; A refusal leaves words 0 and 5..1573 as they were.
 
 (ns aiueos.browser-damage
-  (:export [aiueos-browser-damage main]))
+  (:export [kotoba_aiueos_browser_damage]))
 
 (defn hw [h i]
   (kernel-load-u32 (kernel-subregion h 8192 (* i 4) 4) 4 0))
@@ -156,20 +156,23 @@
           (hput h 0 n)
           d))))
 
-(defn aiueos-browser-damage [o ob h hb n]
+(defn damage-body [o ob h n]
+  (if (< n 1) -2
+    (if (> n 261) -2
+      (if (< ob (* n 24)) -2
+        (if (= (hw h 5) 0) -3
+          (if (= (hw h 6) 0) -3
+            (if (> (hw h 0) 261) -3
+              (if (= (cur-kinds-ok o ob 0 n) 0) -4
+                (if (= (prev-kinds-ok h 0 (hw h 0)) 0) -4
+                  (do (hput h 2000 n)
+                      (hput h 2001 0)
+                      (decide o ob h n)))))))))))
+
+;; The history's size is checked once here (it must be 8192) and the history is then narrowed to that constant window, which the helpers
+;; read and write with the constant; the draw-list region keeps its own length parameter.
+(defn kotoba_aiueos_browser_damage [o ob h hb n]
   (if (= o 0) -1
     (if (= h 0) -1
       (if (not (= hb 8192)) -1
-        (if (< n 1) -2
-          (if (> n 261) -2
-            (if (< ob (* n 24)) -2
-              (if (= (hw h 5) 0) -3
-                (if (= (hw h 6) 0) -3
-                  (if (> (hw h 0) 261) -3
-                    (if (= (cur-kinds-ok o ob 0 n) 0) -4
-                      (if (= (prev-kinds-ok h 0 (hw h 0)) 0) -4
-                        (do (hput h 2000 n)
-                            (hput h 2001 0)
-                            (decide o ob h n))))))))))))))
-
-(defn main [] 0)
+        (damage-body o ob (kernel-subregion h hb 0 8192) n)))))
