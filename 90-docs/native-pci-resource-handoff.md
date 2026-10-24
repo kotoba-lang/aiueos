@@ -119,3 +119,11 @@ proof(E7106, global SIR8339); the full27 live root stops at missing native
 kernel-value-provider-queue. Keep all source declarations and existing
 refusals. Explicit whole-graph region contracts and live queue/capability/
 domain layout must be closed before media or desktop/input acceptance.
+
+
+Latest baseline: main0486b715e/PR1535 is integrated. Fresh ARM full37
+F1=F2 is0066017a8330d960..., with all24 runtime and native fixture
+regressions. All13 prior QEMU artifact/observer identities match the new
+producer outputs exactly; latest compiler/source binding is recorded in
+Amu's aiueos-pci-current-main-20261024 evidence. Whole15/27 refuse at the
+same named boundaries and each still rejects6 lock corruptions.
