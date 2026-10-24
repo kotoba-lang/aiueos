@@ -37,6 +37,13 @@ Nine ValueRuntime/arena sources now use their canonical namespace paths in
 the move. Historical hosted verifiers that name the old paths remain retired
 migration inventory; do not execute them or recreate duplicate source copies.
 
+The R2 reference claim below is historical C/reference-runtime evidence,
+not acceptance of the current native selfhost chain. Amu #1547 is merged
+with native x86/controller qualification; the whole AIUEOS kernel, live
+runtime, native media and desktop/input still follow the open gates in
+`90-docs/native-selfhost-integration.md`. New scratch constructors are
+engineering candidates until their successor adoption gates pass.
+
 Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the
 per-subsystem state; it is the authority and this file does not restate it.

@@ -89,9 +89,9 @@
       0)))
 
 (defn mmio-window [bar]
-  ;; A non-null parent window keeps kernel-subregion's provenance check while
-  ;; still deriving an identity-mapped physical BAR below the admitted 512 GiB.
-  (kernel-subregion 1 549755813887 (- bar 1) 512))
+  ;; Pending native PCI resource handoff. A BAR address or firmware memory
+  ;; classification alone grants no region; the missing primitive refuses.
+  (kernel-pci-mmio bar 512))
 
 (defn mmio-load-u8 [mmio offset]
   (do (assert (= (mapped/access-valid 512 offset 1) 1))
@@ -165,7 +165,7 @@
           master (if (= (bit-and command 4) 0) 0 8)]
       (if (= bar 0)
         (+ 1 space master)
-        (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+        (let [mmio (kernel-pci-mmio bar 512)
               revision-bit (if (= (revision mmio) 0) 0 16)
               mac-bit (if (mac-valid mmio) 32 0)
               link-bit (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0) 0 64)]
@@ -199,7 +199,7 @@
         (+ (wait-fifo-empty mmio (- remaining 1)) (* 0 paused))))))
 
 (defn rings-start [mmio revision-id dma-base]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
@@ -215,12 +215,12 @@
         rx-zero (zero-prefix rx 32 0)
         tx-address (store64-page tx 8 tx-frame)
         rx-address (store64-page rx 16 rx-frame)
-        tx-command (kernel-store-u32 tx 512 0 1073741824)
-        rx-extension (kernel-store-u32 rx 512 24 0)
+        tx-command (kernel-store-u32-4k tx 4096 0 1073741824)
+        rx-extension (kernel-store-u32-4k rx 4096 24 0)
         ;; Read back BEFORE the OWN word hands the descriptor to the NIC; after
         ;; that the engine may rewrite +24 on a completion.
-        rx-extension-read (kernel-load-u32 rx 512 24)
-        rx-command (kernel-store-u32 rx 512 28 (dma/rx-command 2048))
+        rx-extension-read (kernel-load-u32-4k rx 4096 24)
+        rx-command (kernel-store-u32-4k rx 4096 28 (dma/rx-command 2048))
         fenced (dma/release-fence)
         imr (mmio-store-u32 mmio 56 0)
         isr (mmio-store-u32 mmio 60 4294967295)
@@ -241,7 +241,7 @@
     ;; that race would refuse a working ring.
     (if (and (= tx-zero 1) (= rx-zero 1)
              (= tx-address 1) (= rx-address 1)
-             (= (kernel-load-u32 tx 512 0) 1073741824)
+             (= (kernel-load-u32-4k tx 4096 0) 1073741824)
              (= rx-extension-read 0)
              (= fenced 1) (= started 12))
       (+ (if (= fifo-empty 1) 0 4)
@@ -309,14 +309,14 @@
 (defn tx-submit [mmio tx tx-frame frame-length]
   (let [wire-length (link/tx-wire-length frame-length)]
     (if (or (= wire-length 0)
-            (not (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)))
+            (not (= (bit-and (kernel-load-u32-4k tx 4096 0) 2147483648) 0)))
       5
-      (let [extension (kernel-store-u32 tx 512 4 0)
+      (let [extension (kernel-store-u32-4k tx 4096 4 0)
           ;; read back before the OWN word is written (lang-h13)
-          extension-read (kernel-load-u32 tx 512 4)
+          extension-read (kernel-load-u32-4k tx 4096 4)
           address (store64-page tx 8 tx-frame)
           before (dma/release-fence)
-          command (kernel-store-u32 tx 512 0
+          command (kernel-store-u32-4k tx 4096 0
                                     (dma/tx-command wire-length))
           after (dma/release-fence)
           kicked (mmio-store-u16 mmio 144 1)]
@@ -333,7 +333,7 @@
   ;; x86 TSO already gives the descriptor load acquire ordering needed here;
   ;; a serialising CPUID in every polling iteration would make the bounded
   ;; 200M budget unusably slow on the physical K16.
-  (if (= (bit-and (kernel-load-u32 tx 512 0) 2147483648) 0)
+  (if (= (bit-and (kernel-load-u32-4k tx 4096 0) 2147483648) 0)
     1
     (if (= remaining 0)
       0
@@ -341,7 +341,7 @@
         (+ (wait-tx-complete tx (- remaining 1)) (* 0 paused))))))
 
 (defn wait-rx-command [rx remaining]
-  (let [command (kernel-load-u32 rx 512 28)]
+  (let [command (kernel-load-u32-4k rx 4096 28)]
     (if (= (bit-and command 2147483648) 0)
       command
       (if (= remaining 0)
@@ -350,7 +350,7 @@
           (+ (wait-rx-command rx (- remaining 1)) (* 0 paused)))))))
 
 (defn quiesce [bar]
-  (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+  (let [mmio (kernel-pci-mmio bar 512)
         stopped (mmio-store-u8 mmio 55
                                 (bit-or (mmio-load-u8 mmio 55) 128))]
     (if (= (wait-fifo-empty mmio 300000) 1)
@@ -559,7 +559,7 @@
     0))
 
 (defn send-native-nic-diagnostic [mmio dma-base status]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         frame-length (build-native-nic-diagnostic tx-frame mmio status)]
     (if (= frame-length 0)
@@ -578,12 +578,12 @@
       (+ status (* 0 reported)))))
 
 (defn rx-rearm [rx rx-frame]
-  (let [extension (kernel-store-u32 rx 512 24 0)
+  (let [extension (kernel-store-u32-4k rx 4096 24 0)
         ;; read back before the OWN word is written (lang-h13)
-        extension-read (kernel-load-u32 rx 512 24)
+        extension-read (kernel-load-u32-4k rx 4096 24)
         address (store64-page rx 16 rx-frame)
         fenced (dma/release-fence)
-        command (kernel-store-u32 rx 512 28 (dma/rx-command 2048))
+        command (kernel-store-u32-4k rx 4096 28 (dma/rx-command 2048))
         after (dma/release-fence)]
     ;; The OWN word is sequenced, not read back: it hands the descriptor to a
     ;; running engine, which may clear OWN before the load returns.
@@ -815,7 +815,7 @@
           (send-native-tcp-receipt mmio tx tx-frame peer-frame))))))
 
 (defn receive-tcp-syn-ack [mmio dma-base frames]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)]
@@ -854,7 +854,7 @@
                 30))))))))
 
 (defn probe-tcp-after-arp [mmio dma-base arp-reply]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
@@ -873,7 +873,7 @@
                  (* 0 (+ entered transmitted))))))))))
 
 (defn receive-arp [mmio dma-base frames]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)]
@@ -898,11 +898,11 @@
                 24))))))))
 
 (defn qualify [bus bar dma-base]
-  (let [tx dma-base
+  (let [tx (kernel-subregion dma-base 16384 0 4096)
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
-        mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+        mmio (kernel-pci-mmio bar 512)
         flushed (kernel-invlpg bar)
         command (pci-read bus 4)
         enabled (pci-write bus 4 (bit-or (bit-and command 65535) 6))

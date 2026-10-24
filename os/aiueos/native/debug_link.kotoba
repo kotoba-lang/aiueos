@@ -322,7 +322,7 @@
   ;; status codes, so 0 keeps meaning exactly one thing: bytes left the NIC.
   (if (= len 0)
     1
-    (let [tx dma-pages
+    (let [tx (kernel-subregion dma-pages 16384 0 4096)
           tx-frame (kernel-subregion dma-pages 16384 8192 4096)
           submitted (rtl/tx-submit mmio tx tx-frame len)]
       (if (= submitted 5)
@@ -758,7 +758,7 @@
   (let [bar (rtl/bar-for-bus 3)]
     (if (= bar 0)
       3
-      (send-hello-line (kernel-subregion 1 549755813887 (- bar 1) 512)
+      (send-hello-line (kernel-pci-mmio bar 512)
                        dma-pages boot))))
 
 (defn debug-tick [dma-pages boot]
@@ -796,7 +796,7 @@
   (let [bar (rtl/bar-for-bus 3)]
     (if (= bar 0)
       3
-      (let [mmio (kernel-subregion 1 549755813887 (- bar 1) 512)
+      (let [mmio (kernel-pci-mmio bar 512)
             seen (debug-poll mmio dma-pages)]
         (if (= seen 512)
           (+ 112 (answer-job-line mmio dma-pages boot))

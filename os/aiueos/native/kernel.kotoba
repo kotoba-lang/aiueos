@@ -46,25 +46,10 @@
      (* (kernel-load-u8-16k base length (+ offset 6)) 281474976710656)
      (* (kernel-load-u8-16k base length (+ offset 7)) 72057594037927936)))
 
-(defn load64-boot-far [boot offset]
-  ;; The loader publishes its own text address -- the one thing only UEFI
-  ;; knows -- in the last 16 bytes of the 16 KiB memory-map window, at window
-  ;; offset 16368.
-  ;;
-  ;; It cannot be read with `load64-boot`, whose accessor is `kernel-load-u8`:
-  ;; that op's profile maximum is 512 bytes, and the emitter compares the
-  ;; length against the maximum and falls through to UD2 when it is exceeded
-  ;; (`kotoba/native/x86_64.cljc`, `emit-kernel-load-u8`). A declared length of
-  ;; 16480 therefore does not read anything -- it executes an undefined
-  ;; instruction. This runs before the guest's own #UD gate is installed, so
-  ;; the firmware's handler takes it and dead-loops: measured 2026-09-09, the
-  ;; marker before the read printed and every marker after it did not, at
-  ;; offset 16464 and at offset 0 alike.
-  ;;
-  ;; So narrow first and read second. `kernel-subregion` yields the 16 KiB
-  ;; window, and `load64` reads it with `kernel-load-u8-16k`, whose maximum is
-  ;; 16384 -- exactly the window. No wider bound is declared anywhere.
-  (let [window (kernel-subregion boot 16480 96 16384)]
+(defn load64-boot-far [boot boot-length offset]
+  ;; Boot-info v5 has a160-byte header, followed by the16KiB map. Pass the
+  ;; original region length explicitly; a loaded address grants no authority.
+  (let [window (kernel-subregion boot boot-length 160 16384)]
     (load64 window 16384 offset)))
 
 (defn allow-loader-exec [pd loader-text]
@@ -74,21 +59,13 @@
         (if (= (store64-page pd (* index 8) value) 1) 1 0))
       1)))
 
-(defn load64-boot [base offset]
-  (+ (kernel-load-u8 base 160 offset)
-     (* (kernel-load-u8 base 160 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 160 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 160 (+ offset 3)) 16777216)
-     (* (kernel-load-u8 base 160 (+ offset 4)) 4294967296)
-     (* (kernel-load-u8 base 160 (+ offset 5)) 1099511627776)
-     (* (kernel-load-u8 base 160 (+ offset 6)) 281474976710656)
-     (* (kernel-load-u8 base 160 (+ offset 7)) 72057594037927936)))
+(defn load64-boot [base length offset]
+  (let [header (kernel-subregion base length 0 160)]
+    (kernel-load-u64 header 160 offset)))
 
-(defn load32-boot [base offset]
-  (+ (kernel-load-u8 base 160 offset)
-     (* (kernel-load-u8 base 160 (+ offset 1)) 256)
-     (* (kernel-load-u8 base 160 (+ offset 2)) 65536)
-     (* (kernel-load-u8 base 160 (+ offset 3)) 16777216)))
+(defn load32-boot [base length offset]
+  (let [header (kernel-subregion base length 0 160)]
+    (kernel-load-u32 header 160 offset)))
 
 ;; Keep only one effectful write live at a time.  This uses less sealed fuel
 ;; than retaining sixteen store results and reducing them after the writes.
@@ -396,23 +373,13 @@
 ;; Gates 6 and 13 sit at IDT offsets 96 and 208, both inside the limit of 239
 ;; the page-fault installer already sets, so no descriptor moves.
 ;;
-;; The mark lives at offset 1024 of the IDT page: gates end at 240 and the
-;; descriptor occupies 512..521, so 1024 is clear of both. The page's address
-;; is recomputed from boot-info rather than passed in, because an interrupt
-;; body is a top-level function and can see none of `main`'s bindings -- but
-;; the ISR entry loads the context into r9, so `kernel-boot-info` works here
-;; exactly as it does anywhere else.
+;; The mark lives at offset1024 of the loader-owned IDT scratch page.
+;; ISR entries restore the image context; the bounded constructor obtains
+;; slot5 directly, without treating a pointer loaded from boot-info as a root.
 (defn record-fault-and-reset [vector]
-  ;; `kernel-subregion` is written HERE rather than in a helper. A region
-  ;; cannot be returned from a function on this target: both shapes are refused
-  ;; at :subset with :kotoba.error/kernel-region-provenance -- "a kernel memory
-  ;; base must name a region, not compute one" -- and a call's result is a
-  ;; computed one however the callee spells it. The offset is bound to a name
-  ;; first for the same rule.
-  (let [boot (kernel-boot-info)
-        scratch-start (load64-boot boot 80)
-        sixth-start (+ scratch-start 20480)
-        page (kernel-subregion 4096 549755809792 (- sixth-start 4096) 4096)
+  ;; The trusted pre-main initializer seals the same loader allocation for
+  ;; main and every callback. No helper returns an untracked pointer here.
+  (let [page (kernel-owned-page 5)
         ;; Say so on the debug port BEFORE resetting.  A reset under -no-reboot
         ;; makes QEMU exit 0 with the trace simply stopping, which is
         ;; indistinguishable from a triple fault, a firmware dead-loop, or a
@@ -429,23 +396,11 @@
         reset (kernel-out-u8 3321 (+ 6 (* 0 mark)))]
     (+ 0 (* 0 reset))))
 
-;; ONE ISR, and the compiler chose which question we get to ask.
-;;
-;; #GP (13) was written alongside this and had to be removed: the OBJECT route
-;; this kernel is built through emits exactly one interrupt entry, as the
-;; object's public symbol, and refuses a second with
-;; :isr-object-has-one-entry. `interrupt-abi` says so in its own docstring --
-;; an entry TABLE exists only on the image route. (The page-fault handler is
-;; unaffected because it arrives through its own dedicated builtin,
-;; `kernel-page-fault-handler-address`, not through this mechanism.)
-;;
-;; So the one vector goes to #UD, because that is where a spent fuel budget
-;; arrives: the prologue ends a run out of budget with `ud2`, and ADR-0203
-;; recorded that this halts the machine with nothing to reset it. If the run
-;; is dying some other way this handler will simply never fire, which is itself
-;; an answer -- and a cheaper one than the guesses it replaces.
-(defn aiueos-isr-6 [vector rip cs flags]
-  (+ (record-fault-and-reset 6) (* 0 (+ vector rip cs flags))))
+;; The native image profile emits a64-vector table. Only #UD is exported
+;; by this kernel today; other slots retain their separate canned/absent
+;; policies. The callback ABI is (vector,error,rip,rsp), all scalar values.
+(defn aiueos-isr-6 [vector error rip rsp]
+  (+ (record-fault-and-reset 6) (* 0 (+ vector error rip rsp))))
 
 (defn install-fault-gate [idt-page vector entry]
   (let [selector (kernel-read-cs)
@@ -516,32 +471,33 @@
   ;; NIC not being ready -- or being reset out from under it.
   (let [_uart (serial/serial-init)
         boot (kernel-boot-info)
+        boot-header (kernel-subregion boot 16544 0 160)
         cr3 (kernel-read-cr3)
-        map-size (load64-boot boot 24)
-        descriptor-size (load64-boot boot 32)
-        rx-limit (load64-boot boot 56)
-        rw-start (load64-boot boot 64)
-        rw-end (load64-boot boot 72)
-        scratch-start (load64-boot boot 80)
-        scratch-pages (load64-boot boot 88)
-        framebuffer-base (load64-boot boot 112)
-        framebuffer-size (load64-boot boot 120)
-        framebuffer-width (load32-boot boot 128)
-        framebuffer-height (load32-boot boot 132)
-        framebuffer-stride (load32-boot boot 136)
-        framebuffer-format (load32-boot boot 140)
+        map-size (load64-boot boot 16544 24)
+        descriptor-size (load64-boot boot 16544 32)
+        rx-limit (load64-boot boot 16544 56)
+        rw-start (load64-boot boot 16544 64)
+        rw-end (load64-boot boot 16544 72)
+        scratch-start (load64-boot boot 16544 80)
+        scratch-pages (load64-boot boot 16544 88)
+        framebuffer-base (load64-boot boot 16544 112)
+        framebuffer-size (load64-boot boot 16544 120)
+        framebuffer-width (load32-boot boot 16544 128)
+        framebuffer-height (load32-boot boot 16544 132)
+        framebuffer-stride (load32-boot boot 16544 136)
+        framebuffer-format (load32-boot boot 16544 140)
         memory-map (kernel-subregion boot 16544 160 16384)]
     (if (and (> boot 0) (> cr3 0)
-             (= (kernel-load-u8 boot 64 0) 65)
-             (= (kernel-load-u8 boot 64 1) 73)
-             (= (kernel-load-u8 boot 64 2) 85)
-             (= (kernel-load-u8 boot 64 3) 69)
-             (= (kernel-load-u8 boot 64 4) 66)
-             (= (kernel-load-u8 boot 64 5) 79)
-             (= (kernel-load-u8 boot 64 6) 79)
-             (= (kernel-load-u8 boot 64 7) 84)
-             (= (load64-boot boot 8) 5)
-             (= (load64-boot boot 16) memory-map)
+             (= (kernel-load-u8 boot-header 160 0) 65)
+             (= (kernel-load-u8 boot-header 160 1) 73)
+             (= (kernel-load-u8 boot-header 160 2) 85)
+             (= (kernel-load-u8 boot-header 160 3) 69)
+             (= (kernel-load-u8 boot-header 160 4) 66)
+             (= (kernel-load-u8 boot-header 160 5) 79)
+             (= (kernel-load-u8 boot-header 160 6) 79)
+             (= (kernel-load-u8 boot-header 160 7) 84)
+             (= (load64-boot boot 16544 8) 5)
+             (= (load64-boot boot 16544 16) memory-map)
              (> map-size 0)
              ;; 16368, not 16384: the last 16 bytes of the map window hold
              ;; the loader's own text address, which the loader writes after
@@ -550,7 +506,7 @@
              (<= map-size 16368)
              (>= descriptor-size 40)
              (<= descriptor-size map-size)
-             (> (load64-boot boot 40) 0)
+             (> (load64-boot boot 16544 40) 0)
              (> rx-limit 1052672)
              (= (bit-and rx-limit 4095) 0)
              (>= rw-start rx-limit)
@@ -629,30 +585,19 @@
                      (> thirteenth-start twelfth-start)
                      (> fourteenth-start thirteenth-start)
                      (< fourteenth-start 549755813888))
-                  ;; The literal parent names the admitted 512 GiB physical
-                  ;; window. Boot-info values select only checked offsets.
-                  (let [state (kernel-subregion 4096 549755809792
-                                                (- physical-start 4096) 4096)
-                        page-table-root (kernel-subregion 4096 549755809792
-                                                          (- second-start 4096) 4096)
-                        pdpt (kernel-subregion 4096 549755809792
-                                               (- third-start 4096) 4096)
-                        pd (kernel-subregion 4096 549755809792
-                                             (- fourth-start 4096) 4096)
-                        pt (kernel-subregion 4096 549755809792
-                                             (- fifth-start 4096) 4096)
-                        reusable-page (kernel-subregion 4096 549755809792
-                                                       (- sixth-start 4096) 4096)
-                        frame-page (kernel-subregion 4096 549755809792
-                                                     (- seventh-start 4096) 4096)
-                        stack-page (kernel-subregion 4096 549755809792
-                                                     (- eighth-start 4096) 4096)
-                        rtl-directory-a (kernel-subregion 4096 549755809792
-                                                          (- ninth-start 4096) 4096)
-                        rtl-directory-b (kernel-subregion 4096 549755809792
-                                                          (- tenth-start 4096) 4096)
-                        rtl-dma-pages (kernel-subregion 4096 549755809792
-                                                       (- eleventh-start 4096) 16384)
+                  ;; Constructors derive only the sealed loader allocation.
+                  ;; Public metadata and literal addresses cannot mint regions.
+                  (let [state (kernel-owned-page 0)
+                        page-table-root (kernel-owned-page 1)
+                        pdpt (kernel-owned-page 2)
+                        pd (kernel-owned-page 3)
+                        pt (kernel-owned-page 4)
+                        reusable-page (kernel-owned-page 5)
+                        frame-page (kernel-owned-page 6)
+                        stack-page (kernel-owned-page 7)
+                        rtl-directory-a (kernel-owned-page 8)
+                        rtl-directory-b (kernel-owned-page 9)
+                        rtl-dma-pages (kernel-owned-window 10 16384)
                         owned-status (prepare-owned-pages
                                       state page-table-root pdpt pd pt)
                         extra-status (prepare-extra-pages
@@ -695,8 +640,7 @@
                             ;; the ring is live but the peer sent nothing inside
                             ;; the window, 192 + 30/26/25 = the specific stream
                             ;; fault. Diagnostics codes 96..96+0 stay untouched.
-                            (let [stream-mmio (kernel-subregion 1 549755813887
-                                                                (- bar-a 1) 512)
+                            (let [stream-mmio (kernel-pci-mmio bar-a 512)
                                   stream-win (kernel-subregion rtl-dma-pages
                                                                16384 0 16384)
                                   ;; The stream's three CPU-side buffers, in
@@ -722,14 +666,10 @@
                                   ;; them. They sit below the bus3 window
                                   ;; (pages 4..7) and far below rtl-dma-pages
                                   ;; (pages 10..13).
-                                  stream-scratch (kernel-subregion
-                                                  4096 549755809792
-                                                  (- second-start 4096) 12288)
+                                  stream-scratch (kernel-owned-window 1 12288)
                                   stream-log-frame (kernel-subregion
                                                     stream-scratch 12288 0 4096)
-                                  stream-tcb (kernel-subregion
-                                              4096 549755809792
-                                              (- twelfth-start 4096) 4096)
+                                  stream-tcb (kernel-owned-page 11)
                                   ring-status (stream/rx-ring-init
                                                stream-mmio rtl-dma-pages)
                                   ;; A STEP KEEPS ITS TCB. `tcb-init` zeroes
@@ -808,15 +748,8 @@
                                                   stream-win stream-mmio
                                                   stream-log-frame
                                                   (+ census-a (* 0 logged-b)))
-                                        bus3-dma-pages (kernel-subregion
-                                                        4096 549755809792
-                                                        (- fifth-start 4096)
-                                                        16384)
-                                        bus3-mmio (if (> bar-b 0)
-                                                    (kernel-subregion
-                                                     1 549755813887
-                                                     (- bar-b 1) 512)
-                                                    0)
+                                        bus3-dma-pages (kernel-owned-window 4 16384)
+                                        bus3-mmio (kernel-pci-mmio bar-b 512)
                                         ;; 6 = bar-b never decoded, so there is
                                         ;; no MMIO to init. Distinct from every
                                         ;; code debug-init itself returns.
@@ -1080,7 +1013,7 @@
                             (kernel-out-u32 244 (+ 96 pre-cr3-nic-status))))
                         (if (and (prepare-page-tables page-table-root pdpt pd pt)
                                  (= (allow-loader-exec
-                                     pd (load64-boot-far boot 16368)) 1)
+                                     pd (load64-boot-far boot 16544 16368)) 1)
                                  (prepare-low-page-table pt rx-limit rw-start)
                                  (prepare-rtl-page-tables
                                   pdpt rtl-directory-a rtl-directory-b bar-a bar-b))
