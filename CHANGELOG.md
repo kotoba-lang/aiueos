@@ -5,6 +5,10 @@ All notable changes to **aiueos** are documented here. The format follows
 
 ## [Unreleased]
 
+### power: suspend to idle and resume (ADR-0273)
+- The sleep key blanks the screen and idles the machine in HLT; the wake key redraws the desktop from the same surface. The host's screendumps
+  (black while asleep, byte-identical awake before and after) and the measured resume time gate it as `guest-browser-suspend`.
+
 ### audio: a virtio-sound driver and a volume key (ADR-0272)
 - A polled virtio-sound output driver (guest-browser build) plays a 440 Hz burst at a volume held in C; the volume-down key lowers it; QEMU's WAV
   output is measured on the host (two 440 Hz bursts, the second at half the level). `guest-browser-audio` gates it.

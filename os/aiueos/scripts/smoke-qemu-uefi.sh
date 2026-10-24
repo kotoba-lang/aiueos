@@ -938,6 +938,42 @@ while time.time() < end:
                 recv_obj()
                 globals()["notify_sent"] = k + 1
                 log("notify event " + str(k + 1) + " sent")
+        # ADR-0273: the suspend stage, after the audio stage. The host takes a screendump of the awake desktop, presses the sleep key (the lid),
+        # takes a screendump of the sleeping screen, presses the wake key, times the resume (key sent -> the guest's RESUME line) and takes a
+        # screendump of the awake desktop again; the files and the timing sit beside the serial log.
+        if typing and b"AIUEOS_GUEST_BROWSER_SUSPEND_GO" in serial_now and globals().get("suspend_phase", 0) == 0:
+            time.sleep(1.0)
+            def _shot(name):
+                f = os.path.join(os.path.dirname(path), name)
+                sock.sendall((json.dumps({"execute": "screendump", "arguments": {"filename": f}}) + "\n").encode())
+                recv_obj()
+            def _key(qc):
+                for dn in (True, False):
+                    ev = [{"type": "key", "data": {"down": dn, "key": {"type": "qcode", "data": qc}}}]
+                    sock.sendall((json.dumps({"execute": "input-send-event", "arguments": {"events": ev}}) + "\n").encode())
+                    recv_obj()
+            _shot("suspend-before.ppm")
+            _key("sleep")
+            globals()["suspend_phase"] = 1
+            globals()["suspend_key"] = _key
+            globals()["suspend_shot"] = _shot
+            log("suspend: sleep key sent")
+        if typing and b"AIUEOS_GUEST_BROWSER_SUSPEND_ENTER" in serial_now and globals().get("suspend_phase", 0) == 1:
+            time.sleep(1.0)
+            globals()["suspend_shot"]("suspend-during.ppm")
+            globals()["suspend_t0"] = time.time()
+            globals()["suspend_key"]("wake")
+            globals()["suspend_phase"] = 2
+            log("suspend: wake key sent")
+        if typing and b"AIUEOS_GUEST_BROWSER_SUSPEND_RESUME" in serial_now and globals().get("suspend_phase", 0) == 2:
+            ms = int((time.time() - globals()["suspend_t0"]) * 1000)
+            with open(os.path.join(os.path.dirname(path), "suspend-timing.txt"), "w") as tf:
+                tf.write("resume_ms=%d\n" % ms)
+            time.sleep(0.5)
+            globals()["suspend_shot"]("suspend-after.ppm")
+            globals()["suspend_key"]("f1")      # the guest holds the resumed frame until this
+            globals()["suspend_phase"] = 3
+            log("suspend: resumed in %d ms" % ms)
         # ADR-0272: four key events for the audio stage (when a sound card is attached): the volume-down key twice, down then up, after the
         # guest has played the first tone burst and each after the guest's line for the one before.
         if typing and b"AIUEOS_GUEST_BROWSER_AUDIO_PLAY n=1 " in serial_now and globals().get("audio_sent", 0) < 4:
