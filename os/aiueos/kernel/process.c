@@ -72,6 +72,37 @@ extern int aiueos_kotoba_service_ipc_evidence_ready(void);
 extern uint8_t aiueos_user_text_start[],aiueos_user_text_end[];
 extern void aiueos_probe_cross_process(const void *address);
 extern volatile uint64_t aiueos_page_fault_stage, aiueos_page_fault_error;
+/* kotoba-lang/aiueos#108 diagnostics (2026-10-24): the ring-3 process phase
+   can stop waking (the serial log used to end silently at
+   AIUEOS_KOTOBA_ELF_PROCESS_OK). These bounded snapshots name the wait loop's
+   silence point: how many wakeups arrived, whether the external timer still
+   advances, and which exit condition is still false. Polled COM1 like
+   main.c's own serial path, budgeted per byte. The marker prefix
+   AIUEOS_PROCESS_PHASE_ is part of the smoke harness's #108 signature. */
+extern volatile uint64_t aiueos_external_timer_ticks;
+static void p108_out8(uint16_t port, uint8_t value) {
+  __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+static uint8_t p108_in8(uint16_t port) {
+  uint8_t value;
+  __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+  return value;
+}
+static void p108_byte(uint8_t value) {
+  uint32_t budget = 1000000;
+  while (!(p108_in8(0x3f8 + 5) & 0x20) && --budget) {}
+  if (budget) p108_out8(0x3f8, value);
+}
+static void p108_str(const char *text) {
+  while (*text) p108_byte((uint8_t)*text++);
+}
+static void p108_dec(uint32_t value) {
+  char digits[10];
+  unsigned count = 0;
+  if (!value) { p108_byte((uint8_t)'0'); return; }
+  while (value) { digits[count++] = (char)('0' + (value % 10)); value /= 10; }
+  while (count) p108_byte((uint8_t)digits[--count]);
+}
 static struct tss64 tss;
 uint64_t aiueos_syscall_kernel_stack_top;
 static uint64_t syscall_transport_evidence;
@@ -376,17 +407,70 @@ void aiueos_process_enter(void) {
   kernel_results[0]->foreign_page=processes[second].argument;
   kernel_results[1]->foreign_page=processes[first].argument;
   __asm__ volatile("sti");
-  while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
-         *kotoba_result!=42 || *worker_result!=42 ||
-         !aiueos_kotoba_service_ipc_evidence_ready() ||
-         !aiueos_user_object_write_evidence_ready()) {
-    __asm__ volatile("cli");aiueos_user_object_flush_pending();
-    __asm__ volatile("sti; hlt");
+  {
+    /* #108: one breadcrumb that the creates passed, then a bounded snapshot
+       after each wake's flush (wakes 1..8, then every 32nd). The last line
+       before silence names the stuck exit condition; wakes and timer together
+       show whether any wakeup arrives at all. */
+    uint64_t wakes = 0;
+    p108_str("AIUEOS_PROCESS_PHASE_ENTER first=");
+    p108_dec((uint32_t)first);
+    p108_str(" second=");
+    p108_dec((uint32_t)second);
+    p108_str(" kotoba=");
+    p108_dec((uint32_t)kotoba);
+    p108_str(" worker=");
+    p108_dec((uint32_t)worker);
+    p108_str("\r\n");
+    while (!aiueos_process_result() || !aiueos_user_scheduler_evidence_ready() ||
+           *kotoba_result!=42 || *worker_result!=42 ||
+           !aiueos_kotoba_service_ipc_evidence_ready() ||
+           !aiueos_user_object_write_evidence_ready()) {
+      int flushed;
+      __asm__ volatile("cli");
+      flushed = aiueos_user_object_flush_pending();
+      wakes++;
+      if (wakes <= 8 || (wakes & 31) == 0) {
+        p108_str("AIUEOS_PROCESS_PHASE_WAIT wakes=");
+        p108_dec((uint32_t)wakes);
+        p108_str(" timer=");
+        p108_dec((uint32_t)aiueos_external_timer_ticks);
+        p108_str(" flush=");
+        p108_dec((uint32_t)flushed);
+        p108_str(" result=");
+        p108_dec(aiueos_process_result() ? 1U : 0U);
+        p108_str(" sched=");
+        p108_dec(aiueos_user_scheduler_evidence_ready() ? 1U : 0U);
+        p108_str(" kotoba=");
+        p108_dec((uint32_t)*kotoba_result);
+        p108_str(" worker=");
+        p108_dec((uint32_t)*worker_result);
+        p108_str(" ipc=");
+        p108_dec(aiueos_kotoba_service_ipc_evidence_ready() ? 1U : 0U);
+        p108_str(" objwrite=");
+        p108_dec(aiueos_user_object_write_evidence_ready() ? 1U : 0U);
+        p108_str("\r\n");
+      }
+      __asm__ volatile("sti; hlt");
+    }
   }
   aiueos_scheduler_request_user_exit(2); aiueos_scheduler_request_user_exit(3);
   aiueos_scheduler_request_user_exit(4);
   aiueos_scheduler_request_user_exit(5);
-  while (!aiueos_scheduler_users_reaped()) __asm__ volatile("hlt");
+  {
+    uint64_t rwakes = 0;
+    while (!aiueos_scheduler_users_reaped()) {
+      if (rwakes <= 8 || (rwakes & 31) == 0) {
+        p108_str("AIUEOS_PROCESS_PHASE_REAP_WAIT wakes=");
+        p108_dec((uint32_t)rwakes);
+        p108_str(" timer=");
+        p108_dec((uint32_t)aiueos_external_timer_ticks);
+        p108_str("\r\n");
+      }
+      rwakes++;
+      __asm__ volatile("hlt");
+    }
+  }
   __asm__ volatile("cli");
   allocator_reuse_before=aiueos_physical_allocator_reuse_count();
   unsigned space0=processes[first].address_space,space1=processes[second].address_space;
