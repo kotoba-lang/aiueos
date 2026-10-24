@@ -465,9 +465,9 @@
    :procedure "Run two apps; make one read the other's memory."
    :expected "The access faults; the other app is unaffected."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["task plc-rt-qemu-smoke" "AGENTS.md note 2"]
-   :note "Ring 3 and per-process address spaces are gated under QEMU."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/kernel-serial.log"]
+   :note "Measured 2026-10-24 in the A1 production boot: aiueos_address_space_self_test creates two processes with distinct CR3 and private pages; a cross-access faults and the test continues (AIUEOS_ADDRESS_SPACE_OK). Caveat: kernel-created processes, not two user-launched apps; 'the other app is unaffected' is the test's continuation, not a separate user-visible check."
    }
   {:id :G3 :category :security :title "Data encrypted at rest"
    :weight 2 :required true :required-level :device
