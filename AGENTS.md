@@ -1,5 +1,30 @@
 # AGENTS.md — aiueos
 
+## CDCI migration: native only (2026-10-24)
+
+Owner instruction and workspace `AGENTS.md` supersede the historical KBB,
+NBB and JVM task commands below. Do not run those routes or restore them as
+fallbacks. The final compiler, build graph, packaging and gate controller
+must use canonical Kotoba and Amu selfhost native artifacts.
+
+Removed `.github/workflows/ci.yml` in full: `bare-metal-uefi` invoked the
+C/Zig reference image build and installed NBB/babashka; `test` installed
+Java/Clojure/NBB and ran hosted contracts/lint/security-adoption; and
+`edn-contracts` used babashka. No disabled legacy workflow remains.
+
+There is currently **no replacement AIUEOS native CI gate**. Removal is not
+a passing check. Native kernel objects are a separate compiler capability;
+they do not qualify a complete selfhost-built kernel/EFI/GPT image or boot.
+Until the native closure and its positive plus failing controls execute,
+CDCI coverage is absent for hosted CLJC contracts, lint, security adoption,
+example EDN reading, journal recovery, corrupted payload refusal, release
+media and Multiboot/GRUB boots previously declared by that workflow.
+
+Track the compiler/image/QEMU chain in JUN-31, base/tool migration in
+JUN-64 and AWAI-23, and Browser/CSSOM plus app integration in JUN-93.
+QEMU/OVMF and diagnostic orchestration are distinct from the native guest
+and from the required loaderless x86_64-linux-static CDCI controller.
+
 Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the
 per-subsystem state; it is the authority and this file does not restate it.

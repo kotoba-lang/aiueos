@@ -38,6 +38,24 @@ release, and none has been run. The ladder in ADR-0226 (28 of 30 floors gated) m
 scorecard -- windowing, input and the shell's feedback: rows C1-C4, C10 (partly), D1, D2, D4, D6 (partly), D7, G4, I5 and I8
 (partly). The rest of the 55 rows are outside it.
 
+## Passes whose limits the owner may reject (written 2026-10-24)
+
+Each of these rows is `:pass` by a reference-VM receipt, and each row's `:note` states what it does not do. They are listed here in one place,
+weakest first, so that a rejection is one edit of the row to `:unachieved`:
+
+| Row | Weight | What the pass is | What it is not |
+|---|---|---|---|
+| I1 Suspend and resume | 2 | the sleep key blanks the screen and idles the machine in HLT; the wake key redraws; host screendumps, a surface fingerprint, 51 ms | not ACPI S3: RAM stays powered, no device powered down; the lid is a key |
+| B1 Device-bound passkey | 3 | a P-256 key from the virtio-rng, kept in sector 1035; a WebAuthn-shaped ceremony; another device's key refused | the private key is in the clear on the volume (no secure element, G3 unmet); the other device is a test key |
+| H4 Backup and restore | 1 | the settings and passkey records copied, wiped, restored byte for byte | two records, not files; the backup is on the same volume; no UI |
+| C8 Settings | 1 | contrast, scale and a network flag changed by clicks, kept across a reboot | the network flag does not configure an adapter; controls are text lines |
+| I4 Audio output | 1 | a virtio-sound tone at a set level, measured on the host's WAV | the volume is a software gain; one stream; a VM sound card writing a file |
+| D5 Other layouts | 1 | US and JIS in English mode | two layouts, English mode only, not persisted |
+| C7 Notifications | 1 | toasts, dismiss, a list; frames equal a model | raised by a test hook; keyboard-only |
+| F4 Ethernet and DHCP | 1 | lease 10.0.2.15 / router 10.0.2.2 and three refusals | a virtio NIC on SLIRP, not the RTL8125 |
+
+The eight weigh 11 points: rejecting all of them would take the score from 38% to 27%. The 27% is the stricter figure; the 38% is what the checker prints.
+
 ## What is not fixed by this file -- the owner's to confirm
 
 JUN-90's acceptance asks the owner to confirm the **supported machine and the exclusions**. The file records the target as the
