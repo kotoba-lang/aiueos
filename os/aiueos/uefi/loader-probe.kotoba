@@ -212,7 +212,12 @@
         ;;   k  the kernel file opened
         ;;   r  the read returned exactly the 176 bytes asked for
         ;;   x  the bytes read off the disk are ADMITTED (reason 0) by the
-        ;;      same elf stage that admitted the literal fixtures
+        ;;      same elf stage that admitted the literal fixtures -- against
+        ;;      the file length MEASURED by `fs/file-size`, not the 176 bytes
+        ;;      this stage read: `elf/admit`'s clause 8 compares each
+        ;;      segment's `p_offset + p_filesz` to the whole image, so a
+        ;;      length of 176 could only admit a header invented to fit in
+        ;;      176 bytes (the literal fixtures' own segments end at 110,592).
         fslots (kernel-uefi-alloc-region bs 40 0 2 1 0)
         fbuf (kernel-uefi-alloc-region bs 40 0 2 1 0)
         fdev (fs/device-handle bs image-handle fslots)
@@ -223,11 +228,12 @@
         m10 (mark-when (if (= (fs/open-reason fmiss) 3) 1 0) 110)
         ffile (fs/open-read froot (fs/kernel-path) fslots)
         m11 (mark-when (if (= (fs/open-reason ffile) 0) 1 0) 107)
+        flen (fs/file-size ffile fslots)
         fstat (fs/read-into ffile fbuf 176 fslots)
         fgot (fs/read-count fslots)
         m12 (mark-when (if (= (fs/read-reason fstat 176 fgot) 0) 1 0) 114)
         fclose (fs/close-file ffile)
-        fadmit (elf/admit fbuf 4096 176)
+        fadmit (elf/admit fbuf 4096 flen)
         m13 (mark-when (if (= fadmit 0) 1 0) 120)
         nl4 (console/put out (ucs2 "\r\nesp"))
         q0 (fs-reason out (fs/device-reason fdev))

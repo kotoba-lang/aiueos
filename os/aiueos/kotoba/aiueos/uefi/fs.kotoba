@@ -1,7 +1,7 @@
 (ns aiueos.uefi.fs
   (:export [kernel-path page-window max-kernel-bytes mode-read
             device-handle open-volume open-read read-into read-count close-file
-            device-reason volume-reason open-reason read-reason]))
+            file-size device-reason volume-reason open-reason read-reason]))
 
 ;; EFI file access, for a BOOTX64.EFI written in Kotoba.
 ;;
@@ -112,7 +112,8 @@
 ;; Each stage answers through an out-slot in the caller's region and hands
 ;; back the word the next stage needs. The slots are fixed offsets of that
 ;; region: 0 the loaded-image interface, 8 the simple file system, 16 the
-;; volume root, 24 the file handle, 32 the read size. The caller supplies the
+;; volume root, 24 the file handle, 32 the read size, 40 the file length.
+;; The caller supplies the
 ;; region because the allocation FORM must be spelled at the site that
 ;; declares the window over it (see `aiueos.uefi.memory`'s note) -- a
 ;; function that PRODUCED the region could not hand its caller a writable
@@ -169,6 +170,26 @@
 
 (defn read-count [slots]
   (kernel-load-u64-4k slots 4096 32))
+
+;; The length of the WHOLE file -- the `image-len` `aiueos.uefi.elf/admit`
+;; makes its clause-8 "the segments claim to extend past the image" check
+;; against. `main.c` knows it because `read_verified_kernel` read the whole
+;; file before admitting it; this module reads one page at a time, so it
+;; MEASURES it instead: SetPosition to EFI's end-of-file sentinel
+;; (0xFFFFFFFFFFFFFFFF), GetPosition answers where that landed, and
+;; SetPosition back to zero so the read that follows starts at the first byte.
+;; GetPosition and SetPosition are EFI_FILE_PROTOCOL slots +48 and +56. A
+;; measurement that does not answer leaves the slot zero, and `elf/admit` then
+;; refuses a zero-length image (its reason 1) rather than admitting the bytes
+;; against an unmeasured claim.
+(defn file-size [file slots]
+  (let [e (kernel-uefi-call2 file 56 file -1)
+        c (kernel-store-u64-4k slots 4096 40 0)
+        g (kernel-uefi-call4 file 48 file
+                             (kernel-subregion slots 4096 40 8)
+                             (* 0 c) 0)
+        z (kernel-uefi-call2 file 56 file 0)]
+    (kernel-load-u64-4k slots 4096 40)))
 
 ;; Close(File). One operand, so the second rides in RDX and the firmware
 ;; ignores it -- `aiueos.uefi.console/clear-screen` is the same call.
