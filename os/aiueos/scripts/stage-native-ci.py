@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch pinned public owner inputs; no compilation or native verdict here."""
+"""Stage pinned owner inputs within the caller's existing repository access."""
 import hashlib
 import json
 import os
@@ -25,6 +25,16 @@ with open(os.environ['GITHUB_ENV'], 'a') as env:
     for dep in manifest['dependencies']:
         repo, commit = dep['repo'], dep['commit']
         assert re.fullmatch('[0-9a-f]{40}', commit)
+        supplied = os.environ.get(VARIABLES[repo])
+        if supplied:
+            root = Path(supplied).resolve()
+            assert root.is_relative_to(ROOT / '.native-inputs')
+            for file, expected in dep['files'].items():
+                raw = (root / str(Path(file).relative_to('kotoba'))).read_bytes()
+                assert hashlib.sha256(raw).hexdigest() == expected
+            env.write(f'{VARIABLES[repo]}={root}\n')
+            continue
+        assert repo != 'org-ietf-tcp', 'private TCP requires its pinned checkout in a private CI context'
         dest = ROOT / '.native-inputs' / repo
         subprocess.run(['git', 'init', '--quiet', str(dest)], check=True)
         subprocess.run(['git', '-C', str(dest), 'fetch', '--quiet', '--depth=1', '--no-tags',

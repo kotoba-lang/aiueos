@@ -12,8 +12,11 @@ C/Zig reference image build and installed NBB/babashka; `test` installed
 Java/Clojure/NBB and ran hosted contracts/lint/security-adoption; and
 `edn-contracts` used babashka. No disabled legacy workflow remains.
 
-The replacement `.github/workflows/native-kernel.yml` pins an immutable Amu
-native compiler and all five owner revisions. Native Linux x86 reproduces
+Native consumer CI runs in the existing private `kotoba-lang/org-ietf-tcp`
+repository because the final TCP dependency is private. Its workflow pins
+the exact AIUEOS/Amu sources and all five owner revisions, using the repo's
+existing read-only token without exporting private source to this public
+repository. Native Linux x86 reproduces
 the full kernel ELF/EFI and the full-graph DMA probe; QEMU must accept the
 actual snapshot mechanism and reject a valid image lacking its receipts.
 This is a component gate. Acceptance also requires the pinned Amu source's
