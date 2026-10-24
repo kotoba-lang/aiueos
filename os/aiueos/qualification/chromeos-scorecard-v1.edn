@@ -73,8 +73,9 @@
    :expected "The machine boots the installed system from its disk; the install receipt reads back."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0239" "ADR-0240" "JUN-65" "JUN-70"]
-   :note "The install chain is selfhost and its gate is green under QEMU; no physical install."
+   :evidence ["ADR-0239" "ADR-0240" "JUN-65" "JUN-70"
+              "receipt os/aiueos/qualification/receipts/vm-20261024/install-selfhost-qemu/receipt.edn"]
+   :note "QEMU-level measured 2026-10-24 on the reference Mac (smoke-qemu-install-selfhost.cljk, selfhost stick): boot 1 from the USB installer reached AIUEOS_LIVE_HANDOVER, AIUEOS_GUIDED_ANSWERS_WRITTEN, AIUEOS_LIVE_TARGET /dev/nvme0n1, AIUEOS_INSTALL_WRITE_OK and AIUEOS_INSTALL_READBACK_OK with AIUEOS_LIVE_EXIT rc=0; boot 2 from the NVMe alone (USB detached) reached AIUEOS_DESKTOP_SURFACE_OK; boot 3 reached the screen marker. Offline after the run: the first 64 MiB of the 8 GiB NVMe image are byte-identical to the release image and the install target receipt sits in the last MiB. Why this is still :unachieved: the row's level is :release, which needs a signed release artifact installed on the reference machine; a QEMU run alone cannot carry it. Limits of the run: the tool budget cut the script at 420 s after the screen boot printed, so the script's own final AIUEOS_INSTALL_SMOKE_OK line and its digest-before/after assert did not print; the extent check above was repeated offline."
    }
   {:id :A4 :category :boot :title "A second install is refused"
    :weight 1 :required true :required-level :release
@@ -82,8 +83,9 @@
    :expected "The installer refuses and names why; the disk is unchanged."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0239" "JUN-65"]
-   :note "Gate: guided console, install, receipt, repeat refused."
+   :evidence ["ADR-0239" "JUN-65"
+              "os/aiueos/qualification/receipts/vm-20261018/install-refused-qemu/boot4-serial.log"]
+   :note "Measured 2026-10-18 under QEMU on the reference Mac (smoke-qemu-install.cljk, boot 4): the USB was re-inserted with the boot order back to USB after the NVMe install, and the installer answered AIUEOS_INSTALL_REFUSED existing-install installed-at=2026-10-18T12:08:15.146Z hostname=aiueos-gate next=rescue-inspect. The same gate asserted the NVMe image byte-identical across that boot. Limits: the log is from 2026-10-18, before ADR 0373's kernel-memory change, and the byte-identity digest was asserted in the gate rather than stored as a separate digest file; not re-run since. The 2026-10-24 selfhost run's script prints repeat-refused in its final line but the run was cut before that line."
    }
   {:id :A5 :category :boot :title "First-run setup"
    :weight 1 :required true :required-level :release
