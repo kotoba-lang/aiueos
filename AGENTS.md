@@ -1,5 +1,18 @@
 # AGENTS.md — aiueos
 
+## Native desktop/media candidate
+
+The desktop entry `os/aiueos/scripts/build-kotoba-native-desktop.sh` no longer
+invokes Node/nbb for bootstrap or packaging. It calls the native font,
+locked kernel/EFI and GPT/FAT16 pipeline in `build-native-desktop.py`.
+Python only stages, hashes and observes; the formats are emitted by Kotoba.
+The legacy font generator and older hosted packagers do not qualify this
+closure. The checked-in licensed bitmap is input data, copied/padded by a
+native tool. See `90-docs/native-desktop-media-v1.md` for exact boundaries.
+Local raw-media/QEMU desktop/input proofs do not qualify Browser/CSSOM
+parity, dapp execution, preemptive scheduling or physical hardware. The
+final compiler still requires native x86/controller/pin adoption evidence.
+
 ## CDCI migration: native only (2026-10-24)
 
 Owner instruction and workspace `AGENTS.md` supersede the historical KBB,

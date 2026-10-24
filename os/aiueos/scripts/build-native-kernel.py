@@ -37,7 +37,7 @@ def path_text(path):
     return value
 
 
-def main(amu):
+def select_native_compiler(amu):
     amu = amu.resolve()
     descriptor = json.loads((amu / 'native-product.json').read_text())
     override = os.environ.get('AIUEOS_AMU_SELFHOST_BIN')
@@ -54,6 +54,12 @@ def main(amu):
     phsize, phnum = struct.unpack_from('<HH', data, 54)
     if phsize != 56 or any(struct.unpack_from('<I', data, phoff + i * phsize)[0] in (2, 3) for i in range(phnum)):
         raise ValueError('compiler must have no dynamic/interpreter program header')
+    return compiler, expected
+
+
+def main(amu):
+    amu = amu.resolve()
+    compiler, expected = select_native_compiler(amu)
     out = Path(os.environ.get('AIUEOS_NATIVE_OUT', REPO / 'build/aiueos-native')).resolve()
     out.mkdir(parents=True, exist_ok=False)
     state = dict(schema='aiueos.native-kernel-candidate.v1', state='STAGING', compiler=pin(compiler),
@@ -66,6 +72,12 @@ def main(amu):
 
     save()
     try:
+        payload_text = os.environ.get('AIUEOS_NATIVE_BOOT_PAYLOAD')
+        payload = Path(payload_text).resolve() if payload_text else None
+        payload_pin = pin(payload) if payload else None
+        if payload and (payload_pin['sha256'] != os.environ.get('AIUEOS_NATIVE_BOOT_PAYLOAD_SHA256') or payload_pin['bytes'] > 524288):
+            raise ValueError('boot payload requires its immutable SHA256 and bounded size')
+        state['bootPayload'] = payload_pin
         entry = Path(os.environ.get('AIUEOS_NATIVE_KERNEL_SOURCE', OS / 'native/kernel.kotoba')).resolve()
         roots = [REPO / 'os', OS, OS / 'kotoba']
         owners = {}
@@ -82,7 +94,7 @@ def main(amu):
                 owners[file] = dict(commit=dep['commit'], sha256=digest)
         for p in [entry, out, *roots]:
             path_text(p)
-        scope = ':'.join(map(str, [*roots, out]))
+        scope = ':'.join(map(str, [*roots, out, *([payload.parent] if payload else [])]))
         env = dict(PATH='/nonexistent', KEXE_STACK_BYTES='8388608', KEXE_CAP_RESOURCES_35=scope)
         source_args = [value for root in roots for value in ['--source-path', str(root)]]
 
@@ -141,11 +153,11 @@ def main(amu):
         for name in ['BOOTX64.EFI', 'BOOTX64.reproduced.EFI']:
             efi = out / name
             run('package-' + name, ['package-aiueos-boot', out / 'KERNEL.ELF',
-                '--output', efi, '--pci-resources', 'v1'])
+                '--output', efi, *(['--payload', payload] if payload else []), '--pci-resources', 'v1'])
             if not efi.is_file() or efi.read_bytes().count((out / 'KERNEL.ELF').read_bytes()) != 1:
                 raise ValueError('native EFI does not contain the exact kernel once')
             efi_images.append(pin(efi))
-        if efi_images[0] != efi_images[1] or {p: pin(p) for p in sources} != sources or pin(compiler)['sha256'] != expected:
+        if efi_images[0] != efi_images[1] or {p: pin(p) for p in sources} != sources or pin(compiler)['sha256'] != expected or (payload and pin(payload) != payload_pin):
             raise ValueError('native EFI reproduction or immutable input readback differs')
         state.update(state='NATIVE_IMAGE_CANDIDATE', images=images, efiImages=efi_images,
                      bootProtocol='pci-resources-v1',
