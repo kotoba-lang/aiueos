@@ -72,7 +72,8 @@
 (defn aiueos-value-runtime-provider-submit
   [route :i64 domain :i64 cap-handle :i64 digest :i64] :i64
   (let [q (kernel-value-provider-queue)]
-    (if (= (kernel-try-lock-u32 q 512 0) 1)
+    (if (and (> (kernel-value-runtime-arena domain) 0)
+             (= (kernel-try-lock-u32 q 512 0) 1))
       (let [result (submit-locked q route domain cap-handle digest)
             released (kernel-unlock-u32 q 512 0)]
         (if (= released 1) result 0)) 0)))
@@ -101,21 +102,23 @@
         route (bit-and route-domain 255)
         domain (bit-and (quot route-domain 256) 65535)
         slot (q-find-ticket q ticket 2 0)]
-    (if (< slot 7)
+    (if (and (< slot 7) (> domain 0) (<= domain 32767)
+             (= route-domain (+ route (* domain 256))))
       (let [base (q-slot-offset slot)]
         (if (and (> block 0) (> descriptor 0)
                  (> block-length 0) (<= block-length 12288)
                  (= (kernel-load-u8 q 512 (+ base 5)) route)
                  (= (q-load16 q (+ base 6)) domain))
-          (let [scratch (kernel-value-runtime-cas-scratch)
+          (let [page (kernel-value-runtime-arena domain)
+                scratch (kernel-value-runtime-cas-scratch)
                 output (kernel-subregion scratch 384 0 32)
                 workspace (kernel-subregion scratch 384 32 352)
                 expected (kernel-subregion q 512 (+ base 16) 32)
                 verified (cas/aiueos-value-runtime-cas-verify
                           block block-length expected output workspace)]
-            (if (= verified 1)
+            (if (and (= verified 1) (> page 0))
               (let [handle (arena/aiueos-value-handle-arena
-                            (kernel-value-runtime-arena) 4096 1 0 descriptor)]
+                            page 4096 1 0 descriptor)]
                 (if (> handle 0)
                   (if (= (kernel-store-u8 q 512 (+ base 4) 0) 0) handle 0)
                   0))
