@@ -12,11 +12,18 @@ C/Zig reference image build and installed NBB/babashka; `test` installed
 Java/Clojure/NBB and ran hosted contracts/lint/security-adoption; and
 `edn-contracts` used babashka. No disabled legacy workflow remains.
 
-There is currently **no replacement AIUEOS native CI gate**. Removal is not
+Native consumer CI runs in the existing private `kotoba-lang/org-ietf-tcp`
+repository because the final TCP dependency is private. Its workflow pins
+the exact AIUEOS/Amu sources and all five owner revisions, using the repo's
+existing read-only token without exporting private source to this public
+repository. Native Linux x86 reproduces
+the full kernel ELF/EFI and the full-graph DMA probe; QEMU must accept the
+actual snapshot mechanism and reject a valid image lacking its receipts.
+This is a component gate. Acceptance also requires the pinned Amu source's
+native x86/controller CI. Removal of the old workflow is not
 a passing check. Native kernel objects are a separate compiler capability;
 they do not qualify a complete selfhost-built kernel/EFI/GPT image or boot.
-Until the native closure and its positive plus failing controls execute,
-CDCI coverage is absent for hosted CLJC contracts, lint, security adoption,
+The new gate does not replace coverage for hosted CLJC contracts, lint, security adoption,
 example EDN reading, journal recovery, corrupted payload refusal, release
 media and Multiboot/GRUB boots previously declared by that workflow.
 
@@ -24,6 +31,25 @@ Track the compiler/image/QEMU chain in JUN-31, base/tool migration in
 JUN-64 and AWAI-23, and Browser/CSSOM plus app integration in JUN-93.
 QEMU/OVMF and diagnostic orchestration are distinct from the native guest
 and from the required loaderless x86_64-linux-static CDCI controller.
+
+The kernel build wrapper now stages inputs with `build-native-kernel.py`
+and invokes the pinned native Amu executable directly. It no longer loads
+kotoba-native hosted sources or uses `--jvm-free` / `--unpinned`. Native
+`modules` owns discovery; owner source pins and KSL1 bind the full graph.
+Python only stages, hashes, invokes and records failures. A blocked compile
+or reproduced image candidate is not a successful native runtime gate.
+
+Nine ValueRuntime/arena sources now use their canonical namespace paths in
+`os/aiueos/kotoba/aiueos/` with underscores. Their bytes were preserved in
+the move. Historical hosted verifiers that name the old paths remain retired
+migration inventory; do not execute them or recreate duplicate source copies.
+
+The R2 reference claim below is historical C/reference-runtime evidence,
+not acceptance of the current native selfhost chain. Amu #1547 is merged
+with native x86/controller qualification; the whole AIUEOS kernel, live
+runtime, native media and desktop/input still follow the open gates in
+`90-docs/native-selfhost-integration.md`. New scratch constructors are
+engineering candidates until their successor adoption gates pass.
 
 Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the

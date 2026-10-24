@@ -1,65 +1,117 @@
 # AIUEOS native integration gates
 
-Owner order, 2026-10-24: remove JVM/nbb CDCI, then Amu selfhost,
-kernel/image, QEMU boot, shared Browser/CSSOM and Itonami dapps.
-This is a dependency ledger, not an additional maturity score.
+Owner order,2026-10-24: native compiler adoption, complete kernel dependencies
+and locks, region/ISR/live runtime ABI, native media, then QEMU desktop/input.
+Shared Browser/CSSOM and Itonami depend on that guest foundation. This is a
+source and execution ledger, not an additional maturity score.
 
 ```mermaid
 flowchart BT
-  A["Amu adopted compiler core / native self-rebuild"] --> B["Complete AIUEOS kernel graph / freestanding image"]
-  B --> C["UEFI loader / media packaging"]
-  C --> D["QEMU / OVMF: boot, GOP, input"]
-  D --> N["Murakumo node / hata Cell runtime"]
-  D --> E["Shared Browser / DOM / CSSOM / app lifecycle"]
-  N --> F["Itonami agent-first dapps / UI and state restore"]
-  E --> F
-  F --> G["Aozora / Yataverse app and state integration"]
-  H["Kagi agent/bot signer and keyset"] --> N
+  A["Amu admitted full31 / root / two native gate roles; main0486b715e"] --> B["All15 kernel /27 live dependencies / immutable owners / KSL1"]
+  B --> C["Canonical region contracts / lock / CPU / ISR ABI"]
+  C --> P["Native PCI / ACPI handoff + private context candidate"]
+  P --> V["Live queue / capability / domain ABI"]
+  V --> D["Complete kernel + live ValueRuntime execution"]
+  D --> E["Native EFI + deterministic release media"]
+  E --> Q["QEMU / OVMF desktop + input + recovery"]
+  Q --> N["Murakumo node / hata Cell runtime"]
+  Q --> W["Shared Browser / DOM / CSSOM / app lifecycle"]
+  N --> F["Itonami agent-first dapps / UI + state restore"]
+  W --> F
+  F --> G["Aozora / Yataverse app + state integration"]
+  H["Kagi agent/bot signer + keyset"] --> N
   H --> F
   R["Canonical client-runtime broker / per-operation consent"] --> F
 ```
 
-The lower box is a prerequisite of the box above it. Murakumo is the
-execution host role, Itonami the agent-first app/workspace role. Those roles
-do not make the Mac's existing Linux VM or browser console an AIUEOS guest.
+The lower box is a prerequisite of the box above it. Murakumo is the execution
+host role; Itonami is the agent-first app/workspace role. The Mac's Linux VM
+and browser console are separate from an AIUEOS guest.
 
-| Gate | Current evidence | Required next evidence | Linear |
+| Gate | Verified current evidence | Remaining acceptance | Linear |
 | --- | --- | --- | --- |
-| Legacy CDCI removal | [AIUEOS #491](https://github.com/kotoba-lang/aiueos/pull/491), merged `8583312` deletes the only workflow; AGENTS records missing coverage | A genuine loaderless native controller and positive/refusal gates before restoring CDCI | JUN-64, AWAI-23 |
-| Native compiler baseline | Amu `dd35c637`: PR-tier bootstrap reproduces root `688324e0`; 24 native fixtures pass; browser Wasm fixtures compiled only | Rebuild and test the exact successor, preserve adopted core provenance and refresh affected product/gate pins before adoption | JUN-31 |
-| Kernel image emitter | Native candidate emits non-live scalar ELF64 images with stack/GDT/TSS/fuel; full30 selfhost reaches F1=F2 and passes unchanged24 native fixtures | All complete-kernel exports, ISR/live runtime, intrinsic ABI and locked transitive source graph; a probe is insufficient | JUN-31 |
-| UEFI / media | Canonical Kotoba transition packager generates EFI images; payload boundaries and corrupt ELF refusals checked | Full native adoption and deterministic media with source/artifact receipts; old hosted/C/Python routes remain migration inventory | JUN-31, AWAI-23 |
-| QEMU boot | Native-produced EFI/kernel entry probe returns42; return43 is rejected by the check; guest boot-info/fuel/GOP metadata read back | Complete kernel boot, rendered GOP desktop/input, logs and screenshot tied to its receipts | JUN-31 |
-| Browser/CSSOM | Owner port and measurements exist; some measurements used owner WIP and Node compiler | Whole shared graph compiled with this native route; render/input parity and restart/crash recovery in the guest | JUN-93 |
-| Itonami dapps | Existing app slices and local host services are separate evidence | Actual guest app operations and restored state, signer wiring and broker refusals, then service connections | JUN-93 |
+| Legacy CDCI removal | AIUEOS #491 merged8583312; JVM/NBB workflow deleted | Replacement native AIUEOS controller/positive/refusal coverage is absent | JUN-64, AWAI-23 |
+| Native compiler adoption | Amu #1547 merged47f41d0b2; final-head CI40082366040 all green; full31 keeps all18 core modules, PR1548 i64 AOT and ADR0373 memory hardening | Main CI40088865343 is a separate gate; broader public hosts/default VM are not qualified | JUN-31 |
+| Root/public/controller pins | PR1547 root fa86314c3f15 / public9149257032b8 and native x86/controller readback pass; later main0486b715e/PR1535 advances root482398a449a3 / public74c067700105 with native ARM/x86 CI40093743992 success and matching current full31 unity/gate-source pins | Subsequent full37 kernel compiler sources are engineering candidates, with separate adoption still open | JUN-31 |
+| Whole graph / source locks | Native discovery covers15 kernel and27 live modules; five immutable external owners; six missing/hash/extra/order/duplicate/digest controls refuse E6015 | All modules must compile and execute together; no declaration/source trimming | JUN-31 |
+| Region / lock / interrupt ABI | Full35 ARM self-rebuild; canonical whole-project SIR; CAS/XCR; all32 memory ops; typed64-vector table; QEMU INT3→callback→IRETQ/result42/fuel999999 | Whole-kernel helper/physical/MMIO contracts, error-code IRQ execution and live entry/context ABI | JUN-31 |
+| Loader-owned resources | Amu candidates8f23eff8c/b365c83d0 seal15 scratch pages before main; page/window bounds, mutable-header forgery and valid negative controls pass native ARM + QEMU TCG | Successor native x86/controller adoption; whole kernel use remains under validation | JUN-31 |
+| Platform resource boundary | Corrected full36 ARM F1=F2 `717f7d15582d`; QEMU private-map forgery / stack exhaustion / shallow negative controls pass | Firmware-type MMIO prototype retired; native PCI/ACPI collector/private consumer now has ARM/QEMU candidate proof; full kernel region contracts and live context/queue/capability/domain ABI remain open | JUN-31 |
+| Native media | Native Kotoba transition EFI packaging and bounded corrupt/payload controls are available | Complete kernel image, native GPT/filesystem/release packaging and its receipts; retired hosted/C routes are not fallback | JUN-31, AWAI-23 |
+| QEMU desktop/input | Source-bound entry/ISR/memory probes only; firmware GOP metadata read back | Full kernel boot, rendered desktop, input/recovery, logs and screenshot tied to produced media | JUN-31 |
+| Browser/CSSOM / Itonami | Owner ports and separate historical measurements exist | Whole native graph, guest lifecycle/render/input, dapp operations/state restore and per-operation broker controls | JUN-93 |
 
-JUN-93 now explicitly depends on JUN-31 as well as its existing scope gate.
-Keep all of these issues open until their own acceptance criteria pass.
+Amu [PR1547](https://github.com/kotoba-lang/amu/pull/1547) was reviewed and merged.
+[Final-head CI](https://github.com/kotoba-lang/amu/actions/runs/40082366040)
+passed native ARM, native x86, controller24 cases/18 refusals, public aliases,
+source-lock controls, browser cases, i64 AOT122 cases/corrupt control and image/EFI
+plus27 memory admission cases. Actual retained compiler generations match the
+published image. The controller receipt binds the current complete compiler
+provenance. Controller and both gate binaries were freshly cross-built to the
+same pins; CI retains their receipt pins, rather than those three binaries.
+The merged main tree/pins were read back; main CI is not relabelled as complete.
 
-## Verified entry probe, not complete-kernel acceptance
+Earlier full30, bounded42 entry and hosted/reference records retain their own
+source bindings. A framebuffer descriptor is not a rendered desktop. Native
+ARM compilation and QEMU TCG guest execution are also distinct from actual
+native x86 execution and the two native CDCI verdict roles.
 
-Amu candidate [PR #1547](https://github.com/kotoba-lang/amu/pull/1547)
-(`codex/amu-aiueos-image-20261024`) retains the adopted
-core and adds image emission plus ordinary UEFI transition packaging. Its
-full30 compiler rebuilds to identical F1/F2 `2ebb99ba0dee2be4`. Image and
-EFI artifacts are byte-identical across those generations. No installed
-public compiler or root/product/native-controller pin was advanced.
+The successor source linker resolves all real functions/imports into one SIR
+ledger and invokes the canonical region checker. Namespace exports are linking
+interfaces, not fresh pointer roots. Literal/computed/loaded bases remain
+refused. Boot-info v5 is160 bytes plus16KiB map. Scratch constructors use sealed
+private image metadata and accept only slots/lengths within the loader's exact
+allocation; changing the writable public boot header cannot remint authority.
 
-The generated EFI/kernel pair boots in QEMU/OVMF. QMP observed
-`RIP=0x10104b`, `RAX=0x2a`, unchanged sealed fuel1024, boot-info v5 and
-GOP metadata1280x800. The kernel is the declared literal42 probe. Those
-framebuffer dimensions describe firmware metadata, not a desktop render.
-The check also booted a native-produced return43 control and rejected it.
+The AIUEOS source candidate now carries explicit boot region lengths, uses
+the shared v5/v6 map offset160 and obtains scratch pages/windows through those constructors.
+TX/RX descriptor pages are narrowed explicitly and use4KiB memory instructions.
+All-caller private helper extents now retain exact canonical region proof,
+including identity-only tail argument writes. Three-module native QEMU helper
+fixtures pass with exact result/fuel. The newer full15-module engineering
+build reproduces its ELF and native PCI v6 EFI. The source now uses separate
+readiness and bounded2048-byte RX buffers, copied into an owned4096-byte
+snapshot. All ten functional snapshot checks pass in QEMU, with independent
+memory readback and a valid-image refusal control. This is not full OS boot.
+See [DMA contracts](native-dma-region-contracts.md). The full27 live root
+still needs `kernel-value-provider-queue` and its context/export ABI.
+The retired type11 MMIO
+prototype was removed before public adoption: UEFI firmware classifications
+cannot grant OS device ownership. See `native-pci-resource-handoff.md` for
+the versioned PCI/ACPI handoff candidate, ARM fixed pointdffb92704da8, real
+QEMU BAR access/restoration and precise refusal evidence.
 
-The unchanged complete `os/aiueos/native/kernel.kotoba` is still outside
-the native command's admitted graph: `--source-path` refuses usage and
-`--module-lock` refuses E6015 without emitting an artifact. Do not remove
-those declarations, omit dependencies or replace that source with the
-probe to obtain a successful build.
+The live root has27 modules. Thirteen arena status checks now compare integer
+write results explicitly against1; with that source correction the native
+frontend identifies missing `kernel-value-provider-queue` (related native
+ValueRuntime family: Amu issue625). Queue/capability/domain ABI and the full
+live export/context layout remain open. No declaration is removed.
+Do not replace either whole graph with a successful probe or restore literal
+physical-window roots. JUN-93 remains behind JUN-31 and JUN-90.
 
-The next integration boundary is pinned transitive source linking plus
-complete kernel exports/ISR/live runtime and intrinsic support. Follow
-that with native media/full QEMU desktop/input acceptance, then JUN-93.
+## Locked native build protocol
+
+`os/aiueos/scripts/build-kotoba-native-kernel.sh AMU_SOURCE` invokes the native
+builder directly. The default compiler is the source tree's pinned public
+ELF; an engineering override requires both `AIUEOS_AMU_SELFHOST_BIN` and its
+measured `AIUEOS_AMU_SELFHOST_SHA256`. Execute it on matching native Linux
+architecture; the public x86 compiler and local ARM candidate are distinct.
+
+The five owner dependencies are pinned by exact source bytes and commit
+provenance in `os/aiueos/native/source-dependencies.json`. The builder uses
+native module discovery, checks owner pins, writes the complete sorted KSL1
+file set with ordered roots, and supplies its digest to both native builds.
+It preserves both outputs and compares bytes and immutable input readback.
+Use `AIUEOS_NATIVE_KERNEL_SOURCE` to select the full live root and
+`AIUEOS_NATIVE_OUT` for a fresh output directory. Failed compilation writes
+its named phase and raw diagnostic to `build-state.json`, never a pass.
+
+No source is trimmed and no hosted compiler or packaging fallback is used.
+The old nine ValueRuntime/arena files moved byte-identically to their
+canonical `kotoba/aiueos/*_*.kotoba` paths so discovery can follow namespaces.
+Native image reproduction is still an artifact candidate: all ISR/live
+exports, context layout, real execution and refusal controls must pass before
+native media, QEMU desktop/input or a replacement AIUEOS CI can be qualified.
 
 ## Boundaries to retain
 
@@ -77,3 +129,14 @@ that with native media/full QEMU desktop/input acceptance, then JUN-93.
 * Current signer scope is this Mac's local-software validation only.
   Independent production custody and physical-machine qualification remain
   separate work. This task does not install to a disk or cut over services.
+
+
+Latest baseline update: Amu main0486b715e (PR1535) follows PR1547 and retains
+its integration. The kernel candidate includes that named-wire-refusal
+update; latest-root full37 ARM fixed point0066017a8330 (all24 runtime and native
+fixture regressions) is separate from the earlier
+immutable a82f8d817/dffb92704da8 receipts. All13 prior QEMU artifact/observer identities match newly generated bytes.
+Current admitted root/public are
+482398a449a3/74c067700105, with all31 product and18 core modules. Do not
+substitute the engineering compiler for those public pins. PR1547's merge
+CI40088865343 passed ARM and was still running native x86 at14:08 UTC.

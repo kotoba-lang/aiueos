@@ -29,6 +29,7 @@
      (* (kernel-load-u8-4k arena 4096 (+ index 2)) 65536)
      (* (kernel-load-u8-4k arena 4096 (+ index 3)) 16777216)))
 
+;; Integer write status must be compared explicitly; 0 is not a boolean.
 (defn write-u32 [arena index value]
   (let [b0 (bit-and value 255)
         b1 (bit-and (quot value 256) 255)
@@ -75,10 +76,10 @@
     (if (= magic 1095259723)
       (if (header-valid? arena) 1 0)
       (if (= magic 0)
-        (if (write-u32 arena 8 1)
-          (if (write-u32 arena 12 0)
-            (if (write-u32 arena 16 0)
-              (if (write-u32 arena 20 1)
+        (if (= (write-u32 arena 8 1) 1)
+          (if (= (write-u32 arena 12 0) 1)
+            (if (= (write-u32 arena 16 0) 1)
+              (if (= (write-u32 arena 20 1) 1)
                 (write-u32 arena 4 1095259723)
                 0)
               0)
@@ -102,12 +103,12 @@
         (if (= slot 63)
           0
           (let [offset (slot-offset slot)]
-            (if (write-u32 arena offset next-handle)
-              (if (write-u32 arena (+ offset 8) value-token)
-                (if (write-u32 arena (+ offset 12) cid-token)
+            (if (= (write-u32 arena offset next-handle) 1)
+              (if (= (write-u32 arena (+ offset 8) value-token) 1)
+                (if (= (write-u32 arena (+ offset 12) cid-token) 1)
                   (if (= (kernel-store-u8-4k arena 4096 (+ offset 4) 1) 1)
-                    (if (write-u32 arena 8 (+ next-handle 1))
-                      (if (write-u32 arena 12 (+ live-count 1))
+                    (if (= (write-u32 arena 8 (+ next-handle 1)) 1)
+                      (if (= (write-u32 arena 12 (+ live-count 1)) 1)
                         next-handle
                         0)
                       0)
@@ -134,10 +135,10 @@
               live-count (read-u32 arena 12)]
           (if (and (> live-count 0)
                    (= (kernel-store-u8-4k arena 4096 (+ offset 4) 0) 0))
-            (if (write-u32 arena offset 0)
-              (if (write-u32 arena (+ offset 8) 0)
-                (if (write-u32 arena (+ offset 12) 0)
-                  (if (write-u32 arena 12 (- live-count 1)) 1 0)
+            (if (= (write-u32 arena offset 0) 1)
+              (if (= (write-u32 arena (+ offset 8) 0) 1)
+                (if (= (write-u32 arena (+ offset 12) 0) 1)
+                  (if (= (write-u32 arena 12 (- live-count 1)) 1) 1 0)
                   0)
                 0)
               0)

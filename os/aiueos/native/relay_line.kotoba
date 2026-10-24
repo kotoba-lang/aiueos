@@ -131,14 +131,20 @@
         (digits-run frame offset limit (+ count 1))
         count))))
 
-(defn decimal-value [frame offset count acc]
+(defn- decimal-value-loop [frame offset count acc]
   ;; The value of `count` decimal digits at `offset`. The relay compares the
   ;; liveness sequence numerically (int(seq) == sequence), so unlike `id` this
   ;; one is parsed and re-emitted at a fixed width rather than copied.
   (if (= count 0)
     acc
-    (decimal-value frame (+ offset 1) (- count 1)
+    (decimal-value-loop frame (+ offset 1) (- count 1)
                    (+ (* acc 10) (- (kernel-load-u8-4k frame 4096 offset) 48)))))
+
+(defn decimal-value [parent parent-bytes offset count acc]
+  ;; This retained diagnostic has no external kernel caller. Its public
+  ;; pair supplies a bounded frame before the recursive implementation runs.
+  (let [frame (kernel-subregion parent parent-bytes 0 4096)]
+    (decimal-value-loop frame offset count acc)))
 
 (defn hex-value [c]
   (if (and (>= c 48) (<= c 57))
