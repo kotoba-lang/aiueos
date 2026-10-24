@@ -1425,7 +1425,10 @@ PY
     timeout_kind=GUEST-DIED
   elif [ -n "$last_serial" ] || [ -n "$last_debug" ]; then
     case "$last_serial" in
-      "$flake_signature"*) timeout_kind=HOST-FLAKE-SIGNATURE ;;
+      # AIUEOS_PROCESS_PHASE_ (2026-10-24): the guest now names its ring-3
+      # wait-loop silence point (#108), so a #108 hang's last line is one of
+      # those diagnostics rather than the marker itself. Same signature.
+      "$flake_signature"*|AIUEOS_PROCESS_PHASE_*) timeout_kind=HOST-FLAKE-SIGNATURE ;;
       *) timeout_kind=GUEST-NO-EXIT ;;
     esac
   else
