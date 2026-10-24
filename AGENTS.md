@@ -25,6 +25,18 @@ JUN-64 and AWAI-23, and Browser/CSSOM plus app integration in JUN-93.
 QEMU/OVMF and diagnostic orchestration are distinct from the native guest
 and from the required loaderless x86_64-linux-static CDCI controller.
 
+The kernel build wrapper now stages inputs with `build-native-kernel.py`
+and invokes the pinned native Amu executable directly. It no longer loads
+kotoba-native hosted sources or uses `--jvm-free` / `--unpinned`. Native
+`modules` owns discovery; owner source pins and KSL1 bind the full graph.
+Python only stages, hashes, invokes and records failures. A blocked compile
+or reproduced image candidate is not a successful native runtime gate.
+
+Nine ValueRuntime/arena sources now use their canonical namespace paths in
+`os/aiueos/kotoba/aiueos/` with underscores. Their bytes were preserved in
+the move. Historical hosted verifiers that name the old paths remain retired
+migration inventory; do not execute them or recreate duplicate source copies.
+
 Status: R2 — bare-metal boot and CPL3 execution are :implemented on QEMU/OVMF;
 P5 real-machine boot is :spec. See the README's capability table for the
 per-subsystem state; it is the authority and this file does not restate it.

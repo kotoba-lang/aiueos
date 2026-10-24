@@ -834,7 +834,7 @@
       36
       (if (= (wait-tx-complete-stream win 200000000) 1) 0 36))))
 
-(defn receive-syn-ack-retry [win mmio scratch remaining head-next]
+(defn receive-syn-ack-retry [win mmio scratch remaining head-next] :i64
   ;; A frame that was not ours has been re-armed; spend one tick of the
   ;; window, advance the ring head past it, and look again. Was a `let`
   ;; binding inside receive-syn-ack, which in a strict language means it ran
