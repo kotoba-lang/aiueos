@@ -33,8 +33,8 @@ on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 14.5 of
 security 5 of 9, storage and network 4.5 of 9, identity 6 of 6, power and accessibility 6 of 10, update and recovery 1 of 9.
 
 **Against the earlier "about 10%".** That figure was a provisional estimate of product readiness (JUN-89) with no scale behind it;
-it cannot be reproduced and is replaced. Under this scale the answer is 0%, because every required row needs the real machine or a
-release, and none has been run. The ladder in ADR-0226 (28 of 30 floors gated) measures the QEMU level of one corner of this
+it cannot be reproduced and is replaced. At the time of that estimate, under this scale the answer was 0%, because every required row needs the real machine or a
+release, and none had been run. The ladder in ADR-0226 (28 of 30 floors gated) measures the QEMU level of one corner of this
 scorecard -- windowing, input and the shell's feedback: rows C1-C4, C10 (partly), D1, D2, D4, D6 (partly), D7, G4, I5 and I8
 (partly). The rest of the 55 rows are outside it.
 
