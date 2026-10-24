@@ -3,9 +3,10 @@
             [aiueos.uefi.elf :as elf]
             [aiueos.uefi.memory :as memory]
             [aiueos.uefi.fs :as fs]
+            [aiueos.uefi.exit :as exit]
             [aiueos.uefi.integrity :as integrity])
   (:export [efi-main main mark-when present verdict window-verdict
-            digest-verdict fs-reason]))
+            digest-verdict fs-reason both equals at-most]))
 
 ;; A BOOTX64.EFI, written in Kotoba, that says what it decided.
 ;;
@@ -143,6 +144,31 @@
         n (console/put-number out r)]
     (+ r (* 0 (+ sp n)))))
 
+;; The fallback exit's one diagnostic: reached only when ExitBootServices
+;; REFUSED (a successful exit leaves no console to print on), so the firmware
+;; is still alive here and the refusal's own status can name the clause --
+;; printed as `xstat <status> <map-refresh status>` on its own serial line
+;; before the run ends through isa-debug-exit.
+(defn exit-fallback [out xstat restat]
+  (let [nl (console/put out (ucs2 "\r\nxstat"))
+        n0 (fs-reason out xstat)
+        n1 (fs-reason out restat)
+        e (kernel-out-u32 244 16)]
+    0))
+
+;; The boot stage's flags each stand on four or more separate facts, and a
+;; five-deep `if` nest is where one of them gets dropped without anyone
+;; noticing (the same reason `examples/aiueos-uefi-scratch.kotoba` folds its
+;; markers this way).
+(defn both [a b]
+  (if (= a 1) (if (= b 1) 1 0) 0))
+
+(defn equals [a b]
+  (if (= a b) 1 0))
+
+(defn at-most [v ceiling]
+  (if (> v ceiling) 0 1))
+
 (defn efi-main [image-handle system-table]
   (let [out (console/con-out system-table)
         cleared (console/clear-screen out)
@@ -243,9 +269,137 @@
         q4 (fs-reason out (fs/read-reason fstat 176 fgot))
         q5 (fs-reason out fadmit)
 
+        ;; ------------------------------------------------------------------
+        ;; boot -- the last of ADR-0180's modules: place the admitted kernel,
+        ;; take the machine from the firmware, and go to the entry it was
+        ;; admitted with. `main.c`'s `load_verified_model` loop (:1120-1138)
+        ;; does exactly this per segment -- AllocatePages(AllocateAddress,
+        ;; EfiLoaderData, pages, &paddr), assert the answer is the p_paddr the
+        ;; headers claim, CopyMem the bytes -- and so does this stage, from
+        ;; the same admitted headers. Four marks, in stage order:
+        ;;
+        ;;   T  the placement facts parsed from the headers already admitted
+        ;;      in fbuf agree with the literals the pages are asked for: seg0
+        ;;      at 4096 into the file goes to 0x101000, seg1 at 32768 to
+        ;;      0x108000, the entry is seg0's address, filesz == memsz on both,
+        ;;      and each memsz fits the pages asked for
+        ;;   U  the whole file read off the ESP (count == the measured length,
+        ;;      length inside the 28-page buffer), both segments PLACED at
+        ;;      their p_paddr (AllocateAddress answered the hint), and both
+        ;;      CopyMem calls answered their destination (CopyMem's convention
+        ;;      is RETURN Destination, not a status -- measured 2026-10-24:
+        ;;      c0 == s0 == 0x101000, c1 == s1 == 0x108000)
+        ;;   M  GetMemoryMap answered a map this loader may hand a kernel
+        ;;      (`aiueos.uefi.exit/map-reason` = 0)
+        ;;   X  ExitBootServices returned EFI_SUCCESS. After this the firmware
+        ;;      console is gone -- only port I/O survives, which is why every
+        ;;      line above was printed before it
+        ;;
+        ;; and then `kernel-jump-to` to the parsed entry. The KERNEL writes B
+        ;; and ends the run with its own `out 0xf4, 21` (QEMU status 43), so a
+        ;; run that reaches 43 left through the jump target and nowhere else:
+        ;; the loader's fallback exit is 33 and is reachable only when a mark
+        ;; above failed.
+
+        ;; T -- placement facts out of the headers the fs stage admitted.
+        s0off (elf/segment-field fbuf 4096 64 2)
+        s0addr (elf/segment-field fbuf 4096 64 3)
+        s0size (elf/segment-field fbuf 4096 64 4)
+        s0mem (elf/segment-field fbuf 4096 64 5)
+        s1off (elf/segment-field fbuf 4096 120 2)
+        s1addr (elf/segment-field fbuf 4096 120 3)
+        s1size (elf/segment-field fbuf 4096 120 4)
+        s1mem (elf/segment-field fbuf 4096 120 5)
+        kentry (elf/entry-point fbuf 4096)
+        tfacts (both (both (equals s0off 4096) (equals s1off 32768))
+                     (both (equals kentry s0addr)
+                           (both (both (equals s0size s0mem)
+                                       (equals s1size s1mem))
+                                 (both (at-most s0mem 4096)
+                                       (at-most s1mem 77824)))))
+        m15 (mark-when tfacts 84)
+
+        ;; U -- the file, whole, and the two segments placed under their
+        ;; p_paddr. The page counts are the compile-time literals the region
+        ;; windows are made of (1 page for seg0's 144-208 bytes, 19 pages for
+        ;; seg1's 77,824); T already refused to go on unless the parsed memsz
+        ;; fits inside them.
+        kbuf (kernel-uefi-alloc-region bs 40 0 2 28 0)
+        kfile (fs/open-read froot (fs/kernel-path) fslots)
+        klen (fs/file-size kfile fslots)
+        kstat (fs/read-into kfile kbuf klen fslots)
+        kgot (fs/read-count fslots)
+        kclose (fs/close-file kfile)
+        s0 (kernel-uefi-alloc-region bs 40 2 2 1 s0addr)
+        s1 (kernel-uefi-alloc-region bs 40 2 2 19 s1addr)
+        c0 (memory/copy-mem bs s0 (+ kbuf s0off) s0size)
+        c1 (memory/copy-mem bs s1 (+ kbuf s1off) s1size)
+        uflags (both (both (equals kstat 0)
+                           (both (equals kgot klen) (at-most klen 114688)))
+                     (both (both (equals s0 s0addr) (equals s1 s1addr))
+                           (both (equals c0 s0) (equals c1 s1))))
+        m16 (mark-when uflags 85)
+        nl5 (console/put out (ucs2 "\r\nboot"))
+        b0 (fs-reason out tfacts)
+        b1 (fs-reason out uflags)
+        b2 (fs-reason out kstat)
+        b3 (fs-reason out kgot)
+        b4 (fs-reason out klen)
+        b5 (fs-reason out s0)
+        b6 (fs-reason out s1)
+        b7 (fs-reason out c0)
+        b8 (fs-reason out c1)
+
+        ;; M / X -- the memory map, then the machine. The map buffer is its own
+        ;; 32-page allocation (131,072 bytes, the size the call is offered);
+        ;; the four scalar out-words live in their own page so the map cannot
+        ;; overwrite the key that is about to be spent.
+        mslots (kernel-uefi-alloc-region bs 40 0 2 1 0)
+        mmap (kernel-uefi-alloc-region bs 40 0 2 32 0)
+        minit (kernel-store-u64-4k mslots 4096 0 131072)
+        mstat (exit/get-memory-map bs
+                                   (kernel-subregion mslots 4096 0 8)
+                                   mmap
+                                   (kernel-subregion mslots 4096 8 8)
+                                   (kernel-subregion mslots 4096 16 8)
+                                   (kernel-subregion mslots 4096 24 8))
+        msize (kernel-load-u64-4k mslots 4096 0)
+        mkey (kernel-load-u64-4k mslots 4096 8)
+        mdesc (kernel-load-u64-4k mslots 4096 16)
+        mreason (exit/map-reason mstat msize mdesc)
+        nl6 (console/put out (ucs2 "\r\nmap"))
+        q6 (fs-reason out mreason)
+        q7 (fs-reason out msize)
+        q8 (fs-reason out mdesc)
+        m17 (mark-when (if (= mreason 0) 1 0) 77)
+        ;; The map key is spent by the FIRST boot-service call after the map
+        ;; is taken -- the firmware invalidates it whenever the map changes,
+        ;; and printing the map line above is such a call. Measured 2026-10-24:
+        ;; with the line between the two calls, xstat != 0 (debugcon
+        ;; "...rxTMZ", exit 33) while map-reason itself was 0. main.c:1209-1221
+        ;; takes the map and exits back to back with nothing in between; this
+        ;; composition keeps the printed evidence AND that shape by taking the
+        ;; map twice -- the first answers the `map` line, the second's key is
+        ;; the one spent here, with nothing but a pure load in between.
+        restat (exit/get-memory-map bs
+                                    (kernel-subregion mslots 4096 0 8)
+                                    mmap
+                                    (kernel-subregion mslots 4096 8 8)
+                                    (kernel-subregion mslots 4096 16 8)
+                                    (kernel-subregion mslots 4096 24 8))
+        rekey (kernel-load-u64-4k mslots 4096 8)
+        xstat (exit/exit-boot-services bs image-handle rekey)
+        m18 (mark-when (if (= xstat 0) 1 0) 88)
+
         parked (kernel-system-table)
         m5 (mark-when (if (= parked system-table) 1 0) 90)
-        done (kernel-out-u32 244 16)]
+        bootall (+ tfacts (+ uflags (+ (if (= mreason 0) 1 0)
+                                       (if (= xstat 0) 1 0))))
+        done (if (= bootall 4)
+               (kernel-jump-to kentry image-handle)
+               (if (= xstat 0)
+                 (kernel-out-u32 244 16)
+                 (exit-fallback out xstat restat)))]
     0))
 
 (defn main [] 0)
