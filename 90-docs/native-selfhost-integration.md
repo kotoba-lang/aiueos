@@ -7,9 +7,9 @@ source and execution ledger, not an additional maturity score.
 
 ```mermaid
 flowchart BT
-  A["Amu full31 native compiler / root / two native gate roles"] --> B["All kernel dependencies / immutable owners / KSL1"]
+  A["Amu full31 native compiler / root / two native gate roles"] --> B["All15 kernel /27 live dependencies / immutable owners / KSL1"]
   B --> C["Canonical region contracts / lock / CPU / ISR ABI"]
-  C --> P["Native PCI / ACPI resource handoff + private context"]
+  C --> P["Native PCI / ACPI handoff + private context candidate a82f8d817"]
   P --> V["Live queue / capability / domain ABI"]
   V --> D["Complete kernel + live ValueRuntime execution"]
   D --> E["Native EFI + deterministic release media"]
@@ -32,11 +32,11 @@ and browser console are separate from an AIUEOS guest.
 | --- | --- | --- | --- |
 | Legacy CDCI removal | AIUEOS #491 merged8583312; JVM/NBB workflow deleted | Replacement native AIUEOS controller/positive/refusal coverage is absent | JUN-64, AWAI-23 |
 | Native compiler adoption | Amu #1547 merged47f41d0b2; final-head CI40082366040 all green; full31 keeps all18 core modules, PR1548 i64 AOT and ADR0373 memory hardening | Main CI40088865343 is a separate gate; broader public hosts/default VM are not qualified | JUN-31 |
-| Root/public/controller pins | ARM root fa86314c3f15; actual native x86 F1=F2=F3 equals public9149257032b8; controller/gates rebuild identically; raw receipt self-hashes/provenance read back | Subsequent full36 kernel compiler sources are engineering candidates, with separate adoption still open | JUN-31 |
+| Root/public/controller pins | ARM root fa86314c3f15; actual native x86 F1=F2=F3 equals public9149257032b8; controller/gates rebuild identically; raw receipt self-hashes/provenance read back | Subsequent full37 kernel compiler sources are engineering candidates, with separate adoption still open | JUN-31 |
 | Whole graph / source locks | Native discovery covers15 kernel and27 live modules; five immutable external owners; six missing/hash/extra/order/duplicate/digest controls refuse E6015 | All modules must compile and execute together; no declaration/source trimming | JUN-31 |
 | Region / lock / interrupt ABI | Full35 ARM self-rebuild; canonical whole-project SIR; CAS/XCR; all32 memory ops; typed64-vector table; QEMU INT3→callback→IRETQ/result42/fuel999999 | Whole-kernel helper/physical/MMIO contracts, error-code IRQ execution and live entry/context ABI | JUN-31 |
 | Loader-owned resources | Amu candidates8f23eff8c/b365c83d0 seal15 scratch pages before main; page/window bounds, mutable-header forgery and valid negative controls pass native ARM + QEMU TCG | Successor native x86/controller adoption; whole kernel use remains under validation | JUN-31 |
-| Platform resource boundary | Corrected full36 ARM F1=F2 `717f7d15582d`; QEMU private-map forgery / stack exhaustion / shallow negative controls pass | Firmware-type MMIO prototype retired; native PCI/ACPI collector and ownership policy missing; live context/queue/capability/domain ABI open | JUN-31 |
+| Platform resource boundary | Corrected full36 ARM F1=F2 `717f7d15582d`; QEMU private-map forgery / stack exhaustion / shallow negative controls pass | Firmware-type MMIO prototype retired; native PCI/ACPI collector/private consumer now has ARM/QEMU candidate proof; full kernel region contracts and live context/queue/capability/domain ABI remain open | JUN-31 |
 | Native media | Native Kotoba transition EFI packaging and bounded corrupt/payload controls are available | Complete kernel image, native GPT/filesystem/release packaging and its receipts; retired hosted/C routes are not fallback | JUN-31, AWAI-23 |
 | QEMU desktop/input | Source-bound entry/ISR/memory probes only; firmware GOP metadata read back | Full kernel boot, rendered desktop, input/recovery, logs and screenshot tied to produced media | JUN-31 |
 | Browser/CSSOM / Itonami | Owner ports and separate historical measurements exist | Whole native graph, guest lifecycle/render/input, dapp operations/state restore and per-operation broker controls | JUN-93 |
@@ -64,15 +64,18 @@ private image metadata and accept only slots/lengths within the loader's exact
 allocation; changing the writable public boot header cannot remint authority.
 
 The AIUEOS source candidate now carries explicit boot region lengths, uses
-v5 map offset160 and obtains scratch pages/windows through those constructors.
+the shared v5/v6 map offset160 and obtains scratch pages/windows through those constructors.
 TX/RX descriptor pages are narrowed explicitly and use4KiB memory instructions.
 All-caller private helper extents now retain exact canonical region proof,
 including identity-only tail argument writes. Three-module native QEMU helper
 fixtures pass with exact result/fuel. The latest full15-module build refuses
-E2101 on missing `kernel-pci-mmio`, with no artifact. The retired type11 MMIO
+E7106 at `debug_link/submit-bus3-frame`, global SIR8339, with no artifact.
+The full27 live root stops at missing `kernel-value-provider-queue`.
+The retired type11 MMIO
 prototype was removed before public adoption: UEFI firmware classifications
 cannot grant OS device ownership. See `native-pci-resource-handoff.md` for
-the versioned PCI/ACPI handoff candidate.
+the versioned PCI/ACPI handoff candidate, ARM fixed pointdffb92704da8, real
+QEMU BAR access/restoration and precise refusal evidence.
 
 The live root has27 modules. Thirteen arena status checks now compare integer
 write results explicitly against1; with that source correction the native

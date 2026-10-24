@@ -88,10 +88,10 @@
       (install-bar-page directory bar)
       0)))
 
-(defn mmio-window [bar]
-  ;; Pending native PCI resource handoff. A BAR address or firmware memory
-  ;; classification alone grants no region; the missing primitive refuses.
-  (kernel-pci-mmio bar 512))
+(defn mmio-window [bus bar]
+  ;; Exact PCI identity accompanies the request. Only a validated private
+  ;; v6 resource catalog can grant the bounded window; integers alone cannot.
+  (kernel-pci-mmio bus 0 0 bar 512))
 
 (defn mmio-load-u8 [mmio offset]
   (do (assert (= (mapped/access-valid 512 offset 1) 1))
@@ -165,7 +165,7 @@
           master (if (= (bit-and command 4) 0) 0 8)]
       (if (= bar 0)
         (+ 1 space master)
-        (let [mmio (kernel-pci-mmio bar 512)
+        (let [mmio (kernel-pci-mmio bus 0 0 bar 512)
               revision-bit (if (= (revision mmio) 0) 0 16)
               mac-bit (if (mac-valid mmio) 32 0)
               link-bit (if (= (bit-and (mmio-load-u16 mmio 108) 2) 0) 0 64)]
@@ -349,8 +349,8 @@
         (let [paused (kernel-pause)]
           (+ (wait-rx-command rx (- remaining 1)) (* 0 paused)))))))
 
-(defn quiesce [bar]
-  (let [mmio (kernel-pci-mmio bar 512)
+(defn quiesce [bus bar]
+  (let [mmio (kernel-pci-mmio bus 0 0 bar 512)
         stopped (mmio-store-u8 mmio 55
                                 (bit-or (mmio-load-u8 mmio 55) 128))]
     (if (= (wait-fifo-empty mmio 300000) 1)
@@ -902,7 +902,7 @@
         rx (kernel-subregion dma-base 16384 4096 4096)
         tx-frame (kernel-subregion dma-base 16384 8192 4096)
         rx-frame (kernel-subregion dma-base 16384 12288 4096)
-        mmio (kernel-pci-mmio bar 512)
+        mmio (kernel-pci-mmio bus 0 0 bar 512)
         flushed (kernel-invlpg bar)
         command (pci-read bus 4)
         enabled (pci-write bus 4 (bit-or (bit-and command 65535) 6))

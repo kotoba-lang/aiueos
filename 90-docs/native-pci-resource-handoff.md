@@ -1,6 +1,7 @@
 # Native PCI resource handoff candidate
 
-Status: proposed, not implemented or qualified. JUN-31 owns this dependency
+Status: local ARM/QEMU candidate, not merged or native x86/controller adopted.
+JUN-31 owns this dependency
 before whole-kernel/live, release media and desktop/input acceptance.
 
 The retired `kernel-firmware-mmio` prototype used a firmware memory type as
@@ -21,7 +22,7 @@ devices. Runtime-firmware ranges remain protected. Source references:
 ## Producer and schema
 
 The native Kotoba EFI packager needs a versioned extension, rather than a
-reinterpretation of boot-info v5. The proposed v6 keeps the160-byte prefix
+reinterpretation of boot-info v5. The implemented candidate v6 keeps the160-byte prefix
 and16KiB map, assigning the reserved144/152 fields to catalog pointer/bytes.
 All constructor, packager, kernel and observer checks must move together.
 The published full31 compiler remains v5 until a successor is admitted.
@@ -49,10 +50,10 @@ decision require their own acceptance evidence.
 
 Before main, copy and validate the bounded catalog into private image
 storage. Do not reuse the non-live low20KiB context reservation for the live
-queue/arena. A larger, versioned private layout and corresponding stack floor
-are required before adding the catalog/live records.
+queue/arena. The PCI candidate now has a larger, versioned private layout and stack
+floor. Live records still need a separate reconciled layout.
 
-The proposed constructor is
+The candidate constructor is
 `kernel-pci-mmio(bus, device, function, base, bytes)` for segment0.
 It checks identity, extent and ownership against that private handoff.
 Positive bounded bytes with base0 represent absent hardware and return0;
@@ -61,8 +62,8 @@ ungranted addresses, stale/mismatched resources and forged public metadata
 must fail closed. The static region extent is the exact bytes operand.
 
 Kernel, RTL8125 and debug-link callers must carry their actual PCI identity.
-The current missing `kernel-pci-mmio` primitive refuses in the native
-frontend. Do not substitute reserved memory, the retired constructor or a
+The candidate primitive is implemented in the Amu kernel worktree; it is
+absent from the admitted public full31 compiler. Do not substitute reserved memory, the retired constructor or a
 literal physical parent to make the graph compile.
 
 ## Acceptance order
@@ -83,3 +84,38 @@ literal physical parent to make the graph compile.
    complete native x86 and two-role controller evidence; then proceed to
    native media and QEMU desktop/input. Physical RTL8125 qualification is
    separate from a QEMU display-device resource test.
+
+
+## 2026-10-24 local candidate evidence
+
+Amu collector commit70fcdf32b is source-bound to full37 ARM fixed point
+b482a0738a1c17e6..., all24 runtime cases. Native F1/F2 reproduce both v6
+EFI/payload candidates; v5 packaging/corruption regressions pass. QEMU
+collects3 PCI memory BARs whose BDF/BAR/vendor-device/base/bytes exactly
+match independent QMP observations.
+
+The subsequent private consumer candidate is source-bound to full37 ARM
+fixed pointdffb92704da855ac..., all24 runtime cases and region/helper/window/
+width/lock/ISR packaging regressions. v6 uses128KiB image-owned RW storage,
+with a64KiB private floor and the copied PCI catalog at context20480. v5
+project context retains its20KiB floor. Single-source image/object ABI stays
+separate. A PCI-dependent image refuses packaging without explicit v6.
+
+QEMU's real VGA BAR is checked by BDF/extent, then read, written, verified
+and restored; result42 and exact fuel999999. This fixture has one source
+fuel-charge site; bounded inline primitives do not add source charges.
+Public pointer/bytes forged to a RAM catalog cannot replace the private
+snapshot. Bad BDF, outside BAR, zero/oversized bytes and RAM requests hit
+the exact constructor UD2. A deliberately corrupted EFI collector record
+pointing into RAM reaches the trusted bootstrap's refusal, distinct from
+constructor, fuel or memory guards. This corruption is only a negative
+input and does not qualify a platform resource. The observer's valid-image
+negative control must refuse. Physical NIC and full ownership-policy
+qualification, empty/limit firmware execution and successor adoption remain
+open.
+
+The latest full15 kernel now stops at debug_link/submit-bus3-frame region
+proof(E7106, global SIR8339); the full27 live root stops at missing native
+kernel-value-provider-queue. Keep all source declarations and existing
+refusals. Explicit whole-graph region contracts and live queue/capability/
+domain layout must be closed before media or desktop/input acceptance.

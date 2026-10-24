@@ -758,7 +758,7 @@
   (let [bar (rtl/bar-for-bus 3)]
     (if (= bar 0)
       3
-      (send-hello-line (kernel-pci-mmio bar 512)
+      (send-hello-line (kernel-pci-mmio 3 0 0 bar 512)
                        dma-pages boot))))
 
 (defn debug-tick [dma-pages boot]
@@ -796,7 +796,7 @@
   (let [bar (rtl/bar-for-bus 3)]
     (if (= bar 0)
       3
-      (let [mmio (kernel-pci-mmio bar 512)
+      (let [mmio (kernel-pci-mmio 3 0 0 bar 512)
             seen (debug-poll mmio dma-pages)]
         (if (= seen 512)
           (+ 112 (answer-job-line mmio dma-pages boot))

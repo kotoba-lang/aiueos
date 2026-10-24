@@ -296,7 +296,7 @@
     (let [first-result (rtl/qualify 2 bar-a dma-pages)]
       (if (= first-result 0)
         0
-        (if (and (> bar-b 0) (= (rtl/quiesce bar-a) 1))
+        (if (and (> bar-b 0) (= (rtl/quiesce 2 bar-a) 1))
           (rtl/qualify 3 bar-b dma-pages)
           first-result)))
     (if (> bar-b 0) (rtl/qualify 3 bar-b dma-pages) -1)))
@@ -496,7 +496,7 @@
              (= (kernel-load-u8 boot-header 160 5) 79)
              (= (kernel-load-u8 boot-header 160 6) 79)
              (= (kernel-load-u8 boot-header 160 7) 84)
-             (= (load64-boot boot 16544 8) 5)
+             (= (load64-boot boot 16544 8) 6)
              (= (load64-boot boot 16544 16) memory-map)
              (> map-size 0)
              ;; 16368, not 16384: the last 16 bytes of the map window hold
@@ -640,7 +640,7 @@
                             ;; the ring is live but the peer sent nothing inside
                             ;; the window, 192 + 30/26/25 = the specific stream
                             ;; fault. Diagnostics codes 96..96+0 stay untouched.
-                            (let [stream-mmio (kernel-pci-mmio bar-a 512)
+                            (let [stream-mmio (kernel-pci-mmio 2 0 0 bar-a 512)
                                   stream-win (kernel-subregion rtl-dma-pages
                                                                16384 0 16384)
                                   ;; The stream's three CPU-side buffers, in
@@ -749,7 +749,7 @@
                                                   stream-log-frame
                                                   (+ census-a (* 0 logged-b)))
                                         bus3-dma-pages (kernel-owned-window 4 16384)
-                                        bus3-mmio (kernel-pci-mmio bar-b 512)
+                                        bus3-mmio (kernel-pci-mmio 3 0 0 bar-b 512)
                                         ;; 6 = bar-b never decoded, so there is
                                         ;; no MMIO to init. Distinct from every
                                         ;; code debug-init itself returns.
