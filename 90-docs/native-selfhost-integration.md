@@ -9,10 +9,13 @@ flowchart BT
   A["Amu adopted compiler core / native self-rebuild"] --> B["Complete AIUEOS kernel graph / freestanding image"]
   B --> C["UEFI loader / media packaging"]
   C --> D["QEMU / OVMF: boot, GOP, input"]
+  D --> N["Murakumo node / hata Cell runtime"]
   D --> E["Shared Browser / DOM / CSSOM / app lifecycle"]
-  E --> F["Itonami agent-first dapps / local state restore"]
-  F --> G["Murakumo host services / Aozora / Yataverse"]
-  H["Kagi agent/bot signer and keyset"] --> F
+  N --> F["Itonami agent-first dapps / UI and state restore"]
+  E --> F
+  F --> G["Aozora / Yataverse app and state integration"]
+  H["Kagi agent/bot signer and keyset"] --> N
+  H --> F
   R["Canonical client-runtime broker / per-operation consent"] --> F
 ```
 
