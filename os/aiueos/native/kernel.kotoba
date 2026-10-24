@@ -543,10 +543,10 @@
                 twelfth-start (+ physical-start 45056)
                 thirteenth-start (+ physical-start 49152)
                 fourteenth-start (+ physical-start 53248)
-                ;; No page 14..17 extension. The Amu loader allocates exactly
-                ;; fifteen pages (kernel_scratch.pages = 15, checked above).
-                ;; This network profile uses only its original fourteen pages;
-                ;; the fifteenth is reserved for the Browser desktop profile.
+                ;; Fifteen sealed slots0..14; slots15..17 do not exist.
+                ;; Slots10..13 own the RX DMA window. Slot14 is the CPU RX
+                ;; snapshot, separate from DMA and stream log/TX staging.
+                ;; Browser must obtain a distinct image-owned workspace.
                 ;; The LAN2 debug plane takes its 16 KiB from
                 ;; the pages the CR3 branch would have used instead; see the
                 ;; stream branch below (ADR-0156).
