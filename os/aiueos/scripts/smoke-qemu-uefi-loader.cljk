@@ -38,16 +38,26 @@
 ;; reason; P a firmware-allocated page was written and read back; W the
 ;; placement rule answered all five clauses; g the fixture's bytes hashed to
 ;; the digest shasum computes; h a one-nibble-different digest refused with
-;; reason 4; Z kernel-system-table still answers, so R9 survived every call.
-;; The PWgh half was lost from loader-probe.kotoba by the 8e58e52 cleanup
-;; (2026-09-05) and restored from 2c34fd7 on 2026-10-24; see
+;; reason 4; v the device has a loaded-image handle to read from; o the ESP
+;; volume opened; n the missing file was refused with the open clause's own
+;; reason (3); k \EFI\AIUEOS\KERNEL.ELF opened; r the read answered the 176
+;; bytes asked for; x the bytes read off the DISK were admitted (reason 0) by
+;; the same elf stage; Z kernel-system-table still answers, so R9 survived
+;; every call. The PWgh half was lost from loader-probe.kotoba by the 8e58e52
+;; cleanup (2026-09-05) and restored from 2c34fd7 on 2026-10-24; see
 ;; docs/evidence/aiueos-jun31-kotoba-loader-reachability-20261024/.
-(def default-markers "KHSCNAbcdefPWghZ")
+(def default-markers "KHSCNAbcdefPWghvonkrxZ")
 
 ;; The reasons `aiueos.uefi.elf/admit` gives for the six headers, in order.
 ;; Not "all non-zero": each names one clause, and swapping two of these
 ;; mutations would leave a "some refusal happened" check green.
 (def default-verdicts "0 2 5 24 23 41")
+
+;; The `aiueos.uefi.fs` stage's own reasons, in stage order: device, volume,
+;; the MISSING file's open (3 = the open clause, and the negative that makes
+;; the stage mean something), the kernel file's open, the read, and the
+;; admission of the bytes that came off the ESP.
+(def default-esp "0 0 3 0 0 0")
 
 (def expected-entry "0000000000101000")
 (def expected-status 33)

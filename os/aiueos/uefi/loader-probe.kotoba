@@ -2,9 +2,10 @@
   (:require [aiueos.uefi.console :as console]
             [aiueos.uefi.elf :as elf]
             [aiueos.uefi.memory :as memory]
+            [aiueos.uefi.fs :as fs]
             [aiueos.uefi.integrity :as integrity])
   (:export [efi-main main mark-when present verdict window-verdict
-            digest-verdict]))
+            digest-verdict fs-reason]))
 
 ;; A BOOTX64.EFI, written in Kotoba, that says what it decided.
 ;;
@@ -134,6 +135,14 @@
         m (mark-when (if (= r (if (= marker 103) 0 4)) 1 0) marker)]
     (+ r (* 0 (+ sp (+ n m))))))
 
+;; Prints one fs-stage reason beside the ELF verdicts, so the serial line
+;; carries the same "named clause" evidence the marks carry. Answers the
+;; reason so the caller can fold it if it wants to.
+(defn fs-reason [out r]
+  (let [sp (console/put out (ucs2 " "))
+        n (console/put-number out r)]
+    (+ r (* 0 (+ sp n)))))
+
 (defn efi-main [image-handle system-table]
   (let [out (console/con-out system-table)
         cleared (console/clear-screen out)
@@ -186,6 +195,47 @@
                            (bytes-literal "db5502b1e112b394008f0fa17a7a4cfe891411d3e79a537874c025187f1825e2")
                            104)
         nl3 (console/put out (ucs2 "\r\n"))
+
+        ;; fs -- the loader's read half, on a real volume. The smoke puts a
+        ;; kernel on the ESP at \EFI\AIUEOS\KERNEL.ELF (main.c's path), and
+        ;; the stage reads it through EFI_SIMPLE_FILE_SYSTEM into a page this
+        ;; image may write, then admits THOSE bytes -- not a literal pool.
+        ;; Two pages are spelled here because the allocation FORM belongs at
+        ;; the site that declares the window: one holds the stage's out-slots,
+        ;; one holds the file bytes. Six marks, in stage order:
+        ;;
+        ;;   v  the device has a loaded-image handle to read from
+        ;;   o  the volume opened
+        ;;   n  a name that is NOT on the volume is refused with the open
+        ;;      clause's own reason (3) -- the negative that makes v/o/k mean
+        ;;      something
+        ;;   k  the kernel file opened
+        ;;   r  the read returned exactly the 176 bytes asked for
+        ;;   x  the bytes read off the disk are ADMITTED (reason 0) by the
+        ;;      same elf stage that admitted the literal fixtures
+        fslots (kernel-uefi-alloc-region bs 40 0 2 1 0)
+        fbuf (kernel-uefi-alloc-region bs 40 0 2 1 0)
+        fdev (fs/device-handle bs image-handle fslots)
+        froot (fs/open-volume bs fdev fslots)
+        m8 (mark-when (if (= (fs/device-reason fdev) 0) 1 0) 118)
+        m9 (mark-when (if (= (fs/volume-reason froot) 0) 1 0) 111)
+        fmiss (fs/open-read froot (ucs2 "\\EFI\\AIUEOS\\MISSING.ELF") fslots)
+        m10 (mark-when (if (= (fs/open-reason fmiss) 3) 1 0) 110)
+        ffile (fs/open-read froot (fs/kernel-path) fslots)
+        m11 (mark-when (if (= (fs/open-reason ffile) 0) 1 0) 107)
+        fstat (fs/read-into ffile fbuf 176 fslots)
+        fgot (fs/read-count fslots)
+        m12 (mark-when (if (= (fs/read-reason fstat 176 fgot) 0) 1 0) 114)
+        fclose (fs/close-file ffile)
+        fadmit (elf/admit fbuf 4096 176)
+        m13 (mark-when (if (= fadmit 0) 1 0) 120)
+        nl4 (console/put out (ucs2 "\r\nesp"))
+        q0 (fs-reason out (fs/device-reason fdev))
+        q1 (fs-reason out (fs/volume-reason froot))
+        q2 (fs-reason out (fs/open-reason fmiss))
+        q3 (fs-reason out (fs/open-reason ffile))
+        q4 (fs-reason out (fs/read-reason fstat 176 fgot))
+        q5 (fs-reason out fadmit)
 
         parked (kernel-system-table)
         m5 (mark-when (if (= parked system-table) 1 0) 90)
