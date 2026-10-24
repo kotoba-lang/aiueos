@@ -30,7 +30,7 @@ console and the AIUEOS diagnostic guest are distinct environments.
 | Gate | Evidence and qualification boundary | Linear |
 | --- | --- | --- |
 | Legacy CDCI removal | AIUEOS #491 deleted the JVM/NBB/C-reference workflow. Native consumer qualification now belongs in the source owner's CI, without a new cross-repository secret or hosted fallback. | JUN-64, AWAI-23 |
-| Native compiler | Amu #1563 merged47c9462 with native ARM/x86 fixed points, all18 adopted core modules, controller, public aliases and DMA/PCI/ISR diagnostics. Successor full45 adoption must bind its current root/public/controller and gate pins to exact-head native CI. | JUN-31 |
+| Native compiler | Amu #1563 merged47c9462 with native ARM/x86 fixed points, all18 adopted core modules, controller, public aliases and DMA/PCI/ISR diagnostics. Successor full46 adoption must bind its current root/public/controller and gate pins to exact-head native CI. | JUN-31 |
 | Complete source graph | Five immutable external owners; full15 kernel,27 live and30 desktop graphs; exact KSL1 roots/file set/digest; no declaration trimming. Source and artifact identities are recorded by `build-native-kernel.py`. | JUN-31 |
 | DMA / private resources | Four bounded2048-byte RX slots inside the owned16KiB region, disjoint4KiB CPU snapshot at slot14, ten snapshot readback/refusal checks. PCI BAR ownership comes from the sealed native v6 catalog, never firmware memory-type inference. | JUN-31 |
 | Live ABI | v2 has four non-evicting domains, per-domain arenas, a bounded queue/capability table and isolated completion/CAS state. Twelve context and sixteen typed-call checks have actual guest receipts; typed ABI roles are distinct from ISR roots. | JUN-31 |
