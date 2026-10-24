@@ -39,19 +39,14 @@
 
 (defn font-u16 [font font-bytes offset]
   (let [chunk-offset (* (quot offset 16384) 16384)
-        remaining (- font-bytes chunk-offset)
-        chunk-length (if (> remaining 16384) 16384 remaining)]
+        chunk-length 16384]
     (kernel-load-u16-16k
-     (kernel-subregion font font-bytes chunk-offset chunk-length)
+     (kernel-subregion font 524288 chunk-offset chunk-length)
      chunk-length (- offset chunk-offset))))
 
 (defn framebuffer-pixel [fb fb-bytes offset ctx]
-  (let [chunk-offset (* (quot offset 16384) 16384)
-        remaining (- fb-bytes chunk-offset)
-        chunk-length (if (> remaining 16384) 16384 remaining)]
-    (kernel-store-u32-16k
-     (kernel-subregion fb fb-bytes chunk-offset chunk-length)
-     chunk-length (- offset chunk-offset) (word ctx 6))))
+  (let [page (kernel-framebuffer-page (quot offset 4096))]
+    (kernel-store-u32-4k page 4096 (mod offset 4096) (word ctx 6))))
 
 (defn gop-color [ctx rgb]
   ;; GOP format 0 stores R,G,B bytes; frame2 colours are 0xRRGGBB. Format 1
@@ -147,13 +142,13 @@
           (present-ops s font fb fb-bytes ctx)))))
 
 (defn present-frame [s font fb fb-bytes ctx]
+  (put-word ctx 78 (+ (word ctx 78) 1))
   (put-word ctx 30 0)
   (put-word ctx 31
             (browser-frame/aiueos-browser-frame2
              s 8192 font (word ctx 45)))
-  (if (< (word ctx 31) 0)
-    0
-    (present-ops s font fb fb-bytes ctx)))
+  (let [result (if (< (word ctx 31) 0) 0 (present-ops s font fb fb-bytes ctx))]
+    (do (put-word ctx 79 (+ (word ctx 79) 1)) result)))
 
 (defn seed-app-label [s id index]
   (let [slot (+ 32 (* 32 (- id 1)))
@@ -434,13 +429,15 @@
         x (clamp-coordinate (+ old-x dx) (word ctx 40))
         y (clamp-coordinate (- old-y dy) (word ctx 41))
         left (bit-and (word ctx 64) 1)]
-    (do (put-word ctx 50 x)
+    (do (put-word ctx 75 (+ (word ctx 75) 1))
+        (put-word ctx 50 x)
         (put-word ctx 51 y)
         (put-word s 2046 (+ x 1))
         (put-word s 2047 y)
         (if (and (= left 1) (= (word ctx 67) 0))
           (let [drag-id (titlebar-drag-id s x y (word ctx 40) (word ctx 41))]
-            (do (click-launcher s ctx)
+            (do (put-word ctx 76 (+ (word ctx 76) 1))
+              (click-launcher s ctx)
               (put-word ctx 71
                         drag-id)))
           (if (and (= left 1) (> (word ctx 71) 0))
@@ -476,7 +473,9 @@
               (consume-mouse-byte s ctx (word ctx 69))
               (if (or (= (word ctx 69) 0) (>= (word ctx 69) 128))
                 0
-                (do (reduce-key s (word ctx 69) ctx) 1)))))))
+                (do (put-word ctx 73 (+ (word ctx 73) 1))
+                    (put-word ctx 77 (word ctx 69))
+                    (reduce-key s (word ctx 69) ctx) 1)))))))
 
 (defn wait-controller [remaining]
   (if (= (bit-and (kernel-in-u8 100) 2) 0)
@@ -504,33 +503,18 @@
 
 (defn main []
   (let [boot (kernel-boot-info)
-        fb-base (load64-boot boot 112)
-        fb-bytes (load64-boot boot 120)
-        width (load32-boot boot 128)
-        height (load32-boot boot 132)
-        stride (load32-boot boot 136)
-        pixel-format (load32-boot boot 140)
-        scratch-base (load64-boot boot 80)
-        scratch-pages (load64-boot boot 88)
-        font-base (load64-boot boot 96)
-        font-bytes (load64-boot boot 104)]
-    (if (and (> boot 0)
-             (= (load64-boot boot 8) 5)
-             (>= fb-base 4096)
-             (>= width 320) (>= height 200) (>= stride width)
-             (<= pixel-format 1)
-             (<= (* (* stride height) 4) fb-bytes)
-             (>= scratch-base 4096) (= scratch-pages 15)
-             (>= font-base 4096) (>= font-bytes 16)
-             (> (kernel-read-cr3) 0))
-      (let [scratch (kernel-subregion 4096 549755813888
-                                      (- scratch-base 4096) 61440)
-            surface (kernel-subregion scratch 61440 0 8192)
-            context (kernel-subregion scratch 61440 8192 8192)
-            font (kernel-subregion 4096 549755813888
-                                   (- font-base 4096) font-bytes)
-            framebuffer (kernel-subregion 4096 549755813888
-                                          (- fb-base 4096) fb-bytes)]
+        prefix (kernel-subregion boot 16544 0 160)
+        width (kernel-framebuffer-width)
+        height (kernel-framebuffer-height)
+        stride (kernel-framebuffer-stride)
+        pixel-format (kernel-framebuffer-format)
+        fb-bytes (* (* stride height) 4)
+        font-bytes 524288]
+    (if (and (= (load64-boot prefix 8) 6)
+             (= (load32-boot prefix 128) width) (> (kernel-read-cr3) 0))
+      (let [surface (kernel-browser-surface)
+            context (kernel-browser-context)
+            font (kernel-native-font)]
         (do (put-word context 40 width)
             (put-word context 41 height)
             (put-word context 42 stride)
@@ -541,9 +525,16 @@
             (put-word context 63 0)
             (put-word context 67 0)
             (put-word context 71 0)
+            (put-word context 72 0x31545844)
+            (put-word context 73 0)
+            (put-word context 75 0)
+            (put-word context 76 0)
+            (put-word context 77 0)
+            (put-word context 78 0)
+            (put-word context 79 0)
             (enable-mouse)
             (clear-surface surface 0)
             (seed-desktop surface width height)
-            (present-frame surface font framebuffer fb-bytes context)
-            (desktop-loop surface font framebuffer fb-bytes context)))
+            (present-frame surface font 0 fb-bytes context)
+            (desktop-loop surface font 0 fb-bytes context)))
       (kernel-hlt))))

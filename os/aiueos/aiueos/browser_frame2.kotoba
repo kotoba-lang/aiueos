@@ -185,10 +185,11 @@
   ;; Font blobs are larger than the base 512-byte native load window. Narrow
   ;; to the containing 16 KiB slice before reading the aligned codepoint word.
   (let [offset (* i 4)
-        length (sw s 423)
+        ;; The native image supplies one owned, padded512KiB font region.
+        ;; A scalar loaded from surface state cannot grant its extent.
+        length 524288
         chunk-offset (* (quot offset 16384) 16384)
-        remaining (- length chunk-offset)
-        chunk-length (if (> remaining 16384) 16384 remaining)]
+        chunk-length 16384]
     (kernel-load-u32-16k
      (kernel-subregion f length chunk-offset chunk-length)
      chunk-length (- offset chunk-offset))))

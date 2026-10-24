@@ -2,8 +2,9 @@
   (:export [aiueos-sha256 main]))
 
 ;; SHA-256 for the freestanding aiueos kernel.  The public entry accepts a
-;; bounded 12 KiB message, a 32-byte output, and a caller-owned 320-byte
-;; workspace.  All words in the workspace use big-endian byte order.
+;; bounded 12 KiB message, a 32-byte output, and a caller-owned 352-byte
+;; workspace. All 88 words require 352 bytes, including the round copy.
+;; All words in the workspace use big-endian byte order.
 
 (defn u32 [x] (bit-and x 4294967295))
 (defn bxor3 [a b c] (bit-xor (bit-xor a b) c))
@@ -22,17 +23,17 @@
 
 (defn load32 [base word]
   (let [offset (* word 4)]
-    (+ (* (kernel-load-u8 base 512 offset) 16777216)
-       (+ (* (kernel-load-u8 base 512 (+ offset 1)) 65536)
-          (+ (* (kernel-load-u8 base 512 (+ offset 2)) 256)
-             (kernel-load-u8 base 512 (+ offset 3)))))))
+    (+ (* (kernel-load-u8 base 352 offset) 16777216)
+       (+ (* (kernel-load-u8 base 352 (+ offset 1)) 65536)
+          (+ (* (kernel-load-u8 base 352 (+ offset 2)) 256)
+             (kernel-load-u8 base 352 (+ offset 3)))))))
 
 (defn store32 [base word value]
   (let [offset (* word 4)
-        s0 (kernel-store-u8 base 512 offset (bit-and (quot value 16777216) 255))
-        s1 (kernel-store-u8 base 512 (+ offset 1) (bit-and (quot value 65536) 255))
-        s2 (kernel-store-u8 base 512 (+ offset 2) (bit-and (quot value 256) 255))]
-    (+ (kernel-store-u8 base 512 (+ offset 3) (bit-and value 255))
+        s0 (kernel-store-u8 base 352 offset (bit-and (quot value 16777216) 255))
+        s1 (kernel-store-u8 base 352 (+ offset 1) (bit-and (quot value 65536) 255))
+        s2 (kernel-store-u8 base 352 (+ offset 2) (bit-and (quot value 256) 255))]
+    (+ (kernel-store-u8 base 352 (+ offset 3) (bit-and value 255))
        (* 0 (+ s0 (+ s1 s2))))))
 
 (defn store-output32 [base word value]
@@ -166,12 +167,13 @@
       (emit-output workspace output (+ i 1 (* 0 stored))))))
 
 (defn aiueos-sha256 [input input-length output workspace workspace-length]
-  (if (> input-length 12288) 0
+  (if (or (< input-length 0) (> input-length 12288)) 0
     (if (< workspace-length 352) 0
-      (let [initialized (initialize workspace)
-            processed (process-blocks input input-length workspace 0
+      (let [scratch (kernel-subregion workspace workspace-length 0 352)
+            initialized (initialize scratch)
+            processed (process-blocks input input-length scratch 0
                                       (quot (+ input-length 72) 64))
-            emitted (emit-output workspace output 0)]
+            emitted (emit-output scratch output 0)]
         (+ 1 (* 0 (+ initialized (+ processed emitted))))))))
 
 (defn main [] 0)
