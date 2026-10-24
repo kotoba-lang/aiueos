@@ -118,8 +118,13 @@
                           ;; marker P/W and never reaches isa-debug-exit
                           ;; (measured 2026-10-24, debugcon "KHSCNAbcdefPW",
                           ;; QEMU exit 0). 8,000,000 completes the digest path
-                          ;; (debugcon "KHSCNAbcdefPWghZ", exit 33).
-                          "--fuel" "8000000"
+                          ;; (debugcon "KHSCNAbcdefPWghZ", exit 33) but not the
+                          ;; fs stage on top of it (debugcon "KHSCNAbcdefPWghvo"
+                          ;; -- stops inside the first open-read). 200,000,000
+                          ;; is a discrimination budget, not a floor: with it
+                          ;; the remaining stop is either the fuel or the
+                          ;; open-read's call6, and nothing else.
+                          "--fuel" "200000000"
                           "--output" efi
                           "--jvm-free"]
                          {})]
