@@ -430,11 +430,39 @@ static uint64_t user_journal_value(const struct aiuefs_journal_record *journal,
 static unsigned object_store_restored_count;
 unsigned aiueos_object_store_restored_count(void) { return object_store_restored_count; }
 
+/* G3: data encrypted at rest. The loader carries a 16-byte data-disk key in
+   the boot info (kept on the system ESP, a different disk); every sector
+   read or written through this backend is AES-128-GCM wrapped with a
+   sector-number nonce. The GCM tag is discarded on write: integrity stays
+   with the journal's own record checksums, confidentiality comes from here.
+   A read of the data disk outside the OS shows ciphertext only. */
+extern int aiueos_aes128_gcm_encrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, uint8_t *, uint8_t[16]);
+extern int aiueos_aes128_gcm_decrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, const uint8_t[16], uint8_t *);
+static uint8_t storage_key[16];
+static int storage_key_valid;
+void aiueos_storage_set_key(const uint8_t key[16]) {
+  for (int i = 0; i < 16; i++) storage_key[i] = key[i];
+  storage_key_valid = 1;
+}
+static void storage_nonce(uint64_t sector, uint8_t nonce[12]) {
+  for (int i = 0; i < 12; i++) nonce[i] = 0;
+  for (int i = 0; i < 8; i++) nonce[4 + i] = (uint8_t)((sector >> (i * 8)) & 0xff);
+}
+
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
     uint8_t *status, struct virtq_desc *desc, struct virtq_avail *avail,
     struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
     uint32_t type, uint64_t disk_sector) {
   uint16_t old = *submitted, target = old + 1;
+  uint8_t crypt_nonce[12], crypt_tag[16];
+  if (storage_key_valid && type == VIRTIO_BLK_T_OUT) {
+    storage_nonce(disk_sector, crypt_nonce);
+    aiueos_aes128_gcm_encrypt(storage_key, crypt_nonce, 0, 0, sector, 512, sector, crypt_tag);
+  }
   request->type = type; request->reserved = 0; request->sector = disk_sector; *status = 0xff;
   desc[1].flags = VIRTQ_DESC_F_NEXT | (type == VIRTIO_BLK_T_IN ? VIRTQ_DESC_F_WRITE : 0);
   avail->ring[old & 3] = 0; __asm__ volatile("" ::: "memory");
@@ -451,6 +479,10 @@ static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sec
         blk_slow_target = target;
       }
       *submitted = target;
+      if (storage_key_valid && type == VIRTIO_BLK_T_IN) {
+        storage_nonce(disk_sector, crypt_nonce);
+        aiueos_aes128_gcm_decrypt(storage_key, crypt_nonce, 0, 0, sector, 512, crypt_tag, sector);
+      }
       return 1;
     }
     /* Futile, not slow: the used index has passed the value this wait is

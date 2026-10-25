@@ -1280,6 +1280,47 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
 #endif
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
+  /* G3: the data-disk at-rest key. Read \EFI\AIUEOS\DATA.KEY from this
+     volume (the system ESP); when absent, generate one from the TSC (the
+     qualification entropy source, documented as weak) and write it back so
+     the key survives reboots. The data disk it protects is a different
+     disk, so reading the data disk alone shows ciphertext. */
+  {
+    static const char16 data_key_path[] = u"\\EFI\\AIUEOS\\DATA.KEY";
+    struct efi_simple_file_system *kfs = 0;
+    struct efi_file *kroot = 0, *kfile = 0;
+    uint64_t ksize = 0;
+    int have_key = 0;
+    if (bs->handle_protocol(loaded->device_handle, &simple_fs_guid, (void **)&kfs) == EFI_SUCCESS &&
+        kfs && kfs->open_volume(kfs, &kroot) == EFI_SUCCESS && kroot) {
+      if (kroot->open(kroot, &kfile, data_key_path, 1, 0) == EFI_SUCCESS && kfile) {
+        ksize = 16;
+        if (kfile->read(kfile, &ksize, info.data_key) == EFI_SUCCESS && ksize == 16) have_key = 1;
+        kfile->close(kfile);
+      }
+      if (!have_key) {
+        uint64_t tsc_a, tsc_b;
+        __asm__ volatile("rdtsc" : "=a"(tsc_a), "=d"(tsc_b));
+        for (int i = 0; i < 16; i++) {
+          tsc_a = tsc_a * 6364136223846793005ULL + 1442695040888963407ULL;
+          __asm__ volatile("rdtsc" : "=a"(tsc_a), "=d"(tsc_b));
+          info.data_key[i] = (uint8_t)((tsc_a >> ((i % 8) * 8)) & 0xff);
+        }
+        if (kroot->open(kroot, &kfile, data_key_path,
+                        3 | 0x8000000000000000ULL, 0x20) == EFI_SUCCESS && kfile) {
+          uint64_t w = 16;
+          kfile->write(kfile, &w, info.data_key);
+          kfile->close(kfile);
+        }
+        have_key = 1;
+        debug_string("AIUEOS_DATA_KEY_CREATED tsc-entropy weak\n");
+      } else {
+        debug_string("AIUEOS_DATA_KEY_LOADED\n");
+      }
+      kroot->close(kroot);
+      if (have_key) info.data_key_tag = 0x9a7461b0d2746b31ULL;
+    }
+  }
   if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
   info.acpi_rsdp = 0;
   const void *firmware_acpi_rsdp=0;

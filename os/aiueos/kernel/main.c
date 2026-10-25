@@ -442,6 +442,7 @@ static uint32_t aiueos_qwen35_active_token = 1U;
    They are readable under the inherited CR3 but are not necessarily inside
    the kernel's bounded low identity map.  Retain every scalar and the bounded
    descriptor stream before aiueos_paging_initialize installs the owned root. */
+extern void aiueos_storage_set_key(const uint8_t key[16]);
 static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
   if (!source || !source->memory_map || !source->memory_map_size ||
       !source->descriptor_size ||
@@ -450,6 +451,13 @@ static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
     return 0;
   aiueos_owned_boot_info = (struct aiueos_boot_info){0};
   aiueos_owned_boot_info.magic = source->magic;
+  /* G3: hand the loader's data-disk key to the storage layer. */
+  if (source->data_key_tag == 0x9a7461b0d2746b31ULL) {
+    for (int i = 0; i < 16; i++)
+      aiueos_owned_boot_info.data_key[i] = source->data_key[i];
+    aiueos_owned_boot_info.data_key_tag = source->data_key_tag;
+    aiueos_storage_set_key(source->data_key);
+  }
   aiueos_owned_boot_info.version = source->version;
   aiueos_owned_boot_info.memory_map_size = source->memory_map_size;
   aiueos_owned_boot_info.descriptor_size = source->descriptor_size;
