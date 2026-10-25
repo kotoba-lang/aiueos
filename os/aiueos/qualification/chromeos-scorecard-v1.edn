@@ -507,7 +507,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
-   }
+   :note "Designed 2026-10-25 (reusable parts measured this session): the update package is the three boot-chain files plus UPDATE.MANIFEST (sha256 per file) and UPDATE.MANIFEST.SIG (RSASSA-PKCS1-v1_5-SHA256 under the release key). The loader already has SHA-256 file verification and the FAT write machinery proven by H3 (READ|WRITE|CREATE+ARCHIVE, read-back compare); the kernel already has the signed-payload admission kotoba_aiueos_recovery_payload_admission (pci.c:386, kotoba-sha256 + kotoba-rsa2048-pkcs1 + public-key policy) whose verify object can be linked into the loader the way the kernel links it. Detection mirrors RECOVERY.ID: an update volume carries UPDATE.ID. Apply copies the verified files to the system ESP (the H3 copy path); an absent/failed manifest signature is AIUEOS_UPDATE_REFUSED_unsigned with no writes. The 'fetch' in the QEMU test is the update volume (the physical-machine story is a network fetch); the signed-manifest generator reuses sign-release-image.py's PKCS#1 signing. Open design point: the loader link needs the kotoba rsa2048 verify object added (or the verify runs kernel-side with the loader applying after a staged verdict)."
   {:id :H2 :category :update :title "Rollback after a bad update"
    :weight 3 :required true :required-level :release
    :procedure "Apply an update that fails to boot."
