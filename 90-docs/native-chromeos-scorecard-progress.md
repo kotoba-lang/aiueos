@@ -35,12 +35,17 @@ whether the source and scorecard bytes match the named Git commit.
 The native probe checks the fixed reference schema, 55 required rows,
 required weight 100, zero-weight optional rows, unique IDs, known categories
 and levels, owner confirmation, valid status/progress, receipt presence, and
-the receipt's 40-hex commit and nonempty green verdict map. It prints the
-recorded score of 48 and category weights, passes and gaps. Seven negative
-controls change the required weight, duplicate an ID, remove a receipt
-reference, clear owner confirmation, introduce an unknown category, remove a
-receipt file, or turn one receipt verdict red. All must produce a nonzero
-native result. The positive and negative outputs are checked exactly.
+the receipt's 40-hex commit and nonempty green verdict map. A passing
+`:release` or `:user` row must cite the fixed v1 signed-release receipt; that
+receipt must have 64-hex signature and artifact digest fields plus the three
+named green verdicts. These are shape checks, not cryptographic verification.
+The probe prints the recorded score of 48 and category weights, passes and
+gaps. Ten negative controls change the required weight, duplicate an ID,
+remove a receipt reference, clear owner confirmation, introduce an unknown
+category, remove a receipt file, turn one receipt verdict red, remove the
+signed-release reference, damage its signature digest field, or remove its
+named image-bound verdict. All must produce a nonzero native result. The
+positive and negative outputs are checked exactly.
 
 This is a **core schema and receipt-field probe**. Receipt marker text is
 not yet checked against the underlying log/image, and the release signature

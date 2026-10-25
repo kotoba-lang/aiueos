@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build and exercise the native scorecard core on macOS without hosted runtimes.
 
-This is a schema/point-ledger probe. It does not admit receipt contents,
-release signatures, evidence freshness, or physical hardware.
+This is a schema/point-ledger and receipt-shape probe. It does not verify
+artifact digests, release signatures, evidence freshness, or physical hardware.
 """
 
 import argparse
@@ -28,9 +28,15 @@ NEGATIVES = {
         b'"record os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn"'),
     'owner-unconfirmed': (b':confirmed-by-owner true', b':confirmed-by-owner false'),
     'unknown-category': (b'{:id :A1 :category :boot', b'{:id :A1 :category :bogus'),
+    'missing-signed-release-reference': (
+        b'"receipt os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn"',
+        b'"record os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn"'),
 }
-RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict')
+RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict',
+                     'bad-release-signature-field', 'missing-release-verdict')
 A1_RECEIPT = Path('os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn')
+SIGNED_RELEASE_RECEIPT = Path(
+    'os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn')
 EXPECTED_LEDGER = (
     b'AIUEOS_SCORE 48\n'
     b'AIUEOS_CATEGORY boot weight=10 pass=6 gap=4\n'
@@ -168,9 +174,26 @@ def main():
         else:
             data = card_bytes
             expected_exit, expected_stdout = 1, b'AIUEOS_SCORE -1\n'
-            target = directory/A1_RECEIPT
+            target = directory/(SIGNED_RELEASE_RECEIPT if name in
+                                ('bad-release-signature-field',
+                                 'missing-release-verdict') else A1_RECEIPT)
             if name == 'missing-receipt-file':
                 target.unlink()
+            elif name == 'bad-release-signature-field':
+                receipt_bytes = target.read_bytes()
+                changed, count = re.subn(
+                    rb':signature-sha256 "[0-9a-f]{64}"',
+                    b':signature-sha256 "invalid"', receipt_bytes, count=1)
+                if count != 1:
+                    raise ValueError('release signature field anchor missing')
+                target.write_bytes(changed)
+            elif name == 'missing-release-verdict':
+                receipt_bytes = target.read_bytes()
+                before = b'"image-bound"'
+                if before not in receipt_bytes:
+                    raise ValueError('image-bound verdict anchor missing')
+                target.write_bytes(receipt_bytes.replace(
+                    before, b'"image-unbound"', 1))
             else:
                 receipt_bytes = target.read_bytes()
                 if b':green? true' not in receipt_bytes:

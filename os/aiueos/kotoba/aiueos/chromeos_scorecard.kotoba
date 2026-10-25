@@ -6,6 +6,9 @@
   (:export [main])
   (:capabilities #{:fs/app-data :io/write}))
 
+(def SIGNED-RELEASE-RECEIPT
+  "os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn")
+
 (defn- blank? [c :i64] :bool
   (or (= c 32) (= c 9) (= c 10) (= c 13) (= c 44)))
 
@@ -83,6 +86,36 @@
                     (and (>= c 97) (<= c 102)))
               (recur (+ i 1)) false)))))))
 
+(defn- hex64? [value :string] :bool
+  (if (not= (string-byte-length value) 64) false
+    (let [bytes (string-to-utf8 value)]
+      (loop [i 0]
+        (if (= i 64) true
+          (let [c (bytes-at bytes i)]
+            (if (or (and (>= c 48) (<= c 57))
+                    (and (>= c 97) (<= c 102)))
+              (recur (+ i 1)) false)))))))
+
+(defn- green-named-verdict? [verdicts :document name :string] :bool
+  (let [verdict (option-value-of [:option :document]
+                  (document-get verdicts (document-string name))
+                  (document-null))]
+    (if (not= (document-kind verdict) :map) false
+      (let [green (document-bool-value (field verdict :green?))]
+        (option-value-of [:option :bool] green false)))))
+
+(defn- signed-release-shape? [receipt :document] :bool
+  (let [signature (document-string-value (field receipt :signature-sha256))
+        artifact (document-string-value (field receipt :receipt-sha256))
+        verdicts (field receipt :verdicts)]
+    (and (option-some?-of [:option :string] signature)
+         (hex64? (option-value-of [:option :string] signature ""))
+         (option-some?-of [:option :string] artifact)
+         (hex64? (option-value-of [:option :string] artifact ""))
+         (green-named-verdict? verdicts "release-signature")
+         (green-named-verdict? verdicts "tamper-refused")
+         (green-named-verdict? verdicts "image-bound"))))
+
 (defn- green-verdicts? [verdicts :document] :bool
   (if (not= (document-kind verdicts) :map) false
     (if (= (document-count verdicts) 0) false
@@ -124,7 +157,20 @@
                   commit (document-string-value (field document :commit))]
               (and (option-some?-of [:option :string] commit)
                    (hex40? (option-value-of [:option :string] commit ""))
-                   (green-verdicts? (field document :verdicts))))))))))
+                   (green-verdicts? (field document :verdicts))
+                   (or (not (string=? path SIGNED-RELEASE-RECEIPT))
+                       (signed-release-shape? document))))))))))
+
+(defn- release-receipt-reference? [entries :document] :bool
+  (if (not= (document-kind entries) :vector) false
+    (loop [i 0]
+      (if (= i (document-count entries)) false
+        (let [entry (option-value-of [:option :document]
+                      (document-vector-at entries i) (document-null))]
+          (if (document-equal? entry
+                (document-string
+                  (string-concat "receipt " SIGNED-RELEASE-RECEIPT)))
+            true (recur (+ i 1))))))))
 
 (defn- receipt-evidence? [entries :document] :bool
   (if (not= (document-kind entries) :vector) false
@@ -173,7 +219,9 @@
          (or (not passing)
              (and owner (receipt-evidence? evidence)
                   (or (not (or (matches? level :release)
-                               (matches? level :user))) release-ok))))))
+                               (matches? level :user)))
+                      (and release-ok
+                           (release-receipt-reference? evidence))))))))
 
 (defn- score [card :document] :i64
   (let [rows (field card :rows)
