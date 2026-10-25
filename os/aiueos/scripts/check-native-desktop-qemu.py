@@ -94,6 +94,10 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   initial=wait('native-first-frame',lambda s:s['magic']==0x31545844 and s['framesCompleted']>=1)
   assert initial['windows']==0 and initial['focus']==0 and initial['keys']==0
   assert initial['itonamiGoal']=='Goal (RAM):\n'
+  # A diagnostic can pass in seconds with a short fuel budget, then freeze
+  # before a person can use it. Read the running kernel's actual ABI counter.
+  initial_fuel=struct.unpack('<Q',dump(context+8,8,'desktop-fuel-initial.bin'))[0]
+  assert 2**52<=initial_fuel<=2**53-1,('desktop fuel too short for interactive operation',initial_fuel)
   registers=hmp('info registers');(out/'registers-native-desktop.txt').write_text(registers)
   reg=lambda name:int(re.search(rf'\b{name}\s*=([0-9a-f]+)',registers,re.I)[1],16)
   assert reg('CR3')==context+0x30000 and reg('CR0')&0x10000 and reg('EFER')&0x801==0x801
@@ -134,7 +138,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   key('esc');closed=wait('keyboard-closes-focused-card',lambda s:s['windows']==1 and s['lastKey']==1 and s['framesCompleted']>released['framesCompleted'])
   final=screenshot('desktop-after-input');assert first!=final
   assert pin(media)==before
-  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),goalScanout=scanout_evidence,screenshots=['desktop-initial.png','itonami-goal-empty.png','itonami-goal-a.png','itonami-goal-ab.png','itonami-goal-backspace.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
+  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,initialFuelRemaining=initial_fuel,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),goalScanout=scanout_evidence,screenshots=['desktop-initial.png','itonami-goal-empty.png','itonami-goal-a.png','itonami-goal-ab.png','itonami-goal-backspace.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
   (out/'native-desktop-qemu.json').write_text(json.dumps(report,indent=2)+'\n');print(report['status'])
  finally:
   if p.poll() is None:

@@ -3,6 +3,10 @@
 import argparse,hashlib,importlib.util,json,os,subprocess,sys
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
+# The desktop polls input for the lifetime of the OS. The kernel's native
+# fuel counter is not replenished by that loop; the previous 2^30 budget
+# exhausted during an ordinary interactive session and halted the guest.
+DESKTOP_FUEL=9007199254740991
 def main(amu,out):
  out.mkdir(parents=True,exist_ok=False)
  spec=importlib.util.spec_from_file_location('native_kernel',HERE/'build-native-kernel.py');driver=importlib.util.module_from_spec(spec);spec.loader.exec_module(driver)
@@ -14,11 +18,11 @@ def main(amu,out):
   assert not r.returncode and not r.stderr,(name,r.returncode,r.stderr[-2000:]);print(name,'PASS',flush=True)
  font=out/'font/aiueos-padded.fnt';kernel=out/'kernel';media=out/'media'
  run('font',[HERE/'build-native-font.py','--amu-source',amu,'--compiler',compiler,'--compiler-sha256',digest,'--font',HERE.parent/'fonts/aiueos-16.fnt','--output',out/'font'])
- env.update(AIUEOS_NATIVE_OUT=str(kernel),AIUEOS_NATIVE_KERNEL_SOURCE=str(HERE.parent/'native/desktop-entry.kotoba'),AIUEOS_NATIVE_FUEL='1073741824',AIUEOS_NATIVE_BOOT_PAYLOAD=str(font),AIUEOS_NATIVE_BOOT_PAYLOAD_SHA256=hashlib.sha256(font.read_bytes()).hexdigest())
+ env.update(AIUEOS_NATIVE_OUT=str(kernel),AIUEOS_NATIVE_KERNEL_SOURCE=str(HERE.parent/'native/desktop-entry.kotoba'),AIUEOS_NATIVE_FUEL=str(DESKTOP_FUEL),AIUEOS_NATIVE_BOOT_PAYLOAD=str(font),AIUEOS_NATIVE_BOOT_PAYLOAD_SHA256=hashlib.sha256(font.read_bytes()).hexdigest())
  run('kernel',[HERE/'build-native-kernel.py',amu])
  run('media',[HERE/'build-native-media.py','--amu-source',amu,'--compiler',compiler,'--compiler-sha256',digest,'--efi',kernel/'BOOTX64.EFI','--output',media])
  state=json.loads((kernel/'build-state.json').read_text());assert state['state']=='NATIVE_IMAGE_CANDIDATE' and state['sourceModuleCount']==30
- result=dict(schema='aiueos.native-desktop-candidate.v1',state='NATIVE_DESKTOP_MEDIA_CANDIDATE',kernel=state['images'][0],efi=state['efiImages'][0],media=json.loads((media/'native-media.json').read_text())['image'],font=json.loads((out/'font/native-font.json').read_text())['padded'],compiler=state['compiler'],sourceModuleCount=30,JVMNodeOrGraalFallback=False,cCompilerOrLoader=False,guestBoot=False,desktopInput=False,BrowserCSSOMParity=False,dappsExecuted=False,physicalHardware=False)
+ result=dict(schema='aiueos.native-desktop-candidate.v1',state='NATIVE_DESKTOP_MEDIA_CANDIDATE',kernel=state['images'][0],efi=state['efiImages'][0],media=json.loads((media/'native-media.json').read_text())['image'],font=json.loads((out/'font/native-font.json').read_text())['padded'],compiler=state['compiler'],sourceModuleCount=30,kernelFuelInitial=DESKTOP_FUEL,JVMNodeOrGraalFallback=False,cCompilerOrLoader=False,guestBoot=False,desktopInput=False,BrowserCSSOMParity=False,dappsExecuted=False,physicalHardware=False)
  (out/'native-desktop.json').write_text(json.dumps(result,indent=2)+'\n');print(result['state'])
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--amu-source',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();main(a.amu_source.resolve(),a.output.resolve())

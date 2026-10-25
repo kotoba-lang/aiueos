@@ -53,9 +53,19 @@ in its own 64-code-point surface slot. Typing and Backspace update RAM only;
 closing the card does not submit the goal, invoke an agent loop, or persist it.
 This is a native AIUEOS UI entry with no Linux guest or host text service.
 
+The desktop's native fuel counter is decremented on each loop iteration.
+The former 2^30 build budget reached zero during a local interactive session:
+QEMU recorded `#UD` at the loop's fuel guard, followed by `HLT`, and later
+keyboard input could not be handled. The desktop builder now uses the
+maximum admitted 53-bit budget (`9007199254740991`) and records it in the
+candidate receipt. This is a practical uptime bound for the current polling
+profile, not a permanent scheduler or unmetered kernel design. Short-budget
+diagnostic kernels remain available through `AIUEOS_NATIVE_FUEL`.
+
 `check-native-desktop-qemu.py` boots raw media on QEMU q35 SATA using a
 temporary overlay and no NIC. It checks sealed PCI/GOP/font bytes, native
-page-table/domain state, completed frames, keyboard open/close operations,
+page-table/domain state, a live fuel counter above 2^52, completed frames,
+keyboard open/close operations,
 mouse movement/click/release and changed screenshots. For each input event,
 the gate waits until the frame that started after that event is complete.
 It then compares QEMU's screenshot of the Itonami goal line with a direct
