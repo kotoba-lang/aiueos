@@ -55,3 +55,12 @@ profile switch, not proof of an attached medium.
 Sending F5 without `--allow-draft-write` exited 2 before starting QEMU or
 creating an output directory. This one-shot route is for diagnostic UI work;
 the independent cold-restart gate above remains the persistence proof.
+
+The short `--build-dir` route then resolved media, EFI, kernel, QEMU and OVMF
+from one native build and the local QEMU installation. Its
+[receipt](qmp-build-dir-pass.json) pins observer SHA-256
+`1f8580d8c8b04dc897dae53d98e3f77e8e6b77548341b1f89ff3f0bf2d02319e`
+and reports PASS: key `2` opened Itonami, `a` and `b` produced exact
+`Goal local:\nab`, focus 2 and four completed frames. The
+[guest screenshot](qmp-build-dir-pass.png) independently shows that text.
+QMP used private stdio, with no VNC, network or human authentication.

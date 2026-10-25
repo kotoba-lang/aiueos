@@ -13,6 +13,7 @@ import importlib.util
 import json
 from pathlib import Path
 import select
+import shutil
 import socket
 import struct
 import string
@@ -155,6 +156,35 @@ def wait_for_frame(qmp, context, output, prior_keys=None, timeout=30):
     raise TimeoutError(f'native desktop did not complete a frame: {state}')
 
 
+def resolve_boot_inputs(args, parser):
+    if args.build_dir:
+        build = args.build_dir.resolve()
+        if args.kernel or args.efi:
+            parser.error('--build-dir supplies --kernel and --efi')
+        args.boot_media = build/'media/awai-native.img'
+        args.efi = build/'kernel/BOOTX64.EFI'
+        args.kernel = build/'kernel/KERNEL.ELF'
+    if args.qmp_socket:
+        if args.qemu or args.firmware or args.efi or args.local_draft:
+            parser.error('boot options require --boot-media or --build-dir')
+        if args.kernel is None or not args.kernel.is_file():
+            parser.error('--qmp-socket requires an exact --kernel file')
+        if not args.qmp_socket.is_socket():
+            parser.error('QMP socket must exist')
+        return
+    if args.qemu is None:
+        found = shutil.which('qemu-system-x86_64')
+        if found is None:
+            parser.error('QEMU not found; pass --qemu')
+        args.qemu = Path(found).resolve()
+    if args.firmware is None:
+        args.firmware = args.qemu.resolve().parent.parent/'share/qemu/edk2-x86_64-code.fd'
+    for name in ('boot_media', 'qemu', 'firmware', 'efi', 'kernel'):
+        path = getattr(args, name)
+        if path is None or not path.is_file():
+            parser.error(f'--{name.replace("_", "-")} requires a regular file')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
@@ -162,12 +192,14 @@ def main():
                         help='attach to an existing VM (local Unix socket)')
     target.add_argument('--boot-media', type=Path,
                         help='launch a fresh, headless VM over private QMP pipes')
+    target.add_argument('--build-dir', type=Path,
+                        help='use media/ and kernel/ artifacts from one native desktop build')
     parser.add_argument('--qemu', type=Path, help='QEMU binary for --boot-media')
     parser.add_argument('--firmware', type=Path, help='OVMF image for --boot-media')
     parser.add_argument('--efi', type=Path, help='matching EFI image for --boot-media')
     parser.add_argument('--local-draft', action='store_true',
                         help='create a new 64 KiB diagnostic draft disk in --output')
-    parser.add_argument('--kernel', type=Path, required=True)
+    parser.add_argument('--kernel', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--keys', nargs='*', default=[], choices=sorted(KEYS))
     parser.add_argument('--allow-draft-write', action='store_true',
@@ -186,16 +218,7 @@ def main():
     args = parser.parse_args()
     if 'f5' in args.keys and not args.allow_draft_write:
         parser.error('F5 can write the attached VM disk; pass --allow-draft-write')
-    if args.qmp_socket:
-        if args.qemu or args.firmware or args.efi or args.local_draft:
-            parser.error('boot options require --boot-media')
-        if not args.qmp_socket.is_socket():
-            parser.error('QMP socket must exist')
-    else:
-        for name in ('boot_media', 'qemu', 'firmware', 'efi'):
-            path = getattr(args, name)
-            if path is None or not path.is_file():
-                parser.error(f'--{name.replace("_", "-")} requires a regular file')
+    resolve_boot_inputs(args, parser)
     image = args.kernel.read_bytes()
     rw = struct.unpack_from('<IIQQQQQQ', image, 120)
     if rw[0:2] != (1, 6) or rw[5] != 0x240000:

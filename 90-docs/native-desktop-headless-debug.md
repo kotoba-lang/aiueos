@@ -16,26 +16,28 @@ shared interactive session; QMP does not require disabling it.
 
 ## One-shot Itonami UI debug (no listener or login)
 
-Use the same observer with `--boot-media` to launch one fresh VM. This route
+Use the same observer with `--build-dir` to launch one fresh VM. This route
 uses private QMP standard-input/output pipes, opens no VNC or QMP listener,
 and runs with `-nic none`. Set `BUILD` to the matching native `local-draft`
-build directory, `QEMU` and `FIRMWARE` to the local QEMU/OVMF files, and
+build directory and
 `OBSERVATION` to a **new** scratch directory under `github/workspaces/`:
 
 ```sh
 python3 os/aiueos/scripts/debug-native-desktop-qmp.py \
-  --boot-media "$BUILD/media/awai-native.img" \
-  --efi "$BUILD/kernel/BOOTX64.EFI" \
-  --kernel "$BUILD/kernel/KERNEL.ELF" \
-  --qemu "$QEMU" --firmware "$FIRMWARE" \
+  --build-dir "$BUILD" \
   --local-draft --output "$OBSERVATION" \
   --keys 2 a b --expect-focus 2 --expect-draft-enabled 1 \
   --expect-generation 0 --expect-restore-code 0 \
   --expect-commit-code 0 --expect-goal $'Goal local:\nab'
 ```
 
-The script validates that the kernel is inside the matching EFI/media before
-booting. `--local-draft` creates a fresh, marked 64 KiB test disk *inside*
+The script resolves the media, EFI and kernel from that one build directory,
+finds QEMU on `PATH` and its bundled OVMF firmware, and validates that the
+kernel is inside the matching EFI/media before booting. Explicit
+`--boot-media`, `--efi`, `--kernel`, `--qemu` and `--firmware` remain available
+for unusual layouts. A fresh build-directory run is recorded in the
+[headless debug receipts](evidence/headless-debug-20261026/README.md).
+`--local-draft` creates a fresh, marked 64 KiB test disk *inside*
 the private output directory; it never accepts an existing workspace or
 physical disk as a writable draft target. The session ends after the last
 frame. `debug.json` contains the assertions, source and image digests,
