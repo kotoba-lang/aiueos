@@ -5466,10 +5466,15 @@ qwen_runtime_boot_complete:
     {
       extern int aiueos_uhci_probe(void);
       extern int aiueos_uhci_ports(void);
+      extern int aiueos_uhci_test(void);
       if (aiueos_uhci_probe()) {
         debug_string("AIUEOS_UHCI_OK controller=uhci ports-see-serial\n");
         serial_string("AIUEOS_UHCI_OK controller=uhci ports=");
         serial_decimal((uint32_t)aiueos_uhci_ports());
+        serial_string("\r\n");
+        int f5 = aiueos_uhci_test();
+        serial_string("AIUEOS_UHCI_TEST rc=");
+        serial_decimal((uint32_t)f5);
         serial_string("\r\n");
       } else {
         extern uint32_t aiueos_uhci_scan_seen[12];

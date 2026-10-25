@@ -803,6 +803,9 @@ static inline uint16_t in16(uint16_t port) {
   __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
   return value;
 }
+static inline void out32(uint16_t port, uint32_t value) {
+  __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+}
 
 uint32_t aiueos_uhci_scan_seen[12];
 int aiueos_uhci_probe(void) {
@@ -838,6 +841,154 @@ int aiueos_uhci_probe(void) {
     }
   }
   return 0;
+}
+
+/* ---- F5 USB storage slice 2: the UHCI transfers -------------------------
+   The TD/QH formats are the UHCI 1.1 ones (verified against iPXE's
+   drivers/usb/uhci.h): the TD is {link, actual(16), status(8), flags(8),
+   token, buffer}; the status byte's ACTIVE is 0x80; the flags byte carries
+   CERR/LS/SPD/IOC; the token packs PID(8)|address(7)|endpoint(4)|
+   toggle(1)|maxlen-1(11). The QH is {horizontal link, element link}. */
+/* the fields are volatile: the host controller writes them behind the CPU's
+   back and the completion poll must re-read status on every iteration */
+struct uhci_td { volatile uint32_t link; volatile uint16_t actual; volatile uint8_t status; volatile uint8_t flags; volatile uint32_t token; volatile uint32_t buffer; };
+struct uhci_qh { volatile uint32_t link; volatile uint32_t element; };
+
+#define UHCI_T 1u
+#define UHCI_QH_TYPE 2u
+#define UHCI_DEPTH 4u
+#define UHCI_ST_ACTIVE 0x80
+#define UHCI_FL_CERR_MAX 0x18
+#define UHCI_PID_SETUP 0x2d
+#define UHCI_PID_IN 0x69
+#define UHCI_PID_OUT 0xe1
+#define UHCI_TOK_MAXLEN(len) ((uint32_t)((len) ? ((len) - 1) : 0x7ff) << 21)
+#define UHCI_TOK(pid, addr, ep, tog, len) \
+  ((uint32_t)(pid) | ((uint32_t)(addr) << 8) | ((uint32_t)(ep) << 15) | \
+   ((tog) ? (1u << 19) : 0u) | UHCI_TOK_MAXLEN(len))
+
+/* .high_bss, not .bss: the low kernel/user layout has to end below the
+   process-private aperture (ADR-0222's 32 KiB headroom), and the UHCI
+   working set is ~8 KiB. */
+static uint32_t uhci_frame_list[1024] __attribute__((section(".high_bss"), aligned(4096)));
+static struct uhci_qh uhci_bulk_qh __attribute__((section(".high_bss"), aligned(16)));
+static struct uhci_td uhci_tds[8] __attribute__((section(".high_bss"), aligned(16)));
+static uint8_t uhci_pkt[64] __attribute__((section(".high_bss"), aligned(16)));
+static uint8_t uhci_data[4096] __attribute__((section(".high_bss"), aligned(16)));
+
+static int uhci_run_td(struct uhci_td *td, struct uhci_td *last, int timeout_spins) {
+  uhci_bulk_qh.element = (uint32_t)(uintptr_t)td;
+  out16(uhci_iobase + 0x00, 0x0001); /* USBCMD: run */
+  for (int i = 0; i < timeout_spins; i++) {
+    if (!(last->status & UHCI_ST_ACTIVE)) break;
+  }
+  if (last->status & UHCI_ST_ACTIVE) return -1;
+  return (td->status & 0x7e) || (last->status & 0x7e) ? -2 : 0;
+}
+
+static int uhci_control(uint8_t addr, uint8_t req_type, uint8_t req,
+                        uint16_t value, uint16_t index, uint16_t length) {
+  struct uhci_td *setup = &uhci_tds[0], *data_td = &uhci_tds[1], *status_td = &uhci_tds[2];
+  uhci_pkt[0] = req_type; uhci_pkt[1] = req;
+  uhci_pkt[2] = (uint8_t)value; uhci_pkt[3] = (uint8_t)(value >> 8);
+  uhci_pkt[4] = (uint8_t)index; uhci_pkt[5] = (uint8_t)(index >> 8);
+  uhci_pkt[6] = (uint8_t)length; uhci_pkt[7] = (uint8_t)(length >> 8);
+  int in = (req_type & 0x80) != 0;
+  if (length) {
+    data_td->link = (uint32_t)(uintptr_t)status_td | UHCI_DEPTH;
+    data_td->actual = 0; data_td->status = UHCI_ST_ACTIVE; data_td->flags = UHCI_FL_CERR_MAX;
+    data_td->token = UHCI_TOK(in ? UHCI_PID_IN : UHCI_PID_OUT, addr, 0, 1, length);
+    data_td->buffer = (uint32_t)(uintptr_t)uhci_data;
+  } else {
+    data_td = status_td;
+  }
+  /* the setup's link goes to the resolved data-or-status TD (measured: a
+     link written before the zero-length resolution pointed at an
+     unconfigured TD and the chain failed) */
+  setup->link = (uint32_t)(uintptr_t)data_td | UHCI_DEPTH;
+  setup->actual = 0; setup->status = UHCI_ST_ACTIVE; setup->flags = UHCI_FL_CERR_MAX;
+  setup->token = UHCI_TOK(UHCI_PID_SETUP, addr, 0, 0, 8);
+  setup->buffer = (uint32_t)(uintptr_t)uhci_pkt;
+  status_td->link = UHCI_T; status_td->actual = 0;
+  status_td->status = UHCI_ST_ACTIVE; status_td->flags = UHCI_FL_CERR_MAX;
+  status_td->token = UHCI_TOK(in ? UHCI_PID_OUT : UHCI_PID_IN, addr, 0, 1, 0);
+  status_td->buffer = 0;
+  return uhci_run_td(setup, status_td, 2000000);
+}
+
+static int uhci_bulk(uint8_t addr, uint8_t ep, int in, void *buf, uint16_t len, int toggle) {
+  struct uhci_td *td = &uhci_tds[4];
+  td->link = UHCI_T; td->actual = 0;
+  td->status = UHCI_ST_ACTIVE; td->flags = UHCI_FL_CERR_MAX;
+  td->token = UHCI_TOK(in ? UHCI_PID_IN : UHCI_PID_OUT, addr, ep, toggle, len);
+  td->buffer = (uint32_t)(uintptr_t)buf;
+  int rc = uhci_run_td(td, td, 2000000);
+  return rc ? rc : (int)td->actual;
+}
+
+/* The BBB mass-storage read: the CBW (31 bytes, bulk-out), the data
+   (bulk-in), the CSW (13 bytes, bulk-in). */
+static int uhci_scsi_read(uint8_t addr, uint8_t ep_out, uint8_t ep_in,
+                          uint32_t lba, uint16_t sectors) {
+  static uint32_t cbw[16] __attribute__((section(".high_bss"), aligned(16)));
+  static uint32_t csw[4] __attribute__((section(".high_bss"), aligned(16)));
+  uint32_t xfer_len = (uint32_t)sectors * 512u;
+  for (int i = 0; i < 16; i++) cbw[i] = 0;
+  cbw[0] = 0x55534243u; cbw[1] = 0x01020304u; cbw[2] = xfer_len;
+  cbw[3] = 0x80u | (10u << 16); /* byte 12 = the direction IN; byte 14 = the CBWCBLength (10) */
+  uint8_t *c = (uint8_t *)cbw;
+  c[15] = 0x28; /* READ(10) */
+  c[16] = 0; c[17] = (uint8_t)(lba >> 24); c[18] = (uint8_t)(lba >> 16);
+  c[19] = (uint8_t)(lba >> 8); c[20] = (uint8_t)lba;
+  c[22] = (uint8_t)(sectors >> 8); c[23] = (uint8_t)sectors;
+  /* the data toggles are per endpoint and each starts at 0: the OUT
+     endpoint carries the CBW first (toggle 0); the IN endpoint carries the
+     data first (toggle 0) and the CSW next (toggle 1) */
+  int n = uhci_bulk(addr, ep_out, 0, cbw, 31, 0);
+  if (n < 0) return -71; /* the CBW did not go out */
+  n = uhci_bulk(addr, ep_in, 1, uhci_data, (uint16_t)(xfer_len > 512 ? 512 : xfer_len), 0);
+  if (n < 0) return -72; /* the data did not come in */
+  int m = uhci_bulk(addr, ep_in, 1, csw, 13, 1);
+  if (m < 0) return -73; /* the CSW did not come in */
+  return n;
+}
+/* The F5 test: enumerate the usb-storage device and read the known file
+   (the AIUEOS_USB_STORAGE image carries AIUEOS-F5-FILE-0123456789 at
+   offset 1024 = LBA 2). Returns the file marker's first byte or a
+   negative stage. */
+int aiueos_uhci_test(void) {
+  if (!uhci_iobase) return -1;
+  for (int i = 0; i < 1024; i++) uhci_frame_list[i] = (uint32_t)(uintptr_t)&uhci_bulk_qh | UHCI_QH_TYPE;
+  uhci_bulk_qh.link = UHCI_T; uhci_bulk_qh.element = UHCI_T;
+  out16(uhci_iobase + 0x00, 0x0000);
+  /* the frame list base (0x08) — 32-bit port I/O */
+  out32(uhci_iobase + 0x08, (uint32_t)(uintptr_t)uhci_frame_list);
+  out16(uhci_iobase + 0x0c, 64); /* SOFMOD: the default frame timing */
+  out16(uhci_iobase + 0x04, 0x003f);
+  /* port reset + enable */
+  out16(uhci_iobase + 0x10, 0x0200);
+  for (volatile int s = 0; s < 500000; s++) { }
+  out16(uhci_iobase + 0x10, 0x0004);
+  for (volatile int s = 0; s < 500000; s++) { }
+  uint16_t port = in16(uhci_iobase + 0x10);
+  if (!(port & 0x0004)) return -2; /* the port did not enable */
+  /* SET_ADDRESS 2 (the control to the default address 0) */
+  if (uhci_control(0, 0x00, 5, 2, 0, 0) < 0) return -3;
+  /* GET_DESCRIPTOR: the device descriptor's first 8 bytes, then 18 */
+  if (uhci_control(2, 0x80, 6, 0x0100, 0, 8) < 0) {
+    /* diagnostic: which TD failed and with what status */
+    for (int t = 0; t < 3; t++)
+      { (void)t; }
+    return -40 - (uhci_tds[0].status & 0x7f); /* -40..-127 encode the setup status */
+  }
+  uint8_t maxpkt = uhci_data[7];
+  if (uhci_control(2, 0x80, 6, 0x0100, 0, 18) < 0) return -5;
+  if (uhci_data[0] != 18 || uhci_data[4] != 0) return -6; /* the device descriptor sanity */
+  (void)maxpkt;
+  /* the BBB mass-storage: the SCSI READ(10) of LBA 2 (the known file) */
+  { int sc = uhci_scsi_read(2, 1, 2, 2, 1); if (sc < 0) return sc; }
+  if (uhci_data[0] == 'A' && uhci_data[1] == 'I' && uhci_data[2] == 'U') return uhci_data[0];
+  return -8;
 }
 
 /* ---- F2 durable file system (JUN-140) ------------------------------------

@@ -48,7 +48,7 @@ static int inference_screen_initialized;
 static const uint32_t *desktop_list_ops;
 static uint64_t desktop_list_count, desktop_list_generation, desktop_list_base_generation;
 static uint64_t desktop_shown_generation;
-static uint32_t desktop_shadow[2048] __attribute__((aligned(16)));
+static uint32_t desktop_shadow[2048] __attribute__((section(".high_bss"), aligned(16))); /* .high_bss: the low layout is at its aperture limit (ADR-0222) */
 static uint32_t desktop_damage_last[4], desktop_damage_counts[5];
 static uint64_t desktop_damage_bytes;
 int aiueos_desktop_surface_ready(void) { return desktop_surface_ready; }
