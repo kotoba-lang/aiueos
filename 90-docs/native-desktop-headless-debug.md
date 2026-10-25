@@ -28,7 +28,8 @@ python3 os/aiueos/scripts/debug-native-desktop-qmp.py \
   --local-draft --output "$OBSERVATION" \
   --keys 2 a b --expect-focus 2 --expect-draft-enabled 1 \
   --expect-generation 0 --expect-restore-code 0 \
-  --expect-commit-code 0 --expect-goal $'Goal local:\nab'
+  --expect-commit-code 0 --expect-goal $'Goal local:\nab' \
+  --expect-visible-goal ab
 ```
 
 The script resolves the media, EFI and kernel from that one build directory,
@@ -45,6 +46,11 @@ frame. `debug.json` contains the assertions, source and image digests,
 the QEMU launch. A wrong expectation exits nonzero and still saves the
 framebuffer. F5 remains guarded by `--allow-draft-write`; use the isolated
 restart gate below to test commit and recovery.
+`--expect-visible-goal` checks dark pixels at the guest's native text draw
+positions using the exact font inside the build's EFI. A passing
+`--expect-goal` alone checks guest memory. The observer accepts lowercase
+letters and `space` in `--keys`; visible assertions also handle spaces and
+repeated letters.
 `draftEnabled=1` means the opt-in profile is active; it does not prove a
 medium was attached. Without `--local-draft`, the guest reports restore code
 `-22` on this image, so assert the restore code when checking persistence.
@@ -134,3 +140,9 @@ uses the ordinary desktop build entry and checks the actual QEMU scanout
 pixels for the Goal's `a` and `b` glyphs. Waiting only for the
 guest text buffer allowed an earlier screenshot of an incomplete frame;
 the current gate requires a completed frame and visible glyph ink.
+
+The [Mac local-draft run](../docs/evidence/aiueos-mac-local-draft-20261026/README.md)
+also runs F5 commit and cold restore without a person or password. It checks
+visible text in committed and restored QEMU screenshots. The ordinary build
+entry selects this diagnostic profile with
+`AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft`.

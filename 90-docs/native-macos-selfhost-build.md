@@ -88,3 +88,22 @@ those glyphs. The new captured image visibly shows `Goal (RAM):` and `ab`.
 This closes a local Mac build-to-VM-input diagnostic path. It does not close
 the agent loop, default release build, independent initial bootstrap or
 physical hardware gates.
+
+## Opt-in local-draft and unattended debugging
+
+The same Mac entry accepts `AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft`.
+It builds the `workspace-entry.kotoba` kernel, EFI and media with the pinned
+Mac Amu compiler and Kotoba packager, then runs the save/restart gate against
+that exact image. The [source-bound Mac local-draft evidence](../docs/evidence/aiueos-mac-local-draft-20261026/README.md)
+records 11 passing QEMU observations, including F5 commit, cold restore,
+uncommitted-edit loss and malformed-media refusal. Its committed and restored
+screenshots also pass native glyph pixel checks. The resulting media is
+byte-identical to the exact-source Linux arm64 comparator. The Mac run uses
+no Linux/JVM/Node compiler process.
+
+Routine Itonami inspection now uses `debug-native-desktop-qmp.py --build-dir`
+with `--expect-visible-goal`; it boots a fresh headless VM and checks memory,
+completed frames and QEMU scanout without Screen Sharing, a VNC password or
+manual guest keys. The local-draft test disk is an output-owned 64 KiB
+fixture. D2 workspace restore, signed Cell state, a registered Itonami app,
+release and physical qualification remain open.

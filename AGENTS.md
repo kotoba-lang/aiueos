@@ -43,6 +43,9 @@ The separate Apple Silicon Mac selfhost candidate builds the same font,
 Kotoba/Amu Mach-O images; the exact Mac media passed QEMU desktop input.
 The ordinary desktop entry now runs all Mac stages and the private QMP gate
 in one source-bound invocation; the gate checks visible Goal glyph pixels.
+With `AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft`, the same entry also builds
+the opt-in workspace kernel and checks F5 save, cold restore, refusal cases
+and visible restored Goal text without Screen Sharing or a password.
 See 90-docs/native-macos-selfhost-build.md. This is a diagnostic candidate;
 compiler fixed-point requalification on the expanded FS2 runtime, release
 and physical qualification remain open.

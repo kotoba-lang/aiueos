@@ -23,8 +23,40 @@ def pin(path):
     return dict(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
 
 
+def visible_goal_ink(surface_bytes, font_bytes, pixels, goal):
+    """Bind restored text draw ops to dark pixels in the QEMU scanout."""
+    surface = struct.unpack('<2048I', surface_bytes)
+    assert surface[427] == 0 and 0 < surface[416] <= 259
+    windows = [surface[5+5*i:10+5*i] for i in range(surface[1])]
+    itonami = [window for window in windows if window[0] == 2]
+    assert len(itonami) == 1
+    _, wx, wy, ww, _ = itonami[0]
+    count = struct.unpack_from('<I', font_bytes, 8)[0]
+    ops = [surface[480+6*i:486+6*i] for i in range(surface[416])]
+    body = sorted((op for op in ops if op[0] == 2
+                   and wx+14 <= op[1] < wx+ww-14
+                   and wy+60 <= op[2] < wy+100), key=lambda op: (op[2], op[1]))
+    assert len(body) == len(goal), ('Goal draw length differs', len(body), len(goal))
+    result = []
+    for character, target in zip(goal, body):
+        cp = ord(character)
+        glyphs = [i for i in range(count)
+                  if struct.unpack_from('<I', font_bytes, 16+4*i)[0] & 0xffffff == cp]
+        assert len(glyphs) == 1, (character, 'font glyph absent or duplicated')
+        assert target[3] == glyphs[0], (character, 'Goal glyph order differs')
+        _, x, y, _, width, _ = target
+        assert width in (8, 16) and x+width <= surface[3] and y+16 <= surface[4]
+        ink = sum(1 for row in range(y, y+16) for column in range(x, x+width)
+                  if all(channel < 64 for channel in
+                         pixels[(row*surface[3]+column)*3:(row*surface[3]+column)*3+3]))
+        result.append(dict(codepoint=cp, glyph=glyphs[0], x=x, y=y,
+                           width=width, inkPixels=ink))
+    return result
+
+
 class Guest:
     def __init__(self, args, directory, disk):
+        self.args = args
         self.directory = directory
         # QMP controls the VM and its memory. Keep its pipe private to this
         # process; a Unix listener also makes sandboxed local runs require
@@ -142,12 +174,28 @@ class Guest:
         self.key('f5')
         return self.wait('commit', lambda s:s['lastKey']==63 and s['commit']==generation and s['keys']>before['keys'] and s['frames']>before['frames'])
 
-    def screenshot(self, name):
-        assert self.hmp(f'screendump {name}.ppm') == ''
+    def screenshot(self, name, visible_goal=None):
         spec = importlib.util.spec_from_file_location('desktop_observer', HERE/'check-native-desktop-qemu.py')
         observer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(observer)
-        observer.ppm_png(self.directory/(name+'.ppm'), self.directory/(name+'.png'))
+        deadline = time.monotonic()+10
+        attempts = 0
+        while time.monotonic() < deadline:
+            attempts += 1
+            assert self.hmp(f'screendump {name}.ppm') == ''
+            png = self.directory/(name+'.png')
+            pixels = observer.ppm_png(self.directory/(name+'.ppm'), png)
+            if visible_goal is None or self.args.font is None:
+                return None
+            glyphs = visible_goal_ink(
+                (self.directory/'surface.bin').read_bytes(),
+                self.args.font.read_bytes(), pixels, visible_goal)
+            if all((row['inkPixels'] == 0 if row['codepoint'] == 32
+                    else row['inkPixels'] > 0) for row in glyphs):
+                return dict(name=name, goal=visible_goal, glyphs=glyphs,
+                            attempts=attempts, screenshot=pin(png))
+            time.sleep(.1)
+        raise AssertionError((name, 'restored Goal glyphs did not reach QEMU scanout', glyphs))
 
     def close(self, hard=False):
         if self.process.poll() is None:
@@ -164,6 +212,8 @@ class Guest:
 def main(args):
     for name in ('media', 'efi', 'kernel', 'qemu', 'firmware'):
         assert getattr(args, name).is_file(), (name, 'regular file required')
+    if args.font:
+        assert args.font.is_file() and args.efi.read_bytes().count(args.font.read_bytes()) == 1
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     before = pin(args.media)
     assert args.efi.read_bytes().count(args.kernel.read_bytes())==1
@@ -171,6 +221,7 @@ def main(args):
     reader = importlib.util.module_from_spec(spec);spec.loader.exec_module(reader)
     media_proof = reader.verify(args.media, args.efi)
     events = []
+    visible = []
     active = None
     # Provision only an output-owned test fixture. The native guest refuses an
     # unmarked medium and never formats/provisions one itself.
@@ -187,7 +238,8 @@ def main(args):
         active.edit('b', 'ab')
         committed = active.commit(1)
         assert committed['generation']==1
-        active.screenshot('committed-ab')
+        proof = active.screenshot('committed-ab', 'ab')
+        if proof: visible.append(proof)
         active.close();active=None
         first = disk.read_bytes()
         assert first[:512]==blank[:512] and first[2048:]==blank[2048:] and first!=blank
@@ -196,7 +248,9 @@ def main(args):
 
         active = Guest(args, args.output/'cold-restore', disk)
         restored = active.boot(1, 'ab')
-        active.open();active.screenshot('restored-ab')
+        active.open()
+        proof = active.screenshot('restored-ab', 'ab')
+        if proof: visible.append(proof)
         active.edit('c', 'abc')
         active.close(hard=True);active=None
         assert disk.read_bytes()==first, 'uncommitted edit changed durable bytes'
@@ -220,7 +274,9 @@ def main(args):
         disk.write_bytes(orphan)
         active = Guest(args, args.output/'orphan-refused', disk)
         restored = active.boot(2, 'abd')
-        active.open();active.screenshot('restored-abd')
+        active.open()
+        proof = active.screenshot('restored-abd', 'abd')
+        if proof: visible.append(proof)
         active.close();active=None
         assert disk.read_bytes()==orphan
         events.append(dict(name='unpublished-higher-generation-ignored', state=restored))
@@ -256,7 +312,9 @@ def main(args):
         assert pin(args.media)==before
         report = dict(schema='aiueos.native-draft-restart.v1', status='PASS_NATIVE_LOCAL_DRAFT_COLD_RESTORE',
                       kernel=pin(args.kernel), efi=pin(args.efi), media=before, firmware=pin(args.firmware),
-                      observer=pin(Path(__file__)), independentMedia=media_proof, events=events,
+                      observer=pin(Path(__file__)), font=pin(args.font) if args.font else None,
+                      independentMedia=media_proof, events=events,
+                      visibleGoalScreenshots=visible,
                       nativeATACommit=True, coldProcessBoot=True, previousCommitAfterUncommittedCrash=True,
                       PythonGuestImplementation=False, JVMNodeOrGraalFallback=False, cCompilerOrLoader=False,
                       BrowserCSSOMParity=False, registeredDappExecution=False, D2WorkspaceCodec=False,
@@ -273,7 +331,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     for name in ('media', 'efi', 'kernel', 'qemu', 'firmware', 'output'):
         parser.add_argument('--'+name, type=Path, required=True)
+    parser.add_argument('--font', type=Path)
     parsed = parser.parse_args()
     for name in vars(parsed):
-        setattr(parsed, name, getattr(parsed, name).resolve())
+        value = getattr(parsed, name)
+        if value is not None:
+            setattr(parsed, name, value.resolve())
     main(parsed)

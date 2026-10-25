@@ -9,7 +9,11 @@ and signed release/head acceptance open.
 The source-bound [receipt and screenshots](evidence/native-draft-restart-20261025/README.md)
 record native compilation, reproduced ELF/EFI/media, cold boots, a real
 uncommitted-edit power loss, and seven refusal controls. QEMU executes the
-AIUEOS kernel directly. The build compiler runs in Linux; the guest does not.
+AIUEOS kernel directly. That historical receipt used a Linux build host; the
+[Mac local-draft receipt](../docs/evidence/aiueos-mac-local-draft-20261026/README.md)
+reproduces the exact-source kernel, EFI and media with a Mac native compiler
+and passes the same headless restart gate. Neither guest run depends on a
+Linux runtime.
 
 The [interactive-fuel repeat](evidence/native-draft-fuel-20261025/README.md)
 rebuilds both profiles with the admitted `2^53-1` initial kernel budget and
@@ -118,6 +122,14 @@ bytes. Python does not implement guest save/restore, SHA decisions or the D2
 codec. The normal `desktop` profile and existing desktop QEMU input gate must
 also pass. Do not promote this component receipt into AWAI-90/JUN-145 completion,
 release publication, distributed recovery or physical hardware acceptance.
+
+On Apple Silicon, the ordinary `build-kotoba-native-desktop.sh` entry also
+selects this probe with `AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft` and runs
+the QEMU gate in the same source-bound invocation. Set the pinned Mac Amu and
+Kotoba packager images, owner source root and fresh output as described in
+[Mac native build progress](native-macos-selfhost-build.md). The gate checks
+that `Goal local:` text appears in the actual QEMU scanout after F5 commit
+and cold restore. It requires no Screen Sharing, password or manual key.
 
 For debugging an already running diagnostic VM without screen sharing or a
 password, use the [local QMP desktop debugger](native-desktop-headless-debug.md).

@@ -26,7 +26,8 @@ if [ "$(uname -s)" = Darwin ]; then
     --packager-sha256 "$AIUEOS_KOTOBA_PACKAGER_SHA256" \
     --qemu "$qemu" --qemu-sha256 "$qemu_sha" \
     --firmware "$firmware" --firmware-sha256 "$firmware_sha" \
-    --output "$AIUEOS_NATIVE_DESKTOP_OUT"
+    --output "$AIUEOS_NATIVE_DESKTOP_OUT" \
+    --profile "${AIUEOS_NATIVE_DESKTOP_PROFILE:-desktop}"
 fi
 out=${AIUEOS_NATIVE_DESKTOP_OUT:-"$repo/build/aiueos-native-desktop-$(date -u +%Y%m%dT%H%M%S)"}
-exec python3 "$repo/os/aiueos/scripts/build-native-desktop.py" --amu-source "$amu" --output "$out"
+exec python3 "$repo/os/aiueos/scripts/build-native-desktop.py" --amu-source "$amu" --output "$out" --profile "${AIUEOS_NATIVE_DESKTOP_PROFILE:-desktop}"

@@ -164,6 +164,8 @@ def resolve_boot_inputs(args, parser):
         args.boot_media = build/'media/awai-native.img'
         args.efi = build/'kernel/BOOTX64.EFI'
         args.kernel = build/'kernel/KERNEL.ELF'
+        if args.font is None and args.expect_visible_goal:
+            args.font = build/'font/aiueos-padded.fnt'
     if args.qmp_socket:
         if args.qemu or args.firmware or args.efi or args.local_draft:
             parser.error('boot options require --boot-media or --build-dir')
@@ -200,11 +202,15 @@ def main():
     parser.add_argument('--local-draft', action='store_true',
                         help='create a new 64 KiB diagnostic draft disk in --output')
     parser.add_argument('--kernel', type=Path)
+    parser.add_argument('--font', type=Path,
+                        help='matching guest font for visible Goal pixel assertions')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--keys', nargs='*', default=[], choices=sorted(KEYS))
     parser.add_argument('--allow-draft-write', action='store_true',
                         help='required before sending F5 to a live VM')
     parser.add_argument('--expect-goal', help='exact goal text after the final key')
+    parser.add_argument('--expect-visible-goal',
+                        help='lowercase Goal body that must appear in the guest scanout')
     parser.add_argument('--expect-focus', type=int,
                         help='expected focused window after the final key')
     parser.add_argument('--expect-draft-enabled', type=int, choices=(0, 1),
@@ -216,6 +222,10 @@ def main():
     parser.add_argument('--expect-commit-code', type=int,
                         help='expected native draft commit result')
     args = parser.parse_args()
+    if args.expect_visible_goal:
+        if (not args.expect_goal or not args.expect_goal.endswith('\n'+args.expect_visible_goal)
+                or any(c not in string.ascii_lowercase+' ' for c in args.expect_visible_goal)):
+            parser.error('--expect-visible-goal requires matching --expect-goal with lowercase/space body')
     if 'f5' in args.keys and not args.allow_draft_write:
         parser.error('F5 can write the attached VM disk; pass --allow-draft-write')
     resolve_boot_inputs(args, parser)
@@ -230,6 +240,11 @@ def main():
         reader = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(reader)
         reader.verify(args.boot_media, args.efi)
+    if args.expect_visible_goal:
+        if args.font is None or not args.font.is_file():
+            parser.error('visible Goal check requires the exact guest --font')
+        if args.efi and args.efi.read_bytes().count(args.font.read_bytes()) != 1:
+            parser.error('font must appear exactly once in matching EFI image')
     output = args.output.resolve()
     # Screenshots and memory dumps may contain user state.
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -241,17 +256,44 @@ def main():
         events = [{'action': 'initial', 'state': state}]
         for key in args.keys:
             previous = state
-            qmp.call('send-key', {'keys': [{'type': 'qcode', 'data': key}],
+            qcode = 'spc' if key == 'space' else key
+            qmp.call('send-key', {'keys': [{'type': 'qcode', 'data': qcode}],
                                   'hold-time': 60})
             state = wait_for_frame(qmp, rw[3], output, prior_keys=previous['keys'])
             events.append({'action': key, 'state': state})
             time.sleep(.12)
-        ppm = output/'desktop.ppm'
-        qmp.call('screendump', {'filename': str(ppm)})
         spec = importlib.util.spec_from_file_location('desktop_observer', HERE/'check-native-desktop-qemu.py')
         observer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(observer)
-        observer.ppm_png(ppm, output/'desktop.png')
+        ppm = output/'desktop.ppm'
+        glyphs = []
+        scanout_error = None
+        if args.expect_visible_goal:
+            spec = importlib.util.spec_from_file_location(
+                'draft_observer', HERE/'check-native-draft-restart-qemu.py')
+            draft_observer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(draft_observer)
+            font_bytes = args.font.read_bytes()
+        deadline = time.monotonic()+10
+        while True:
+            qmp.call('screendump', {'filename': str(ppm)})
+            pixels = observer.ppm_png(ppm, output/'desktop.png')
+            if not args.expect_visible_goal:
+                break
+            try:
+                glyphs = draft_observer.visible_goal_ink(
+                    (output/'surface.bin').read_bytes(), font_bytes,
+                    pixels, args.expect_visible_goal)
+                scanout_error = None
+            except AssertionError as error:
+                scanout_error = str(error)
+            if (scanout_error is None and glyphs
+                    and all((row['inkPixels'] == 0 if row['codepoint'] == 32
+                             else row['inkPixels'] > 0) for row in glyphs)):
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(.1)
         expected = {'goal': args.expect_goal, 'focus': args.expect_focus,
                     'draftEnabled': args.expect_draft_enabled,
                     'generation': args.expect_generation,
@@ -260,6 +302,11 @@ def main():
         expected = {name: value for name, value in expected.items() if value is not None}
         failures = {name: {'expected': value, 'actual': state[name]}
                     for name, value in expected.items() if state[name] != value}
+        if args.expect_visible_goal and (scanout_error is not None or not glyphs
+                                          or any((row['inkPixels'] != 0 if row['codepoint'] == 32
+                                                  else row['inkPixels'] <= 0) for row in glyphs)):
+            failures['visibleGoal'] = {'expected': args.expect_visible_goal,
+                                       'glyphs': glyphs, 'error': scanout_error}
         report = {'schema': 'aiueos.native-desktop-qmp-debug.v1',
                   'status': 'PASS' if not failures else 'FAIL',
                   'observerSha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -268,6 +315,9 @@ def main():
                                      if args.boot_media else None,
                   'screenshotSha256': hashlib.sha256(ppm.read_bytes()).hexdigest(),
                   'events': events, 'expected': expected, 'failures': failures,
+                  'visibleGoalGlyphs': glyphs,
+                  'fontSha256': hashlib.sha256(font_bytes).hexdigest()
+                                if args.expect_visible_goal else None,
                   'qmpTransport': 'unix-socket' if args.qmp_socket else 'stdio',
                   'localDraftFixture': bool(args.local_draft),
                   'vncUsed': False, 'networkUsed': False,

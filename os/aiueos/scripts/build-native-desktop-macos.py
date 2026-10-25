@@ -2,7 +2,8 @@
 """Build AIUEOS on Apple Silicon and boot its exact media without a login.
 
 Python stages, pins and observes. Amu/Kotoba native programs emit the font,
-kernel, EFI and GPT/FAT16 media; QEMU QMP stdio checks the guest desktop.
+kernel, EFI and GPT/FAT16 media; QEMU QMP stdio checks the selected guest
+desktop or the opt-in local-draft save and cold restore.
 The output is a diagnostic VM candidate, never an installer or release.
 """
 
@@ -91,6 +92,7 @@ def main(args):
             "build-kotoba-native-desktop.sh", "build-native-desktop-macos.py",
             "build-native-font-macos.py", "build-native-kernel-macos.py",
             "build-native-media-macos.py", "check-native-desktop-qemu.py",
+            "check-native-draft-restart-qemu.py",
             "check-native-media-format.py",
         )
     }
@@ -105,7 +107,8 @@ def main(args):
     env["TEMP"] = str(output)
     state = {
         "schema": "aiueos.macos-native-desktop-qemu-candidate.v1",
-        "state": "STAGING", "host": [platform.system(), platform.machine()],
+        "state": "STAGING", "profile": args.profile,
+        "host": [platform.system(), platform.machine()],
         "compiler": compiler_pin, "packager": packager_pin,
         "qemu": qemu_pin, "firmware": firmware_pin, "fontSource": font_pin,
         "ownerManifest": owner_manifest, "ownerNames": sorted(source_root_pins),
@@ -153,9 +156,11 @@ def main(args):
                 or pin(padded) != font_state["padded"]):
             raise ValueError("font build receipt mismatch")
 
+        kernel_entry = ("workspace-entry.kotoba" if args.profile == "local-draft"
+                        else "desktop-entry.kotoba")
         call("kernel", scripts["build-native-kernel-macos.py"], [
             "--compiler-image", compiler, "--compiler-sha256", args.compiler_sha256,
-            "--kernel-source", OS / "native/desktop-entry.kotoba",
+            "--kernel-source", OS / "native" / kernel_entry,
             "--fuel", FUEL, "--payload", padded,
             "--payload-sha256", font_state["padded"]["sha256"], "--output", kernel])
         kernel_state = json.loads((kernel / "build-state.json").read_text())
@@ -184,31 +189,60 @@ def main(args):
                 or pin(disk) != media_state["image"]):
             raise ValueError("media build receipt mismatch")
 
-        call("qemu", scripts["check-native-desktop-qemu.py"], [
-            "--media", disk, "--efi", efi, "--kernel", image, "--font", padded,
-            "--qemu", qemu, "--firmware", firmware, "--output", guest])
-        observed = json.loads((guest / "native-desktop-qemu.json").read_text())
-        if (observed["status"] != "PASS_NATIVE_DESKTOP_INPUT_QEMU"
-                or len(observed["events"]) != 12
+        guest_script = ("check-native-draft-restart-qemu.py" if args.profile == "local-draft"
+                        else "check-native-desktop-qemu.py")
+        guest_args = [
+            "--media", disk, "--efi", efi, "--kernel", image,
+            "--qemu", qemu, "--firmware", firmware, "--font", padded,
+            "--output", guest]
+        call("qemu", scripts[guest_script], guest_args)
+        receipt_name = ("native-draft-restart.json" if args.profile == "local-draft"
+                        else "native-desktop-qemu.json")
+        observed = json.loads((guest / receipt_name).read_text())
+        expected_status = ("PASS_NATIVE_LOCAL_DRAFT_COLD_RESTORE" if args.profile == "local-draft"
+                           else "PASS_NATIVE_DESKTOP_INPUT_QEMU")
+        expected_events = 11 if args.profile == "local-draft" else 12
+        if (observed["status"] != expected_status
+                or len(observed["events"]) != expected_events
                 or observed["kernel"] != kernel_state["kernel"]
                 or observed["efi"] != kernel_state["efi"]
                 or observed["media"] != media_state["image"]
-                or observed["font"] != font_state["padded"]
                 or observed["firmware"] != firmware_pin
-                or observed["observer"] != script_pins["check-native-desktop-qemu.py"]):
+                or observed["observer"] != script_pins[guest_script]):
             raise ValueError("QEMU guest observation is not bound to this build")
+        if args.profile == "local-draft":
+            if (not observed["nativeATACommit"] or not observed["coldProcessBoot"]
+                    or not observed["previousCommitAfterUncommittedCrash"]
+                    or observed["D2WorkspaceCodec"] or observed["signedHeadAuthority"]
+                    or observed["releaseAdmission"]
+                    or observed["font"] != font_state["padded"]
+                    or [row["goal"] for row in observed["visibleGoalScreenshots"]] != ["ab", "ab", "abd"]
+                    or any(row["inkPixels"] <= 0
+                           for shot in observed["visibleGoalScreenshots"]
+                           for row in shot["glyphs"])):
+                raise ValueError("local-draft persistence verdict is incomplete")
+        elif (observed["font"] != font_state["padded"]
+              or [row["codepoint"] for row in observed["renderedGoalGlyphs"]] != [97, 98]
+              or any(row["inkPixels"] <= 0 for row in observed["renderedGoalGlyphs"])):
+            raise ValueError("normal desktop visible Goal verdict is incomplete")
         if (pin(compiler) != compiler_pin or pin(packager) != packager_pin
                 or pin(qemu) != qemu_pin or pin(firmware) != firmware_pin
                 or pin(font_source) != font_pin
                 or pin(OS / "native/source-dependencies.json") != owner_manifest
                 or any(pin(scripts[name]) != identity for name, identity in script_pins.items())):
             raise ValueError("tool or source changed during integrated build")
-        state.update(state="MACOS_NATIVE_DESKTOP_QEMU_CANDIDATE",
+        state.update(state=("MACOS_NATIVE_DRAFT_RESTORE_QEMU_CANDIDATE"
+                            if args.profile == "local-draft"
+                            else "MACOS_NATIVE_DESKTOP_QEMU_CANDIDATE"),
                      font=font_state["padded"], kernel=kernel_state["kernel"],
                      efi=kernel_state["efi"], media=media_state["image"],
                      guestEvents=len(observed["events"]),
                      guestInputQualified=True, nativeFormatEmission=True,
-                     qualification="Mac native build and QEMU desktop input; release and physical gates separate")
+                     localDraftRestoreQualified=args.profile == "local-draft",
+                     qualification=("Mac native local-draft save and cold restore on QEMU"
+                                    if args.profile == "local-draft"
+                                    else "Mac native build and QEMU desktop input")
+                     + "; D2 workspace, release and physical gates separate")
         save()
         print(state["state"], state["media"]["sha256"])
     except Exception as error:
@@ -233,4 +267,5 @@ if __name__ == "__main__":
     parser.add_argument("--firmware", type=Path, required=True)
     parser.add_argument("--firmware-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--profile", choices=("desktop", "local-draft"), default="desktop")
     main(parser.parse_args())
