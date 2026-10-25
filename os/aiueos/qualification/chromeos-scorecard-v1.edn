@@ -95,9 +95,9 @@
    :procedure "Boot a clean install; complete the setup (name, device, account link)."
    :expected "Setup completes; the choices read back after a reboot."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0240" "ADR-0239"]
-   :note "Guided defaults and the QR account link are gated under QEMU."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/a5-first-run-setup/receipt.edn" "ADR-0240" "ADR-0239"]
+   :note "Measured 2026-10-25: on a clean work image the loader's setup flow takes the three choices (name=aiueos-gate, device=dev-001, account=acct-link-77) from a setup volume and stores SETUP.INI on the system ESP (AIUEOS_SETUP_APPLIED); the next boot without the volume reads the choices back (AIUEOS_SETUP_LOADED with all three values) and the desktop boots. Guided defaults and the QR account link are gated under QEMU. Caveats, owner may reject: the choices arrive on the setup volume in the QEMU test (the physical story is a first-run UI writing the same file); the account link is a string value, no account system is contacted; the values are plain text on the ESP; completion is a file write, not an interactive form."
    }
   {:id :B1 :category :identity :title "Sign in with a device-bound passkey"
    :weight 3 :required true :required-level :device

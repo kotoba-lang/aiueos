@@ -21,8 +21,8 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 64%.** Thirty-seven rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I7 and I8
-(weight 64 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 65%.** Thirty-eight rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, A5, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I7 and I8
+(weight 65 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
@@ -61,10 +61,11 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | H1 Signed update download and apply | 3 | an update volume is read, the manifest verified (C RSASSA-PKCS1-v1_5-SHA256 under the baked release key), each file digest-checked and applied to the system ESP with read-back (AIUEOS_UPDATE_APPLIED); a one-byte-flipped manifest is refused before any write and the system keeps booting | 'the new version runs' is digest-verified copies + the desktop boot after applying — the harness boots snapshot=on so the applied bytes live in the overlay; 'fetch' is the update volume read (network fetch is the physical story); the package carries one build's files (no version-bump exercise) |
 | H2 Rollback after a bad update | 3 | a validly signed garbage-kernel update applied to a persistent disk fails the next boot's admission; the loader's alternate-volume fallback restores the previous boot chain (AIUEOS_UPDATE_ROLLED_BACK) and the previous version boots to the desktop | the restore source is the admitting volume (the release build), not a stored pre-update snapshot; a bootable-but-misbehaving update is not covered (needs a runtime health flag) |
 | F2 A durable file system | 1 | a bounded file table (A/B journal pattern) exercised by a boot self-test: create, rename, delete, and a full-disk create that reports the condition and writes nothing (FS_* markers all green) | 15 entries / ~992 KiB profile; names 20-byte ASCII; sizes pre-allocated; the atomicity claim is the A/B commit pattern, not a power-loss proof; boot self-test rather than a user session |
+| A5 First-run setup | 1 | on a clean work image the loader stores the three choices (name, device, account link) from a setup volume as SETUP.INI (AIUEOS_SETUP_APPLIED) and the next boot reads them back (AIUEOS_SETUP_LOADED) | the choices arrive on the setup volume in the QEMU test (the physical story is a first-run UI); the account link is a string value; the values are plain text on the ESP; completion is a file write, not an interactive form |
 | G5 Key lifecycle and revocation | 1 | two RSA-2048 qualification signers; the original is revoked and its object is refused ('release signer is revoked'), the rotated signer verifies, and the revoked signature verifies without the list (control) | qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list is an operational step outside the run |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The eighteen weigh 33 points: rejecting all of them would take the score from 64% to 31%. The 31% is the stricter figure; the 64% is what the checker prints.
+The nineteen weigh 34 points: rejecting all of them would take the score from 65% to 31%. The 31% is the stricter figure; the 65% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 

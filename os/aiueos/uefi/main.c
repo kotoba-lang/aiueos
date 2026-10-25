@@ -893,6 +893,89 @@ done:
   return 1;
 }
 
+/* ---- A5 first-run setup (JUN-140) ---------------------------------------
+   On a clean install the loader looks for a setup volume (SETUP.ID +
+   SETUP.INI: three lines "name=", "device=", "account="), stores SETUP.INI
+   on the system ESP and prints the applied marker; on every later boot the
+   stored choices are read back and printed. The QEMU test delivers the
+   choices on the setup volume (the physical-machine story is a first-run UI
+   writing the same file); the readback marker is the row's evidence. */
+static int setup_flow(struct efi_boot_services *bs, efi_handle own_device) {
+  static const char16 setup_id[] = u"\\SETUP.ID";
+  static const char16 setup_ini[] = u"\\SETUP.INI";
+  efi_handle handles[16];
+  uint64_t handle_bytes = sizeof(handles);
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *own = 0, *src = 0, *f = 0;
+  uint8_t *buf = 0;
+  uint64_t size = 0;
+  if (bs->allocate_pool(2, 4096, (void **)&buf) != EFI_SUCCESS) return 0;
+  /* 1. the stored choices read back first: they are the evidence on every
+     boot after the setup completed. */
+  if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&fs) == EFI_SUCCESS &&
+      fs && fs->open_volume(fs, &own) == EFI_SUCCESS && own) {
+    if (own->open(own, &f, setup_ini, 1, 0) == EFI_SUCCESS && f) {
+      size = 4095;
+      if (f->read(f, &size, buf) == EFI_SUCCESS && size > 0) {
+        buf[size] = 0;
+        debug_string("AIUEOS_SETUP_LOADED ");
+        debug_string((const char *)buf);
+        if (((const char *)buf)[size - 1] != '\n') debug_string("\n");
+      }
+      f->close(f);
+      bs->free_pool(buf);
+      own->close(own);
+      return 1;
+    }
+    own->close(own);
+    own = 0;
+  }
+  /* 2. first run: take the choices from a setup volume */
+  if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) {
+    bs->free_pool(buf); return 0;
+  }
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count; i++) {
+    struct efi_file *probe = 0, *id = 0;
+    if (handles[i] == own_device) continue;
+    if (bs->handle_protocol(handles[i], &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) continue;
+    if (fs->open_volume(fs, &probe) != EFI_SUCCESS || !probe) continue;
+    if (probe->open(probe, &id, setup_id, 1, 0) == EFI_SUCCESS && id) {
+      id->close(id);
+      src = probe;
+      break;
+    }
+    probe->close(probe);
+  }
+  if (!src) { bs->free_pool(buf); return 0; }
+  int applied = 0;
+  if (src->open(src, &f, setup_ini, 1, 0) == EFI_SUCCESS && f) {
+    size = 4095;
+    if (f->read(f, &size, buf) == EFI_SUCCESS && size > 0 && size < 2048) {
+      buf[size] = 0;
+      if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&fs) == EFI_SUCCESS &&
+          fs && fs->open_volume(fs, &own) == EFI_SUCCESS && own) {
+        struct efi_file *out = 0;
+        if (own->open(own, &out, setup_ini, 3 | 0x8000000000000000ULL, 0x20) == EFI_SUCCESS && out) {
+          uint64_t written = size;
+          if (out->write(out, &written, buf) == EFI_SUCCESS && written == size) applied = 1;
+          out->close(out);
+        }
+        own->close(own);
+      }
+      if (applied) {
+        debug_string("AIUEOS_SETUP_APPLIED ");
+        debug_string((const char *)buf);
+        if (((const char *)buf)[size - 1] != '\n') debug_string("\n");
+      }
+    }
+    f->close(f);
+  }
+  src->close(src);
+  bs->free_pool(buf);
+  return applied;
+}
+
 static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_device) {
   debug_string("ZZQQ_UNIQUE_PROBE_12345\n");
   static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
@@ -1525,6 +1608,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   recovery_reinstall(bs, loaded->device_handle);
   progress(213, "AIUEOS_LOADER_PROGRESS update-apply");
   update_apply(bs, loaded->device_handle);
+  progress(214, "AIUEOS_LOADER_PROGRESS first-run-setup");
+  setup_flow(bs, loaded->device_handle);
 #ifdef AIUEOS_MODEL_NVME_SLOTS
   progress(211,"AIUEOS_LOADER_PROGRESS model-usb-to-nvme-ab");
   if (stage_model_to_nvme(bs, loaded->device_handle) != EFI_SUCCESS)
