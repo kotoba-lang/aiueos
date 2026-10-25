@@ -1,4 +1,10 @@
 ;; The guest browser desktop's maturity ladder (ADR-0226).
+;; Historical hosted ladder: its KBB profiles/receipts below do not qualify the
+;; current native chain and must not be executed as a fallback. Current native
+;; component evidence and open full-graph/kernel/app/restore gates are recorded
+;; in qualification/native-shared-browser-20261025.json and
+;; 90-docs/shared-browser-native-progress.md. No floor is closed by that bounded
+;; component evidence; retain the original row semantics and historical walls.
 ;;
 ;; GOAL: kotoba-lang/browser's surface is the aiueos desktop you can use on
 ;; KERNEL.ELF -- seen on the display, driven by pointer and keyboard in one

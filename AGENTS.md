@@ -1,5 +1,14 @@
 # AGENTS.md — aiueos
 
+## Shared Browser native progress (JUN-93)
+
+See `90-docs/shared-browser-native-progress.md` and the source-bound native
+qualification record. Shared text/DOM/text-edit component execution, kernel
+desktop integration, dapps/broker consent and durable restore are separate
+gates. The diagnostic Browser-frame2 cards do not execute registered services.
+The legacy hosted maturity ladder and scores retain their original scope;
+do not run KBB/NBB/JVM or count those receipts as current native acceptance.
+
 ## Native desktop/media candidate
 
 The desktop entry `os/aiueos/scripts/build-kotoba-native-desktop.sh` no longer
