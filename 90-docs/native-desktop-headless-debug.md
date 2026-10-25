@@ -176,3 +176,11 @@ also runs F5 commit and cold restore without a person or password. It checks
 visible text in committed and restored QEMU screenshots. The ordinary build
 entry selects this diagnostic profile with
 `AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft`.
+
+## User ELF boot-slot check
+
+The [C-free user ELF diagnostic](../docs/evidence/aiueos-native-user-payload-20261026/README.md)
+also runs through private QMP stdio. It checks actual CPL3 execution and a
+modified-payload refusal in two isolated QEMU boots. Its fixed scalar ELF is
+separate from the Itonami desktop profile; a pass does not establish that
+Itonami itself runs as a user ELF.
