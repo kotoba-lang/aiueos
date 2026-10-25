@@ -106,6 +106,18 @@ command -v python3 >/dev/null 2>&1 || {
 if [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ]; then
   AIUEOS_GUEST_INPUT=1
 fi
+# A plain full-suite boot must reach its terminal #UD evidence. The kernel's
+# production build keeps the desktop alive, so only this smoke harness arms the
+# probe by default. Interactive gates and an explicit loop-terminal gate keep
+# the persistent desktop; an explicit caller choice always wins.
+if [ -z "${AIUEOS_SMOKE_FINAL_PROBE+x}" ]; then
+  if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ] || [ -n "${AIUEOS_LOOP_EXIT_OK:-}" ]; then
+    AIUEOS_SMOKE_FINAL_PROBE=0
+  else
+    AIUEOS_SMOKE_FINAL_PROBE=1
+  fi
+fi
+export AIUEOS_SMOKE_FINAL_PROBE
 build_status=0
 if [ "${AIUEOS_GUEST_INPUT:-0}" = 1 ]; then
   AIUEOS_CATALOG_POLICY_SELFTEST=1 \
