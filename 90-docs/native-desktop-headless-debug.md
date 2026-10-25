@@ -14,6 +14,39 @@ and framebuffer directly. Do not request a Screen Sharing login or a manual
 key press to establish those facts. Keep the VNC password on any separately
 shared interactive session; QMP does not require disabling it.
 
+## One-shot Itonami UI debug (no listener or login)
+
+Use the same observer with `--boot-media` to launch one fresh VM. This route
+uses private QMP standard-input/output pipes, opens no VNC or QMP listener,
+and runs with `-nic none`. Set `BUILD` to the matching native `local-draft`
+build directory, `QEMU` and `FIRMWARE` to the local QEMU/OVMF files, and
+`OBSERVATION` to a **new** scratch directory under `github/workspaces/`:
+
+```sh
+python3 os/aiueos/scripts/debug-native-desktop-qmp.py \
+  --boot-media "$BUILD/media/awai-native.img" \
+  --efi "$BUILD/kernel/BOOTX64.EFI" \
+  --kernel "$BUILD/kernel/KERNEL.ELF" \
+  --qemu "$QEMU" --firmware "$FIRMWARE" \
+  --local-draft --output "$OBSERVATION" \
+  --keys 2 a b --expect-focus 2 --expect-draft-enabled 1 \
+  --expect-generation 0 --expect-restore-code 0 \
+  --expect-commit-code 0 --expect-goal $'Goal local:\nab'
+```
+
+The script validates that the kernel is inside the matching EFI/media before
+booting. `--local-draft` creates a fresh, marked 64 KiB test disk *inside*
+the private output directory; it never accepts an existing workspace or
+physical disk as a writable draft target. The session ends after the last
+frame. `debug.json` contains the assertions, source and image digests,
+`desktop.png` shows the actual guest display, and `command.json` records
+the QEMU launch. A wrong expectation exits nonzero and still saves the
+framebuffer. F5 remains guarded by `--allow-draft-write`; use the isolated
+restart gate below to test commit and recovery.
+`draftEnabled=1` means the opt-in profile is active; it does not prove a
+medium was attached. Without `--local-draft`, the guest reports restore code
+`-22` on this image, so assert the restore code when checking persistence.
+
 ## Reproducible save and restart check
 
 Run [`check-native-draft-restart-qemu.py`](../os/aiueos/scripts/check-native-draft-restart-qemu.py)

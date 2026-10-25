@@ -12,9 +12,11 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import select
 import socket
 import struct
 import string
+import subprocess
 import time
 
 
@@ -48,6 +50,76 @@ class QMP:
     def close(self):
         self.stream.close()
         self.sock.close()
+
+
+class QMPStdio:
+    """Own one isolated VM; QMP stays on private pipes with no listener."""
+
+    def __init__(self, args, output):
+        command = [str(args.qemu), '-machine', 'q35,accel=tcg', '-cpu', 'max',
+                   '-m', '128M', '-smp', '1', '-drive',
+                   f'if=pflash,format=raw,readonly=on,file={args.firmware}',
+                   '-drive', f'file={args.boot_media},format=raw,if=ide,snapshot=on',
+                   '-boot', 'order=c', '-nic', 'none', '-display', 'none',
+                   '-no-reboot', '-serial', 'file:serial.log',
+                   '-debugcon', 'file:debug.log', '-qmp', 'stdio']
+        if args.local_draft:
+            # The only writable disk is a new, marked fixture inside output.
+            disk = output/'draft.raw'
+            raw = bytearray(128*512)
+            struct.pack_into('<4I', raw, 0, 0x49415741, 0x54465244, 1, 128)
+            disk.write_bytes(raw)
+            disk.chmod(0o600)
+            command += ['-device', 'isa-ide,id=draft-controller', '-drive',
+                        f'file={disk},format=raw,if=none,id=draft,cache=directsync',
+                        '-device', 'ide-hd,drive=draft,bus=draft-controller.0,unit=1,serial=AWAI90DRAFT000001']
+        (output/'command.json').write_text(json.dumps(command, indent=2)+'\n')
+        self.log = (output/'qemu.log').open('wb')
+        self.process = subprocess.Popen(command, cwd=output,
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=self.log, bufsize=0)
+        self.seq = 0
+        try:
+            assert 'QMP' in json.loads(self.read_line(15))
+            self.call('qmp_capabilities')
+        except BaseException:
+            self.close(hard=True)
+            raise
+
+    def read_line(self, timeout):
+        if not select.select([self.process.stdout], [], [], timeout)[0]:
+            raise TimeoutError('QMP stdio response timed out')
+        line = self.process.stdout.readline()
+        if not line:
+            raise RuntimeError(f'QEMU exited during QMP: {self.process.poll()}')
+        return line
+
+    def call(self, name, arguments=None):
+        self.seq += 1
+        request = {'execute': name, 'id': self.seq}
+        if arguments is not None:
+            request['arguments'] = arguments
+        self.process.stdin.write(json.dumps(request).encode()+b'\n')
+        while True:
+            response = json.loads(self.read_line(10))
+            if response.get('id') == self.seq:
+                if 'error' in response:
+                    raise RuntimeError(response['error'])
+                return response['return']
+
+    def close(self, hard=False):
+        if self.process.poll() is None:
+            if hard:
+                self.process.kill()
+            else:
+                try:
+                    self.call('quit')
+                except (OSError, RuntimeError, TimeoutError):
+                    self.process.kill()
+            self.process.wait(timeout=10)
+        self.process.stdin.close()
+        self.process.stdout.close()
+        self.log.close()
 
 
 def read_state(qmp, context, output):
@@ -85,7 +157,16 @@ def wait_for_frame(qmp, context, output, prior_keys=None, timeout=30):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--qmp-socket', type=Path, required=True)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--qmp-socket', type=Path,
+                        help='attach to an existing VM (local Unix socket)')
+    target.add_argument('--boot-media', type=Path,
+                        help='launch a fresh, headless VM over private QMP pipes')
+    parser.add_argument('--qemu', type=Path, help='QEMU binary for --boot-media')
+    parser.add_argument('--firmware', type=Path, help='OVMF image for --boot-media')
+    parser.add_argument('--efi', type=Path, help='matching EFI image for --boot-media')
+    parser.add_argument('--local-draft', action='store_true',
+                        help='create a new 64 KiB diagnostic draft disk in --output')
     parser.add_argument('--kernel', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--keys', nargs='*', default=[], choices=sorted(KEYS))
@@ -95,22 +176,41 @@ def main():
     parser.add_argument('--expect-focus', type=int,
                         help='expected focused window after the final key')
     parser.add_argument('--expect-draft-enabled', type=int, choices=(0, 1),
-                        help='expected native draft availability (0 or 1)')
+                        help='expected native draft profile switch (0 or 1)')
     parser.add_argument('--expect-generation', type=int,
                         help='expected committed draft generation')
+    parser.add_argument('--expect-restore-code', type=int,
+                        help='expected native draft restore result')
+    parser.add_argument('--expect-commit-code', type=int,
+                        help='expected native draft commit result')
     args = parser.parse_args()
     if 'f5' in args.keys and not args.allow_draft_write:
         parser.error('F5 can write the attached VM disk; pass --allow-draft-write')
-    if not args.qmp_socket.is_socket():
-        parser.error('QMP socket must exist')
+    if args.qmp_socket:
+        if args.qemu or args.firmware or args.efi or args.local_draft:
+            parser.error('boot options require --boot-media')
+        if not args.qmp_socket.is_socket():
+            parser.error('QMP socket must exist')
+    else:
+        for name in ('boot_media', 'qemu', 'firmware', 'efi'):
+            path = getattr(args, name)
+            if path is None or not path.is_file():
+                parser.error(f'--{name.replace("_", "-")} requires a regular file')
     image = args.kernel.read_bytes()
     rw = struct.unpack_from('<IIQQQQQQ', image, 120)
     if rw[0:2] != (1, 6) or rw[5] != 0x240000:
         parser.error('unexpected native desktop kernel context contract')
+    if args.boot_media:
+        if args.efi.read_bytes().count(image) != 1:
+            parser.error('kernel must appear exactly once in matching EFI image')
+        spec = importlib.util.spec_from_file_location('media_reader', HERE/'check-native-media-format.py')
+        reader = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reader)
+        reader.verify(args.boot_media, args.efi)
     output = args.output.resolve()
     # Screenshots and memory dumps may contain user state.
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    qmp = QMP(args.qmp_socket)
+    qmp = QMP(args.qmp_socket) if args.qmp_socket else QMPStdio(args, output)
     try:
         status = qmp.call('query-status')
         assert status['running'], status
@@ -131,15 +231,22 @@ def main():
         observer.ppm_png(ppm, output/'desktop.png')
         expected = {'goal': args.expect_goal, 'focus': args.expect_focus,
                     'draftEnabled': args.expect_draft_enabled,
-                    'generation': args.expect_generation}
+                    'generation': args.expect_generation,
+                    'restoreCode': args.expect_restore_code,
+                    'commitCode': args.expect_commit_code}
         expected = {name: value for name, value in expected.items() if value is not None}
         failures = {name: {'expected': value, 'actual': state[name]}
                     for name, value in expected.items() if state[name] != value}
         report = {'schema': 'aiueos.native-desktop-qmp-debug.v1',
                   'status': 'PASS' if not failures else 'FAIL',
+                  'observerSha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                   'kernelSha256': hashlib.sha256(image).hexdigest(),
+                  'bootMediaSha256': hashlib.sha256(args.boot_media.read_bytes()).hexdigest()
+                                     if args.boot_media else None,
                   'screenshotSha256': hashlib.sha256(ppm.read_bytes()).hexdigest(),
                   'events': events, 'expected': expected, 'failures': failures,
+                  'qmpTransport': 'unix-socket' if args.qmp_socket else 'stdio',
+                  'localDraftFixture': bool(args.local_draft),
                   'vncUsed': False, 'networkUsed': False,
                   'guestStoreEmulated': False}
         (output/'debug.json').write_text(json.dumps(report, indent=2)+'\n')

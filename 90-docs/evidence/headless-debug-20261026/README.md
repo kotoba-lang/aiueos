@@ -35,3 +35,23 @@ returned `PASS_NATIVE_LOCAL_DRAFT_COLD_RESTORE` in the default local sandbox,
 without a VNC login, password entry, manual key press, or socket-bind approval.
 The receipt pins the updated observer source and the same kernel, EFI, media,
 and firmware digests.
+
+The [one-shot stdio observer](qmp-stdio-once-pass.json) launched a new VM in
+the default local sandbox with `-display none`, `-nic none`, no VNC endpoint,
+and no QMP listener. It used an output-owned mode 0600 draft fixture inside
+a mode 0700 directory, sent `2`, `a`, `b`, and returned `PASS` in 5.1 seconds.
+The guest reported `Goal local:\nab`, focus 2, three keys, four completed
+frames, draft enabled, generation 0, and restore/commit codes 0.
+The [guest screenshot](qmp-stdio-once-pass.png)
+shows the actual Itonami card and `ab`. The receipt pins observer source SHA-256
+`878bb584f2e079c95d10f147160b2245e34a97c9fcd41e295659432ca5d23fb2`,
+kernel SHA-256, boot-media SHA-256, and screenshot SHA-256.
+
+The [wrong-focus control](qmp-stdio-once-fail.json) sent `2` but expected
+focus 1. It exited 1 with `FAIL`, actual focus 2, and a captured framebuffer.
+The [missing-disk control](qmp-stdio-once-no-disk.json) expected restore code
+0 but observed `-22` and exited 1. `draftEnabled=1` alone is the opt-in
+profile switch, not proof of an attached medium.
+Sending F5 without `--allow-draft-write` exited 2 before starting QEMU or
+creating an output directory. This one-shot route is for diagnostic UI work;
+the independent cold-restart gate above remains the persistence proof.

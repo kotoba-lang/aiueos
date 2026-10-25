@@ -2,8 +2,9 @@
 
 ## Native desktop debug without a human login
 
-For routine QEMU Itonami debugging, use the local QMP observer and the
-headless save/restart gate in `90-docs/native-desktop-headless-debug.md`.
+For routine QEMU Itonami debugging, launch the one-shot private-stdio QMP
+observer or use the headless save/restart gate in
+`90-docs/native-desktop-headless-debug.md`.
 Read guest state, send test keys, and capture the framebuffer there before
 asking a person to reconnect Screen Sharing, enter a VNC password, or press
 guest keys. Keep any separately shared VNC session password protected.
