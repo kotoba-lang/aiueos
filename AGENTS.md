@@ -38,6 +38,11 @@ native tool. See `90-docs/native-desktop-media-v1.md` for exact boundaries.
 Local raw-media/QEMU desktop/input proofs do not qualify Browser/CSSOM
 parity, dapp execution, preemptive scheduling or physical hardware. The
 final compiler still requires native x86/controller/pin adoption evidence.
+The separate Apple Silicon Mac selfhost candidate builds the same font,
+31-module desktop kernel and EFI bytes with signed Kotoba/Amu Mach-O images;
+see 90-docs/native-macos-selfhost-build.md. Mac GPT/FAT16 media is still
+blocked on FS2 F/E and has no Mac QEMU boot verdict. Do not count the Linux
+native media/desktop gate as Mac build-host independence.
 
 ## CDCI migration: native only (2026-10-24)
 
