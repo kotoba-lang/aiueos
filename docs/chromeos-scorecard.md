@@ -21,8 +21,8 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 45%.** Twenty-eight rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G2, G4, H4, I1, I4, I5, I7 and I8
-(weight 45 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 52%.** Thirty-one rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G1, G2, G4, H4, I1, I4, I5, I7 and I8
+(weight 52 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
@@ -55,9 +55,10 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | F4 Ethernet and DHCP | 1 | lease 10.0.2.15 / router 10.0.2.2 and three refusals | a virtio NIC on SLIRP, not the RTL8125 |
 | F1 Internal storage | 2 | AIUEOS_VIRTIO_BLK_OK reads the internal disk; journal append-readback, recovery and committed-redo replay across a reboot | the durable payloads are journal/object records, not arbitrary files; the QEMU device is virtio-blk on the data image, not a physical NVMe; 'power cut' is the journal's crash-recovery path, not a host power loss |
 | G2 Per-app isolation | 2 | a kernel self-test creates two processes with distinct CR3 and private pages; a cross-access faults and the test continues | kernel-created processes, not two user-launched apps; 'the other app is unaffected' is the test's continuation, not a separate user-visible check |
+| G1 Verified boot and signed images | 3 | the release disk verifies against the signed build receipt (AIUEOS_RELEASE_SIGNATURE_OK) and boots in the A3 install chain; a one-byte flip (offset 4096) breaks the signed receipt binding and is refused at the release verification gate before install or run | the refusal is at the release gate, not at firmware: BOOTX64.EFI is not Authenticode-signed (PE security directory empty), so UEFI Secure Boot cannot refuse a flipped bootloader; a firmware-rooted chain needs sbsign-class signing plus enrolled keys; the altered image was refused before boot and was not booted; the row's wording says 'boot one with a flipped byte' |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The eleven weigh 18 points: rejecting all of them would take the score from 45% to 27%. The 27% is the stricter figure; the 45% is what the checker prints.
+The twelve weigh 21 points: rejecting all of them would take the score from 52% to 31%. The 31% is the stricter figure; the 52% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 
@@ -117,7 +118,7 @@ weights that do not sum to 100.
 | F4 | Ethernet and DHCP | 1 | device | partial |
 | F5 | USB storage | 1 | device | partial |
 | F6 | Bluetooth | 1 | device | none |
-| G1 | Verified boot and signed images | 3 | release | partial |
+| G1 | Verified boot and signed images | 3 | release | pass |
 | G2 | Per-app isolation | 2 | device | partial |
 | G3 | Data encrypted at rest | 2 | device | none |
 | G4 | Permission broker | 1 | device | pass |

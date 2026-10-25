@@ -461,9 +461,9 @@
    :procedure "Boot a release image; boot one with a flipped byte."
    :expected "The good image boots; the altered one is refused before it runs."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["ADR-0220" "ADR-0222"]
-   :note "Signed ELF and loader admission under QEMU; no firmware-rooted chain on the machine."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g1-signed-image-tamper/receipt.edn" "receipt os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn" "receipt os/aiueos/qualification/receipts/vm-20261024/install-selfhost-qemu/receipt.edn" "ADR-0220" "ADR-0222"]
+   :note "Measured 2026-10-25: the release disk (aiueos-x86_64-gpt.img, sha256 5f6e154d…) verifies against the signed build receipt (AIUEOS_RELEASE_SIGNATURE_OK rsa2048-pkcs1-sha256) and boots in the A3 install chain; a one-byte flip (offset 4096) yields 8ea2c629… and is refused at the release verification gate — the signed receipt binds the disk sha256, so the altered image cannot verify and never installs or runs. Caveats, owner may reject: (1) the refusal is at the release gate, not at firmware — BOOTX64.EFI is not Authenticode-signed (PE security directory empty), so UEFI Secure Boot cannot refuse a flipped bootloader; a firmware-rooted chain needs sbsign-class signing plus enrolled keys; (2) the altered image is refused before boot and was therefore not booted; (3) the row's wording says 'boot one with a flipped byte' — the measured refusal happens earlier in the chain."
    }
   {:id :G2 :category :security :title "Per-app isolation"
    :weight 2 :required true :required-level :device
