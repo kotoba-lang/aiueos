@@ -56,11 +56,15 @@ This is a native AIUEOS UI entry with no Linux guest or host text service.
 `check-native-desktop-qemu.py` boots raw media on QEMU q35 SATA using a
 temporary overlay and no NIC. It checks sealed PCI/GOP/font bytes, native
 page-table/domain state, completed frames, keyboard open/close operations,
-mouse movement/click/release and changed screenshots. It checks that the
-Itonami goal changes from keyboard input and returns to the previous text on
-Backspace, and that the original media digest is unchanged. QEMU TCG is guest
-emulation; native
-compiler execution, controller qualification and physical-hardware boot are
+mouse movement/click/release and changed screenshots. For each input event,
+the gate waits until the frame that started after that event is complete.
+It then compares QEMU's screenshot of the Itonami goal line with a direct
+readback of the sealed GOP framebuffer. The empty line, `a`, `ab`, and
+Backspace-to-`a` states must have the expected glyph ink and caret positions;
+the receipt includes scanout hashes. This prevents a RAM update and a stale
+or partly drawn screen from passing as a rendered goal. The original media
+digest must remain unchanged. QEMU TCG is guest emulation; native compiler
+execution, controller qualification and physical-hardware boot are
 distinct proof surfaces. Virtio block boot and general installer/media
 compatibility are not qualified by this diagnostic.
 

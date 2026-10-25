@@ -50,19 +50,46 @@ def main(media,efi,kernel,font,qemu,firmware,out):
    work=struct.unpack('<2048I',dump(context+0x23a000,8192,'desktop-context.bin'))
    goal_length=surface[2038]
    goal=''.join(chr(cp) for cp in surface[224:224+goal_length]) if 12<=goal_length<=63 else None
-   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79])
+   itonami_rect=next((surface[6+5*i:10+5*i] for i in range(surface[1]) if surface[5+5*i]==2),None)
+   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,itonamiRect=itonami_rect,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79])
   def wait(name,predicate,timeout=120):
    end=time.monotonic()+timeout
    while time.monotonic()<end:
     assert p.poll() is None,('guest exited',p.returncode)
     s=state();(out/'last-state.json').write_text(json.dumps(s,indent=2)+'\n')
-    if predicate(s):events.append(dict(name=name,state=s));return s
+    # The reducer changes the surface before present-frame finishes. A newer
+    # completed frame can belong to the previous key, so both counters must
+    # meet before observing this event's scanout.
+    if predicate(s) and s['framesStarted']==s['framesCompleted']:
+     events.append(dict(name=name,state=s));return s
     registers=hmp('info registers');(out/'registers-last.txt').write_text(registers)
     time.sleep(.2)
    raise AssertionError((name,'native desktop state not reached',s))
   def screenshot(name):
    assert hmp(f'screendump {name}.ppm')==''
    return ppm_png(out/(name+'.ppm'),out/(name+'.png'))
+  scanout_evidence={}
+  def goal_line(name,rect):
+   x,y,width,height=rect
+   assert width>=80 and height>=100
+   left,top=x+14,y+62 # second body line after "Goal (RAM):" and LF
+   assert 0<=left and left+24<=initial['width'] and 0<=top and top+16<=initial['height']
+   screen=screenshot(name)
+   raw=dump(base,stride*initial['height']*4,name+'-scanout.bin')
+   assert len(raw)==stride*initial['height']*4
+   ink=[]
+   for row in range(16):
+    for col in range(24):
+     offset=((top+row)*stride+left+col)*4
+     pixel=raw[offset:offset+4]
+     rgb=pixel[2::-1] if fmt==1 else pixel[:3]
+     screen_offset=((top+row)*initial['width']+left+col)*3
+     assert screen[screen_offset:screen_offset+3]==rgb,(name,'screen and scanout differ',row,col)
+     ink.append(rgb==b'\x11\x11\x11')
+   scanout_evidence[name]=dict(sha256=hashlib.sha256(raw).hexdigest(),inkPixels=sum(ink),lineOrigin=[left,top])
+   return ink
+  def column(ink,x):return sum(ink[y*24+x] for y in range(16))
+  def glyph(ink,start,end):return sum(ink[y*24+x] for y in range(16) for x in range(start,end))
   call('qmp_capabilities')
   initial=wait('native-first-frame',lambda s:s['magic']==0x31545844 and s['framesCompleted']>=1)
   assert initial['windows']==0 and initial['focus']==0 and initial['keys']==0
@@ -73,6 +100,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   assert re.search(r'\bCPL=0\b',registers) and struct.unpack('<Q',dump(context+480,8,'current-domain.bin'))[0]==73
   gop=struct.unpack('<8Q',dump(context+30416,64,'sealed-gop.bin'));base,size,width,height,stride,fmt,ready,font_base=gop
   assert ready==0x31504f47 and width==initial['width'] and height==initial['height'] and stride>=width and fmt in (0,1)
+  assert stride*height*4<=size
   pci=dump(context+20480,8224,'sealed-pci.bin');count=struct.unpack_from('<Q',pci,16)[0];assert 0<count<=128
   bars=[struct.unpack_from('<8Q',pci,32+i*64) for i in range(count)]
   assert any(r[0]<=base and base+size<=r[0]+r[1] for r in bars)
@@ -83,11 +111,20 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   key('a');unfocused=wait('itonami-goal-ignores-other-focus',lambda s:s['focus']==1 and s['lastKey']==30 and s['itonamiGoal']=='Goal (RAM):\n' and s['keys']>one['keys'])
   key('2');two=wait('keyboard-opens-itonami-card',lambda s:s['windows']==2 and s['focus']==2 and s['lastKey']==3 and s['framesCompleted']>one['framesCompleted'])
   assert two['itonamiGoal']=='Goal (RAM):\n'
+  rect=two['itonamiRect'];assert rect is not None
+  goal_empty_ink=goal_line('itonami-goal-empty',rect)
+  assert column(goal_empty_ink,0)==16 and glyph(goal_empty_ink,1,24)==0
   key('a');typed_a=wait('itonami-native-goal-a',lambda s:s['focus']==2 and s['lastKey']==30 and s['itonamiGoal']=='Goal (RAM):\na' and s['framesCompleted']>two['framesCompleted'])
-  goal_a_pixels=screenshot('itonami-goal-a')
+  assert typed_a['itonamiRect']==rect
+  goal_a_ink=goal_line('itonami-goal-a',rect)
+  assert glyph(goal_a_ink,1,8)>10 and column(goal_a_ink,8)==16 and glyph(goal_a_ink,9,24)==0
   key('b');typed_b=wait('itonami-native-goal-ab',lambda s:s['lastKey']==48 and s['itonamiGoal']=='Goal (RAM):\nab' and s['framesCompleted']>typed_a['framesCompleted'])
-  goal_ab_pixels=screenshot('itonami-goal-ab');assert goal_a_pixels!=goal_ab_pixels
+  goal_ab_ink=goal_line('itonami-goal-ab',rect)
+  assert glyph(goal_ab_ink,0,8)==glyph(goal_a_ink,0,8)
+  assert glyph(goal_ab_ink,9,16)>10 and column(goal_ab_ink,16)==16 and glyph(goal_ab_ink,17,24)==0
   key('backspace');deleted=wait('itonami-native-goal-backspace',lambda s:s['lastKey']==14 and s['itonamiGoal']=='Goal (RAM):\na' and s['framesCompleted']>typed_b['framesCompleted'])
+  goal_deleted_ink=goal_line('itonami-goal-backspace',rect)
+  assert goal_deleted_ink==goal_a_ink
   call('input-send-event',{'events':[{'type':'rel','data':{'axis':'x','value':80}},{'type':'rel','data':{'axis':'y','value':40}}]})
   moved=wait('mouse-moves-native-pointer',lambda s:s['x']>two['x'] and s['y']>two['y'] and s['packets']>two['packets'] and s['framesCompleted']>two['framesCompleted'])
   call('input-send-event',{'events':[{'type':'btn','data':{'down':True,'button':'left'}}]})
@@ -97,7 +134,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   key('esc');closed=wait('keyboard-closes-focused-card',lambda s:s['windows']==1 and s['lastKey']==1 and s['framesCompleted']>released['framesCompleted'])
   final=screenshot('desktop-after-input');assert first!=final
   assert pin(media)==before
-  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),screenshots=['desktop-initial.png','itonami-goal-a.png','itonami-goal-ab.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
+  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),goalScanout=scanout_evidence,screenshots=['desktop-initial.png','itonami-goal-empty.png','itonami-goal-a.png','itonami-goal-ab.png','itonami-goal-backspace.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
   (out/'native-desktop-qemu.json').write_text(json.dumps(report,indent=2)+'\n');print(report['status'])
  finally:
   if p.poll() is None:
