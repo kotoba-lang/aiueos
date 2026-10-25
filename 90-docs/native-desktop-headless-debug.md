@@ -16,6 +16,23 @@ shared interactive session; QMP does not require disabling it.
 
 ## One-shot Itonami UI debug (no listener or login)
 
+For the routine check, give one complete `local-draft` build directory to the
+unattended entry. It creates a new private observation directory beside that
+build, types a lowercase Goal through private QMP, asserts the guest state and
+visible text, then prints the receipt and screenshot paths. No Screen Sharing
+login, VNC password, or manual key press is involved:
+
+```sh
+python3 os/aiueos/scripts/debug-native-desktop-unattended.py "$BUILD" \
+  --goal 'a b'
+```
+
+Keep `BUILD` under `github/workspaces/` so the default observation directory
+is scratch rather than a repository file. `--output` selects another new
+private directory. The command starts a fresh isolated VM; it does not attach
+to or modify an interactive user's VM. The underlying QMP observer remains
+available for individual keys and expected-state checks below.
+
 Use the same observer with `--build-dir` to launch one fresh VM. This route
 uses private QMP standard-input/output pipes, opens no VNC or QMP listener,
 and runs with `-nic none`. Set `BUILD` to the matching native `local-draft`
