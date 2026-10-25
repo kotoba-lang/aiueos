@@ -56,7 +56,9 @@ selector accepts native static ELF64 on matching Linux x86-64/AArch64 hosts
 or a thin Mach-O64 arm64 executable on Apple Silicon. The Mach-O preflight
 allows only `/usr/lib/dyld` and `/usr/lib/libSystem.B.dylib` as dynamic
 dependencies, refuses RPATH/weak/reexported libraries, and records the
-selected format and declared libraries in the build receipt. On macOS the
+selected format and declared libraries in the build receipt. It also requires
+the arm64 Mach-O dynamic-link executable flags observed in a live Mac loader
+control. On macOS the
 selected image must also pass the system's strict code-signature verification
 and return the pinned native CLI usage response before an output directory is
 created. This rejects structurally valid images that cannot start. These

@@ -70,9 +70,11 @@ def macho_command_string(data, offset, size, minimum):
 def inspect_macos_arm64(data):
     if len(data) < 32 or data[:4] != b'\xcf\xfa\xed\xfe':
         raise ValueError('selected compiler must be a thin Mach-O64 executable')
-    _, cpu, subtype, kind, commands, size, _, _ = struct.unpack_from('<8I', data)
+    _, cpu, subtype, kind, commands, size, flags, _ = struct.unpack_from('<8I', data)
     if cpu != 0x0100000c or (subtype & 0x00ffffff) != 0 or kind != 2:
         raise ValueError('selected compiler must be a macOS arm64 executable')
+    if (flags & 0x00200085) != 0x00200085:
+        raise ValueError('macOS compiler lacks required dynamic-link executable flags')
     if not 1 <= commands <= 256 or size > 1048576 or 32 + size > len(data):
         raise ValueError('compiler has an invalid Mach-O load command table')
     offset, end = 32, 32 + size
