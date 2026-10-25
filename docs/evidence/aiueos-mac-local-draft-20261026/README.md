@@ -42,7 +42,22 @@ entry afterward. Its [integrated receipt](normal-profile-integrated.json),
 [queue admission](normal-profile-admission.json) passed. This checks that
 selecting the new profile did not break the default diagnostic desktop.
 
-To run the one-shot debugger with a fresh output directory:
+For routine debugging, run the unattended wrapper. It creates a fresh
+observation directory automatically and checks the Itonami Goal in guest
+memory and on the captured screen:
+
+```sh
+python3 os/aiueos/scripts/debug-native-desktop-unattended.py "$BUILD" \
+  --goal debug
+```
+
+No screen sharing, password, or manual guest key input is required. The
+command prints the receipt and screenshot paths. Set `BUILD` to the matching
+Mac native `local-draft` build; all outputs stay beside that build under
+`github/workspaces/`.
+
+For a custom key sequence or assertions, use the lower-level debugger with
+a fresh output directory:
 
 ```sh
 python3 os/aiueos/scripts/debug-native-desktop-qmp.py \
