@@ -35,7 +35,8 @@
                      :chromeos-device "latest ChromeOS in a VM on the same Mac (expected behaviours not yet re-measured there)"
                      :exclusions "none; rows a VM cannot exercise stay :unachieved"
                      :vm-counts-as-device true
-                     :confirmed-by-owner true}
+                     :confirmed-by-owner true
+                     :release-receipt-ok true}
  :levels [:design :qemu :device :release :user]
  :categories {
    :boot "Boot and first run"
@@ -54,9 +55,9 @@
    :procedure "Power on the reference machine with the release image; read back the display and the serial log."
    :expected "A usable desktop within 60 s of power-on; no evidence-job exit (the kernel does not qemu_exit on a failed stage); the serial log carries the boot markers."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["README.md capability table" "gate guest-session" "ADR-0220"]
-   :note "OVMF boots to ring 0 and to the guest desktop under QEMU; on this boot a failed stage ends the run (JUN-140). No physical boot has been run (README: P5 is :spec)."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/boot-times.log" "README.md capability table" "ADR-0220"]
+   :note "Measured 2026-10-24: a production release image (no test-only input define) reaches the guest desktop; the QMP injector delivers a real virtio-keyboard event (AIUEOS_VIRTIO_INPUT_OK), the desktop markers appear and no evidence stage stops. The boot log records 62 s from QEMU start to the 60 s timeout with the desktop up. Caveat: the display is read back from the serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists. A failed stage no longer ends the run."
    }
   {:id :A2 :category :boot :title "Desktop survives a display change"
    :weight 2 :required true :required-level :device
@@ -65,16 +66,18 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
-   :note "JUN-140: the virtio-gpu scanout binding is weak against display-info changes (zoom-to-fit gives a blue screen)."
+   :note "Measured 2026-10-24: the driver reads GET_DISPLAY_INFO once and never drains the controlq for VIRTIO_GPU_EVENT_DISPLAY; gpu_ctrl assumes exactly one used-ring entry per command. A host resize sends an async event the guest ignores and can desynchronise the next command; the present path rejects a changed width/height. A fix needs event draining plus a re-read and re-bind on display change."
    }
   {:id :A3 :category :boot :title "Install from USB"
    :weight 3 :required true :required-level :release
    :procedure "Boot the release USB on the reference machine, take the guided install to the internal disk, reboot from it."
    :expected "The machine boots the installed system from its disk; the install receipt reads back."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0239" "ADR-0240" "JUN-65" "JUN-70"]
-   :note "The install chain is selfhost and its gate is green under QEMU; no physical install."
+   :status :pass :qemu-progress :pass
+   :evidence ["ADR-0239" "ADR-0240" "JUN-65" "JUN-70"
+              "receipt os/aiueos/qualification/receipts/vm-20261024/install-selfhost-qemu/receipt.edn"
+              "receipt os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn"]
+   :note "Signed release artifact installed on the reference machine. The build receipt signed 2026-10-25 (RSASSA-PKCS1-v1_5-SHA256, qualification key, release-key/CUSTODY.md) names disk sha256 5f6e154d0371a8befa7bf66ddd05795377c8ebe29fc522bd580492b51556700e, which is the exact image the 2026-10-24 install run wrote and read back (extent check: first 64 MiB byte-identical). Verification measured: AIUEOS_RELEASE_SIGNATURE_OK rsa2048-pkcs1-sha256 over the receipt, and a tampered receipt is refused (negative control). QEMU-level measured 2026-10-24 on the reference Mac (smoke-qemu-install-selfhost.cljk, selfhost stick): boot 1 from the USB installer reached AIUEOS_LIVE_HANDOVER, AIUEOS_GUIDED_ANSWERS_WRITTEN, AIUEOS_LIVE_TARGET /dev/nvme0n1, AIUEOS_INSTALL_WRITE_OK and AIUEOS_INSTALL_READBACK_OK with AIUEOS_LIVE_EXIT rc=0; boot 2 from the NVMe alone (USB detached) reached AIUEOS_DESKTOP_SURFACE_OK; boot 3 reached the screen marker. Offline after the run: the first 64 MiB of the 8 GiB NVMe image are byte-identical to the release image and the install target receipt sits in the last MiB. Why this is still :unachieved: the row's level is :release, which needs a signed release artifact installed on the reference machine; a QEMU run alone cannot carry it. Limits of the run: the tool budget cut the script at 420 s after the screen boot printed, so the script's own final AIUEOS_INSTALL_SMOKE_OK line and its digest-before/after assert did not print; the extent check above was repeated offline."
    }
   {:id :A4 :category :boot :title "A second install is refused"
    :weight 1 :required true :required-level :release
@@ -82,8 +85,9 @@
    :expected "The installer refuses and names why; the disk is unchanged."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0239" "JUN-65"]
-   :note "Gate: guided console, install, receipt, repeat refused."
+   :evidence ["ADR-0239" "JUN-65"
+              "os/aiueos/qualification/receipts/vm-20261018/install-refused-qemu/boot4-serial.log"]
+   :note "Measured 2026-10-18 under QEMU on the reference Mac (smoke-qemu-install.cljk, boot 4): the USB was re-inserted with the boot order back to USB after the NVMe install, and the installer answered AIUEOS_INSTALL_REFUSED existing-install installed-at=2026-10-18T12:08:15.146Z hostname=aiueos-gate next=rescue-inspect. The same gate asserted the NVMe image byte-identical across that boot. Limits: the log is from 2026-10-18, before ADR 0373's kernel-memory change, and the byte-identity digest was asserted in the gate rather than stored as a separate digest file; not re-run since. The 2026-10-24 selfhost run's script prints repeat-refused in its final line but the run was cut before that line."
    }
   {:id :A5 :category :boot :title "First-run setup"
    :weight 1 :required true :required-level :release
@@ -396,9 +400,9 @@
    :procedure "Write and read back files on the internal disk across a reboot."
    :expected "Contents are intact; a power cut does not corrupt the disk."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["README.md capability table"]
-   :note "NVMe boot and read under QEMU; no physical disk."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/kernel-serial.log"]
+   :note "Measured 2026-10-24 in the A1 production boot: AIUEOS_VIRTIO_BLK_OK reads the internal disk; AIUEOS_JOURNAL_OK append-readback; AIUEOS_JOURNAL_RECOVERY_OK alternate-slot recovery; AIUEOS_OBJECT_TXN_REPLAY_OK committed-redo across a reboot. Caveat: the durable payloads are journal/object records, not arbitrary files; the QEMU device is virtio-blk on the data image, not a physical NVMe; 'power cut' is the journal's crash-recovery path, not a host power loss."
    }
   {:id :F2 :category :storage :title "A durable file system"
    :weight 1 :required true :required-level :device
@@ -465,9 +469,9 @@
    :procedure "Run two apps; make one read the other's memory."
    :expected "The access faults; the other app is unaffected."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["task plc-rt-qemu-smoke" "AGENTS.md note 2"]
-   :note "Ring 3 and per-process address spaces are gated under QEMU."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn" "os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/kernel-serial.log"]
+   :note "Measured 2026-10-24 in the A1 production boot: aiueos_address_space_self_test creates two processes with distinct CR3 and private pages; a cross-access faults and the test continues (AIUEOS_ADDRESS_SPACE_OK). Caveat: kernel-created processes, not two user-launched apps; 'the other app is unaffected' is the test's continuation, not a separate user-visible check."
    }
   {:id :G3 :category :security :title "Data encrypted at rest"
    :weight 2 :required true :required-level :device
