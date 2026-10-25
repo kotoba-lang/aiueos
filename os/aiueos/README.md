@@ -376,6 +376,14 @@ invented browser runtime are intentionally excluded.
 ./os/aiueos/scripts/smoke-qemu-release-image.sh
 ```
 
+The plain `smoke-qemu-uefi.sh` run arms the test-only final exception probe and
+checks its terminal `AIUEOS_EXCEPTION_OK` marker. To check a persistent desktop
+instead, set `AIUEOS_LOOP_EXIT_OK=1`; the harness then stops QEMU after
+`AIUEOS_DESKTOP_LOOP_OK` and checks that marker. Interactive guest-input runs
+leave the final probe disarmed so input can be delivered after boot. An explicit
+`AIUEOS_SMOKE_FINAL_PROBE=0` or `=1` overrides the harness default; production
+images built with `build-uefi.sh` keep the probe disarmed.
+
 ### Physical K16 qualification before installation
 
 The K16 stage-one image keeps every internal disk read-only while returning a
