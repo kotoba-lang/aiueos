@@ -453,6 +453,10 @@ static void sha256(const uint8_t *input, uint64_t size, uint8_t output[32]) {
 }
 static inline void debug_byte(uint8_t value) { __asm__ volatile("outb %0, $0xe9" : : "a"(value)); }
 static void debug_string(const char *text) { while (*text) debug_byte((uint8_t)*text++); }
+static void debug_hex32(uint32_t value) {
+  static const char digits[] = "0123456789ABCDEF";
+  for (int shift = 28; shift >= 0; shift -= 4) debug_byte((uint8_t)digits[(value >> shift) & 0xf]);
+}
 static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0x7f)); }
 static struct efi_simple_text_output *loader_console;
 static struct efi_runtime_services *loader_runtime;
@@ -582,25 +586,41 @@ static int recovery_marker_present(struct efi_file *root) {
 }
 
 static int reinstall_copy(struct efi_file *src_root, struct efi_file *dst_root,
-                          const char16 *path, struct efi_boot_services *bs) {
+                          const char16 *path, struct efi_boot_services *bs,
+                          const char *step) {
   struct efi_file *src = 0, *dst = 0;
   uint64_t size = 0;
-  if (src_root->open(src_root, &src, path, 1, 0) != EFI_SUCCESS || !src) return 0;
+  if (src_root->open(src_root, &src, path, 1, 0) != EFI_SUCCESS || !src) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL src "); debug_string(step); debug_string("\n");
+    return 0;
+  }
   size = REINSTALL_MAX_FILE;
   if (src->read(src, &size, reinstall_stage) != EFI_SUCCESS || size == 0 ||
       size > REINSTALL_MAX_FILE) { src->close(src); return 0; }
   src->close(src);
-  if (dst_root->open(dst_root, &dst, path, 2 | 0x8000000000000000ULL, 0) != EFI_SUCCESS || !dst)
+  /* Measured 2026-10-25: FatPkg returns EFI_INVALID_PARAMETER for
+     WRITE|CREATE (status 2) and accepts READ|WRITE|CREATE with ARCHIVE
+     attributes — the form used here and proven by the reinstall run. */
+  efi_status create_status = dst_root->open(dst_root, &dst, path,
+      3 | 0x8000000000000000ULL, 0x20);
+  if (create_status != EFI_SUCCESS || !dst) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL create "); debug_string(step);
+    debug_string(" status="); debug_hex32((uint32_t)create_status); debug_string("\n");
     return 0;
+  }
   uint64_t written = size;
   if (dst->write(dst, &written, reinstall_stage) != EFI_SUCCESS || written != size) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL write "); debug_string(step); debug_string("\n");
     dst->close(dst); return 0;
   }
   dst->close(dst);
   /* read back and compare */
   struct efi_file *chk = 0;
   uint64_t back = 0;
-  if (dst_root->open(dst_root, &chk, path, 1, 0) != EFI_SUCCESS || !chk) return 0;
+  if (dst_root->open(dst_root, &chk, path, 1, 0) != EFI_SUCCESS || !chk) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL reopen "); debug_string(step); debug_string("\n");
+    return 0;
+  }
   back = REINSTALL_MAX_FILE;
   int same = (chk->read(chk, &back, reinstall_stage + REINSTALL_MAX_FILE) == EFI_SUCCESS &&
               back == size);
@@ -616,6 +636,7 @@ static int reinstall_copy(struct efi_file *src_root, struct efi_file *dst_root,
 /* Restore the boot chain to the system ESP (the first non-own FAT volume
    that has an EFI\AIUEOS directory). Returns 1 when a restore ran. */
 static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_device) {
+  debug_string("ZZQQ_UNIQUE_PROBE_12345\n");
   static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
   static const char16 initramfs_path[] = u"\\EFI\\AIUEOS\\INITRD.IMG";
   static const char16 boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
@@ -628,7 +649,11 @@ static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_devic
   if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&own_fs) != EFI_SUCCESS ||
       !own_fs || own_fs->open_volume(own_fs, &own_root) != EFI_SUCCESS || !own_root)
     return 0;
-  if (!recovery_marker_present(own_root)) { own_root->close(own_root); return 0; }
+  if (!recovery_marker_present(own_root)) {
+    debug_string("AIUEOS_RECOVERY_ID_ABSENT\n");
+    own_root->close(own_root); return 0;
+  }
+  debug_string("AIUEOS_RECOVERY_ID_OK\n");
   if (bs->allocate_pool(2, 2 * REINSTALL_MAX_FILE, (void **)&reinstall_stage) != EFI_SUCCESS)
     return 0;
   if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) {
@@ -647,9 +672,10 @@ static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_devic
       root->close(root); continue;
     }
     probe->close(probe);
-    int ok = reinstall_copy(own_root, root, kernel_path, bs) &&
-             reinstall_copy(own_root, root, initramfs_path, bs) &&
-             reinstall_copy(own_root, root, boot_path, bs);
+    debug_string("AIUEOS_RECOVERY_TARGET_FOUND\n");
+    int ok = reinstall_copy(own_root, root, kernel_path, bs, "kernel") &&
+             reinstall_copy(own_root, root, initramfs_path, bs, "initrd") &&
+             reinstall_copy(own_root, root, boot_path, bs, "bootx");
     root->close(root);
     if (ok) {
       debug_string("AIUEOS_RECOVERY_REINSTALL_OK boot-chain-restored\n");
@@ -659,6 +685,7 @@ static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_devic
     }
     break;
   }
+  if (!ran) debug_string("AIUEOS_RECOVERY_NOTARGET\n");
   own_root->close(own_root);
   return ran;
 }
