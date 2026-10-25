@@ -68,4 +68,23 @@ This is a local diagnostic VM candidate, not a release or physical boot.
 
 Pinned full-compiler F1–F5 fixed-point evidence predates this expanded
 FS2 F/E runtime. Requalification on the expanded runtime, integration into
-the default AIUEOS builder, signed release and physical qualification remain open.
+the AIUEOS release builder, signed release and physical qualification remain open.
+
+## Integrated Mac default entry
+
+The default `build-kotoba-native-desktop.sh` entry now selects an
+Apple Silicon path with pinned Amu and Kotoba packager images. One invocation
+built the font, locked 31-module kernel, EFI and media, then booted that exact
+disk with the private QMP desktop gate. Its [integrated receipt and stage evidence](../docs/evidence/aiueos-mac-integrated-20261026/README.md)
+show the same Mac compiler at all three native build stages, the
+`dcbb5274…f6b60a` disk, 12 guest observations and no Linux/JVM/Node
+compiler process in the run. A wrong compiler digest refused before creating
+the output directory.
+
+The desktop gate now waits for a complete guest frame and checks dark glyph
+pixels at the native draw positions of `a` and `b`. The previous gate
+could capture the guest text state before QEMU's screen scanout had drawn
+those glyphs. The new captured image visibly shows `Goal (RAM):` and `ab`.
+This closes a local Mac build-to-VM-input diagnostic path. It does not close
+the agent loop, default release build, independent initial bootstrap or
+physical hardware gates.

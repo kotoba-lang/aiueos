@@ -41,6 +41,8 @@ final compiler still requires native x86/controller/pin adoption evidence.
 The separate Apple Silicon Mac selfhost candidate builds the same font,
 31-module desktop kernel, EFI and GPT/FAT16 media bytes with signed
 Kotoba/Amu Mach-O images; the exact Mac media passed QEMU desktop input.
+The ordinary desktop entry now runs all Mac stages and the private QMP gate
+in one source-bound invocation; the gate checks visible Goal glyph pixels.
 See 90-docs/native-macos-selfhost-build.md. This is a diagnostic candidate;
 compiler fixed-point requalification on the expanded FS2 runtime, release
 and physical qualification remain open.

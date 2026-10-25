@@ -128,3 +128,9 @@ The [Mac build and QEMU receipt](../docs/evidence/aiueos-mac-native-build-202610
 records a passing run without Screen Sharing or password input. Use the
 separate local-draft restart gate above for persistence; this normal profile
 keeps Goal in RAM.
+
+The [integrated Mac run](../docs/evidence/aiueos-mac-integrated-20261026/README.md)
+uses the ordinary desktop build entry and checks the actual QEMU scanout
+pixels for the Goal's `a` and `b` glyphs. Waiting only for the
+guest text buffer allowed an earlier screenshot of an incomplete frame;
+the current gate requires a completed frame and visible glyph ink.

@@ -21,3 +21,9 @@ separate opt-in local-draft restart gate covers isolated persistence.
 The receipts do not establish complete Itonami agent operation,
 compiler fixed-point requalification on the expanded FS2 runtime,
 release or physical hardware qualification.
+
+The earlier `receipt.json` intentionally records that Mac media was
+blocked before FS2 F/E support. The later media and QEMU receipts supersede
+that bounded failure. The [integrated default-entry run](../aiueos-mac-integrated-20261026/README.md)
+rebuilds every stage with one Mac compiler and verifies the visible Goal
+glyphs in QEMU's scanout.

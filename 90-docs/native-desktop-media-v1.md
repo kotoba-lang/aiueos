@@ -33,6 +33,13 @@ Python stages, hashes, invokes and independently reads the results. It does
 not emit any kernel, EFI, font or disk format. The original font asset is
 input data; the legacy hosted font generator is outside this closure.
 
+On Apple Silicon, the same desktop entry selects the signed Mac Amu compiler
+and Kotoba packager, then runs the native font, kernel, EFI, media and
+passwordless QEMU input gate together. The Mac route requires immutable
+compiler/packager pins and a new task workspace output. Its
+[integrated receipt](../docs/evidence/aiueos-mac-integrated-20261026/README.md)
+binds all four stages and confirms visible Itonami Goal glyph pixels.
+
 GOP metadata is sealed before any Kotoba body runs. Its framebuffer must
 fit wholly inside an allocated private PCI BAR. The image exposes complete
 4KiB framebuffer pages, validated dimensions/stride/format, an8192-byte
