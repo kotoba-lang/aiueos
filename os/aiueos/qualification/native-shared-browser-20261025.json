@@ -189,5 +189,141 @@
     "kernel": "The current native desktop consumes Browser-frame2; pure native Linux component execution does not provide a kernel reference-value runtime.",
     "apps": "Current cards are unregistered service diagnostics. Actual app commands/consent and durable restore remain open."
   },
-  "historicalEvidenceIsCurrentQualification": false
+  "historicalEvidenceIsCurrentQualification": false,
+  "nativeX86ConsumerRegression": {
+    "workflowRepository": "kotoba-lang/org-ietf-tcp",
+    "workflowHead": "e3a11cfb5e9c951ff48dbeaa9b515a962d3aa192",
+    "runId": 40153896101,
+    "conclusion": "success",
+    "consumerRevision": "4cc72740f60be87295392a21552a9ca57ca2322c",
+    "compilerRevision": "6a77cd91182b858fff435c679e8ef71f514fc2ae",
+    "immutableRefMatches": true,
+    "allSourceHashesMatch": true,
+    "graphs": [
+      {
+        "kind": "kernel",
+        "sourceModuleCount": 15,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 700696,
+          "sha256": "651de56408ef003bbb0c80f81ed2565231f38dc86efcfdc5b087470c01d0e62f"
+        },
+        "efi": {
+          "bytes": 729088,
+          "sha256": "396b15954640e64da8bfcf4d88d1ae808b133436b691260724f7e9400e81158e"
+        }
+      },
+      {
+        "kind": "dma-snapshot",
+        "sourceModuleCount": 16,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 725272,
+          "sha256": "e9eddd41384a8b7ac79147b47efe5978ebac108cc6f61274ab7ca16094ba7b6b"
+        },
+        "efi": {
+          "bytes": 753664,
+          "sha256": "97ad80fc6957f2f9958ba6ce97b46e88c60aa49515cb6550ff07058bc77ab615"
+        }
+      },
+      {
+        "kind": "dma-negative",
+        "sourceModuleCount": 16,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 712984,
+          "sha256": "1deda37889df5d06ba1b08cd237d65f625a660a6ec6ff925222026d373e773d3"
+        },
+        "efi": {
+          "bytes": 741376,
+          "sha256": "309485c83fc3f9af9ebdeab900ae5d3a7c5dfd1b9f8d3cc65254acbe9a09b763"
+        }
+      },
+      {
+        "kind": "value-context",
+        "sourceModuleCount": 9,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 336152,
+          "sha256": "60702a1cd43ae84520d711271ccf369ec7f021fc7133268a522cae96e59bde82"
+        },
+        "efi": {
+          "bytes": 364544,
+          "sha256": "53148c35f080293cc0777214f09a279276de4e0eec5206e92b53872052a8d466"
+        }
+      },
+      {
+        "kind": "value-call",
+        "sourceModuleCount": 27,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 971032,
+          "sha256": "4d3e3a9226cd33d57eb41716ed216c8b21d1aebbb5db4aea9b382295c6e67674"
+        },
+        "efi": {
+          "bytes": 999424,
+          "sha256": "a66ee9ff4e34987e8c8903dd682f3fe8e2db28f5da527015011d5e68c61f524d"
+        }
+      },
+      {
+        "kind": "user-entry",
+        "sourceModuleCount": 27,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 3170584,
+          "sha256": "2fbe1c5ea5ca6d6e8907d6ec24adc47a0bca1e1e6540ec9f27f0e6f001d10d51"
+        },
+        "efi": {
+          "bytes": 3198976,
+          "sha256": "e68c9c824287a5467c780f0bceb69144efbef30bc6aea96491f7aab3c66bc53f"
+        }
+      },
+      {
+        "kind": "native-desktop/kernel",
+        "sourceModuleCount": 30,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "image": {
+          "bytes": 3309848,
+          "sha256": "53b4aedf8e151a60b9ff8f039a0369ae2aa4a7dc338996284cfe204a41feca7c"
+        },
+        "efi": {
+          "bytes": 3862528,
+          "sha256": "0640493dd9fad872a052ccad45d66f826701e56e0e1e6ab687020f216108451c"
+        }
+      }
+    ],
+    "qemuChecks": {
+      "context": 12,
+      "typedCall": 16,
+      "userEntryModes": 8,
+      "mediaNegativeControls": 11,
+      "desktopInputEvents": 7
+    },
+    "desktopImagesMatchFinalArmEmission": true,
+    "sharedCSSOM": false,
+    "itonamiDapps": false,
+    "persistentStateRestore": false,
+    "physicalHardware": false
+  }
 }
