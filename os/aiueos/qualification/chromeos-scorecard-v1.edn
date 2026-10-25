@@ -514,8 +514,10 @@
    :procedure "Apply an update that fails to boot."
    :expected "The machine returns to the previous version by itself."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/h2-update-rollback/receipt.edn"]
+   :note "Measured 2026-10-25: a validly signed update carrying a garbage KERNEL.ELF is applied to a persistent disk (boot A: AIUEOS_UPDATE_APPLIED); the next boot's kernel admission fails and the loader's alternate-volume fallback admits the previous kernel and restores the previous boot chain over the system ESP with read-back compare (AIUEOS_UPDATE_ROLLED_BACK previous-version-restored), after which the previous version boots to the desktop. The rollback needs no new trust decision: admission still requires the identical compiled-in SHA-256. Caveats, owner may reject: the restore source is the admitting volume (the release build), not a stored pre-update snapshot; a bootable-but-misbehaving update is not covered (needs a runtime health flag); the test needed a writable disk (AIUEOS_DISK_SNAPSHOT=off, added to the harness)."
+
    }
   {:id :H3 :category :update :title "Recovery mode and recovery image"
    :weight 2 :required true :required-level :release

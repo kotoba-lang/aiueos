@@ -126,9 +126,10 @@ typedef efi_status(EFIAPI *efi_file_close)(struct efi_file *);
 typedef efi_status(EFIAPI *efi_file_read)(struct efi_file *, uint64_t *, void *);
 typedef efi_status(EFIAPI *efi_file_write)(struct efi_file *, uint64_t *, void *);
 typedef efi_status(EFIAPI *efi_file_set_position)(struct efi_file *, uint64_t);
+typedef efi_status(EFIAPI *efi_file_delete)(struct efi_file *);
 struct efi_file {
   uint64_t revision; efi_file_open open; efi_file_close close;
-  void *delete_file; efi_file_read read; efi_file_write write;
+  efi_file_delete delete_file; efi_file_read read; efi_file_write write;
   void *get_position; efi_file_set_position set_position;
   void *get_info, *set_info, *flush;
 };
@@ -598,6 +599,16 @@ static int reinstall_copy(struct efi_file *src_root, struct efi_file *dst_root,
   if (src->read(src, &size, reinstall_stage) != EFI_SUCCESS || size == 0 ||
       size > REINSTALL_MAX_FILE) { src->close(src); return 0; }
   src->close(src);
+  /* Replace semantics: an existing dest file keeps its old size on write
+     (no truncate through Open), so delete it first — measured 2026-10-25
+     when a smaller update file failed the read-back compare against the
+     larger file it replaced. */
+  {
+    struct efi_file *old = 0;
+    if (dst_root->open(dst_root, &old, path, 3, 0) == EFI_SUCCESS && old) {
+      old->delete_file(old);
+    }
+  }
   /* Measured 2026-10-25: FatPkg returns EFI_INVALID_PARAMETER for
      WRITE|CREATE (status 2) and accepts READ|WRITE|CREATE with ARCHIVE
      attributes — the form used here and proven by the reinstall run. */
@@ -1464,6 +1475,49 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     if (admitted != EFI_SUCCESS)
       return fail(105,"AIUEOS_LOADER_FAIL kernel-admission-exhausted");
     debug_string("AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1\n");
+    /* H2 rollback (JUN-140): the system chain failed admission — the boot
+       that just failed was an applied update. The alternate volume that
+       admitted the kernel carries the previous boot chain; restore it over
+       the system ESP (the H3 copy path, read-back compared) so the machine
+       returns to the previous version by itself. */
+    {
+      static const char16 rb_boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
+      efi_handle rollback_src = 0;
+      efi_handle rb_handles[16];
+      uint64_t rb_bytes = sizeof(rb_handles);
+      if (bs->locate_handle(2, &simple_fs_guid, 0, &rb_bytes, rb_handles) == EFI_SUCCESS) {
+        /* the admitting volume is the first non-own one whose kernel passed;
+           re-find it by admission order: try each non-own volume again */
+        uint64_t rb_count = rb_bytes / sizeof(efi_handle);
+        struct efi_simple_file_system *rfs = 0;
+        struct efi_file *rsrc = 0, *rdst = 0;
+        for (uint64_t r = 0; r < rb_count && !rollback_src; r++) {
+          if (rb_handles[r] == loaded->device_handle) continue;
+          if (bs->handle_protocol(rb_handles[r], &simple_fs_guid, (void **)&rfs) != EFI_SUCCESS || !rfs)
+            continue;
+          if (rfs->open_volume(rfs, &rsrc) != EFI_SUCCESS || !rsrc) continue;
+          struct efi_file *rp = 0;
+          if (rsrc->open(rsrc, &rp, kernel_path, 1, 0) == EFI_SUCCESS && rp) {
+            rp->close(rp);
+            rollback_src = rb_handles[r];
+          } else {
+            rsrc->close(rsrc);
+            rsrc = 0;
+          }
+        }
+        if (rollback_src &&
+            bs->handle_protocol(loaded->device_handle, &simple_fs_guid, (void **)&rfs) == EFI_SUCCESS &&
+            rfs && rfs->open_volume(rfs, &rdst) == EFI_SUCCESS && rdst) {
+          int restored = reinstall_copy(rsrc, rdst, kernel_path, bs, "rb-kernel") &&
+                         reinstall_copy(rsrc, rdst, initramfs_path, bs, "rb-initrd") &&
+                         reinstall_copy(rsrc, rdst, rb_boot_path, bs, "rb-bootx");
+          rdst->close(rdst);
+          if (restored) debug_string("AIUEOS_UPDATE_ROLLED_BACK previous-version-restored\n");
+          else debug_string("AIUEOS_UPDATE_ROLLBACK_FAIL copy\n");
+        }
+        if (rsrc) rsrc->close(rsrc);
+      }
+    }
   }
 #endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");

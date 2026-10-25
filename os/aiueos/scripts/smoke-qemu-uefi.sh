@@ -245,7 +245,9 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
     boot_drive="if=none,id=aiueosusb,format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
     usb_args="-device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=aiueosusb,removable=on"
   else
-    boot_drive="format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
+    # AIUEOS_DISK_SNAPSHOT=off makes writes persist (H1/H2 multi-boot tests);
+    # the default stays on so the release artifact is immutable.
+    boot_drive="format=raw,snapshot=${AIUEOS_DISK_SNAPSHOT:-on},file=$AIUEOS_DISK_IMAGE"
   fi
 # H1: an update volume attached as a second fixed drive (a FAT16 image the
 # loader's update scan looks for \\UPDATE.ID on).
