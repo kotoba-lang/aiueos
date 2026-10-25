@@ -21,8 +21,8 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 52%.** Thirty-one rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G1, G2, G4, H4, I1, I4, I5, I7 and I8
-(weight 52 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 53%.** Thirty-two rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G1, G2, G4, G5, H4, I1, I4, I5, I7 and I8
+(weight 53 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
@@ -56,9 +56,10 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | F1 Internal storage | 2 | AIUEOS_VIRTIO_BLK_OK reads the internal disk; journal append-readback, recovery and committed-redo replay across a reboot | the durable payloads are journal/object records, not arbitrary files; the QEMU device is virtio-blk on the data image, not a physical NVMe; 'power cut' is the journal's crash-recovery path, not a host power loss |
 | G2 Per-app isolation | 2 | a kernel self-test creates two processes with distinct CR3 and private pages; a cross-access faults and the test continues | kernel-created processes, not two user-launched apps; 'the other app is unaffected' is the test's continuation, not a separate user-visible check |
 | G1 Verified boot and signed images | 3 | the release disk verifies against the signed build receipt (AIUEOS_RELEASE_SIGNATURE_OK) and boots in the A3 install chain; a one-byte flip (offset 4096) breaks the signed receipt binding and is refused at the release verification gate before install or run | the refusal is at the release gate, not at firmware: BOOTX64.EFI is not Authenticode-signed (PE security directory empty), so UEFI Secure Boot cannot refuse a flipped bootloader; a firmware-rooted chain needs sbsign-class signing plus enrolled keys; the altered image was refused before boot and was not booted; the row's wording says 'boot one with a flipped byte' |
+| G5 Key lifecycle and revocation | 1 | two RSA-2048 qualification signers; the original is revoked and its object is refused ('release signer is revoked'), the rotated signer verifies, and the revoked signature verifies without the list (control) | qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list is an operational step outside the run |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The twelve weigh 21 points: rejecting all of them would take the score from 52% to 31%. The 31% is the stricter figure; the 52% is what the checker prints.
+The thirteen weigh 22 points: rejecting all of them would take the score from 53% to 31%. The 31% is the stricter figure; the 53% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 
@@ -122,7 +123,7 @@ weights that do not sum to 100.
 | G2 | Per-app isolation | 2 | device | partial |
 | G3 | Data encrypted at rest | 2 | device | none |
 | G4 | Permission broker | 1 | device | pass |
-| G5 | Key lifecycle and revocation | 1 | release | partial |
+| G5 | Key lifecycle and revocation | 1 | release | pass |
 | H1 | Signed update download and apply | 3 | release | none |
 | H2 | Rollback after a bad update | 3 | release | none |
 | H3 | Recovery mode and recovery image | 2 | release | none |

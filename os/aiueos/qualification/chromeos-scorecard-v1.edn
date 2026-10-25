@@ -495,8 +495,9 @@
    :procedure "Rotate a signing key; revoke a signer."
    :expected "Objects of a revoked signer are refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["docs/key-lifecycle.md"]
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g5-key-rotation-revocation/receipt.edn" "os/aiueos/qualification/receipts/vm-20261025/g5-key-rotation-revocation/revoked-keys.txt" "docs/key-lifecycle.md"]
+   :note "Measured 2026-10-25: two RSA-2048 qualification signers (original + rotated); the original signer is listed in revoked-keys.txt and an object signed by it is refused at the verification gate ('release signer is revoked', rc=1), the rotated signer's object verifies (AIUEOS_RELEASE_SIGNATURE_OK), and the revoked signer's signature still verifies without the list (control: the refusal is revocation, not the signature). verify-release-signature.py gained --revoked-keys (SHA-256 fingerprints of the DER public key). Caveats, owner may reject: qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list to verifiers is an operational step outside this run."
    }
   {:id :H1 :category :update :title "Signed update download and apply"
    :weight 3 :required true :required-level :release
