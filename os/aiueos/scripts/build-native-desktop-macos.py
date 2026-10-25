@@ -58,6 +58,61 @@ def verify_macho(path, expected):
     return actual
 
 
+def repository_bootstrap(amu, args):
+    supplied = (args.compiler_image, args.compiler_sha256,
+                args.packager_image, args.packager_sha256)
+    if any(value is not None for value in supplied):
+        if not all(value is not None for value in supplied):
+            raise ValueError("explicit Mac bootstrap requires four image/pin arguments")
+        return None, None
+    descriptor_path = amu / "seed/bootstrap/aarch64-macos/root.json"
+    descriptor_pin = verified_file(descriptor_path)
+    descriptor = json.loads(descriptor_path.read_text())
+    if (descriptor.get("schema") != "amu.macos-arm64-selfhost-root.v1"
+            or descriptor.get("status") != "diagnostic-candidate"
+            or descriptor.get("fullManifest") != "seed/FULL-MANIFEST"):
+        raise ValueError("unsupported repository Mac bootstrap descriptor")
+    roles = {"compiler": "seed/bootstrap/aarch64-macos/amu-full-root.macho",
+             "packager": "seed/bootstrap/aarch64-macos/kotoba-packager-root.macho"}
+    for role, relative in roles.items():
+        record = descriptor[role]
+        if record["path"] != relative:
+            raise ValueError("Mac bootstrap role path changed: " + role)
+        if verified_file(amu / relative, record["sha256"]) != {
+                key: record[key] for key in ("bytes", "sha256")}:
+            raise ValueError("Mac bootstrap role size changed: " + role)
+    source = descriptor["packagerSource"]
+    if (source["path"] != "seed/macos-fs2-runtime-packager.kotoba"
+            or verified_file(amu / source["path"], source["sha256"]) != {
+                key: source[key] for key in ("bytes", "sha256")}):
+        raise ValueError("Mac packager source changed")
+    manifest = amu / descriptor["fullManifest"]
+    verified_file(manifest)
+    names = [line for line in manifest.read_text().splitlines()
+             if line and not line.startswith("#")]
+    if len(names) != 47 or len(set(names)) != 47:
+        raise ValueError("Mac bootstrap manifest is not the complete 47-module graph")
+    source_hash = hashlib.sha256()
+    source_bytes = 0
+    for name in names:
+        part = Path(name)
+        if part.is_absolute() or ".." in part.parts or part.parts[0] != "seed":
+            raise ValueError("invalid Mac bootstrap source path")
+        module = amu / part
+        verified_file(module)
+        raw = module.read_bytes() + b"\n"
+        source_hash.update(raw)
+        source_bytes += len(raw)
+    source_pin = {"bytes": source_bytes, "sha256": source_hash.hexdigest()}
+    if source_pin != descriptor["fullSource"]:
+        raise ValueError("Mac bootstrap source graph changed")
+    args.compiler_image = amu / roles["compiler"]
+    args.compiler_sha256 = descriptor["compiler"]["sha256"]
+    args.packager_image = amu / roles["packager"]
+    args.packager_sha256 = descriptor["packager"]["sha256"]
+    return descriptor_pin, source_pin
+
+
 def main(args):
     if platform.system() != "Darwin" or platform.machine() not in ("arm64", "aarch64"):
         raise ValueError("the integrated Mac gate requires Apple Silicon")
@@ -67,6 +122,7 @@ def main(args):
     owners = args.owner_repo_root.resolve(strict=True)
     if not amu.is_dir() or not owners.is_dir():
         raise ValueError("source roots must be directories")
+    descriptor_pin, bootstrap_source_pin = repository_bootstrap(amu, args)
     compiler = args.compiler_image.resolve(strict=True)
     packager = args.packager_image.resolve(strict=True)
     qemu = args.qemu.resolve(strict=True)
@@ -110,6 +166,8 @@ def main(args):
         "state": "STAGING", "profile": args.profile,
         "host": [platform.system(), platform.machine()],
         "compiler": compiler_pin, "packager": packager_pin,
+        "amuBootstrapRoot": descriptor_pin,
+        "amuBootstrapSource": bootstrap_source_pin,
         "qemu": qemu_pin, "firmware": firmware_pin, "fontSource": font_pin,
         "ownerManifest": owner_manifest, "ownerNames": sorted(source_root_pins),
         "scripts": script_pins, "fuel": FUEL, "calls": [],
@@ -226,6 +284,11 @@ def main(args):
               or any(row["inkPixels"] <= 0 for row in observed["renderedGoalGlyphs"])):
             raise ValueError("normal desktop visible Goal verdict is incomplete")
         if (pin(compiler) != compiler_pin or pin(packager) != packager_pin
+                or (descriptor_pin is not None and
+                    repository_bootstrap(amu, argparse.Namespace(
+                        compiler_image=None, compiler_sha256=None,
+                        packager_image=None, packager_sha256=None)) !=
+                    (descriptor_pin, bootstrap_source_pin))
                 or pin(qemu) != qemu_pin or pin(firmware) != firmware_pin
                 or pin(font_source) != font_pin
                 or pin(OS / "native/source-dependencies.json") != owner_manifest
@@ -257,10 +320,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--amu-source", type=Path, required=True)
     parser.add_argument("--owner-repo-root", type=Path, required=True)
-    parser.add_argument("--compiler-image", type=Path, required=True)
-    parser.add_argument("--compiler-sha256", required=True)
-    parser.add_argument("--packager-image", type=Path, required=True)
-    parser.add_argument("--packager-sha256", required=True)
+    parser.add_argument("--compiler-image", type=Path)
+    parser.add_argument("--compiler-sha256")
+    parser.add_argument("--packager-image", type=Path)
+    parser.add_argument("--packager-sha256")
     parser.add_argument("--font", type=Path, default=OS / "fonts/aiueos-16.fnt")
     parser.add_argument("--qemu", type=Path, required=True)
     parser.add_argument("--qemu-sha256", required=True)

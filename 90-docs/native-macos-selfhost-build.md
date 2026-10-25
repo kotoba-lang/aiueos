@@ -107,3 +107,20 @@ completed frames and QEMU scanout without Screen Sharing, a VNC password or
 manual guest keys. The local-draft test disk is an output-owned 64 KiB
 fixture. D2 workspace restore, signed Cell state, a registered Itonami app,
 release and physical qualification remain open.
+
+## Repository-local Mac bootstrap candidate
+
+Draft [Amu #1586](https://github.com/kotoba-lang/amu/pull/1586) pins a
+signed Mac compiler and Kotoba packager under
+`seed/bootstrap/aarch64-macos/`. With that Amu checkout, the ordinary
+`build-kotoba-native-desktop.sh` entry can read `root.json` instead of
+requiring four compiler/packager environment variables. It checks the
+ordered 47-module source graph, packager source, image digests and Mac
+signature before producing output. Partial explicit overrides refuse.
+
+The [default-entry receipt and screenshots](../docs/evidence/aiueos-repository-mac-root-20261026/README.md)
+show a Mac native local-draft build and 11-case private-QMP QEMU gate from
+that repository-local root. The media digest matches the earlier pinned
+Mac build. This removes scratch executable inputs from the repeatable Mac
+diagnostic path. The historical initial bootstrap bridge, full native
+runtime corpus, signed release and physical-machine acceptance remain open.
