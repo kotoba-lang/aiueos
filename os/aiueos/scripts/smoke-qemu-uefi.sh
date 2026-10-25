@@ -247,6 +247,16 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
   else
     boot_drive="format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
   fi
+# H1: an update volume attached as a second fixed drive (a FAT16 image the
+# loader's update scan looks for \\UPDATE.ID on).
+update_drive_args=""
+if [ -n "${AIUEOS_UPDATE_IMAGE:-}" ]; then
+  [ -f "$AIUEOS_UPDATE_IMAGE" ] || {
+    echo "error: AIUEOS_UPDATE_IMAGE does not exist: $AIUEOS_UPDATE_IMAGE" >&2
+    exit 2
+  }
+  update_drive_args="-drive format=raw,file=$AIUEOS_UPDATE_IMAGE"
+fi
 else
   [ "$boot_transport" = disk ] || {
     echo "error: AIUEOS_BOOT_TRANSPORT=usb requires AIUEOS_DISK_IMAGE" >&2
@@ -1258,7 +1268,7 @@ PY
   timeout "$qemu_timeout" "$qemu" \
     -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-    -drive "$boot_drive" \
+    -drive "$boot_drive" $update_drive_args \
     -device isa-debugcon,iobase=0xe9,chardev=debug \
     -chardev file,id=debug,path="$log" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \

@@ -195,7 +195,7 @@ FAT16_DATA_START = FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS + FAT16_ROOT_
 FAT16_CLUSTERS = (ISO_BOOT_SECTORS - FAT16_DATA_START) // FAT16_CLUSTER_SECTORS
 
 
-def make_fat16(efi, kernel, initramfs, recovery_marker=False):
+def make_fat16(efi, kernel, initramfs, recovery_marker=False, extra_files=None):
     if not 4085 <= FAT16_CLUSTERS <= 65524:
         raise ValueError("boot image cluster count is not FAT16")
     if (FAT16_CLUSTERS + 2) * 2 > FAT16_FAT_SECTORS * SECTOR:
@@ -260,6 +260,10 @@ def make_fat16(efi, kernel, initramfs, recovery_marker=False):
     root = dirent("EFI", 0x10, efi_dir)
     if recovery_marker:
         root += dirent("RECOVERY.ID", 0x20, recovery_id_file, len(recovery_id_bytes))
+    if extra_files:
+        for extra_name, extra_bytes in extra_files.items():
+            extra_cluster = allocate(extra_bytes)
+            root += dirent(extra_name, 0x20, extra_cluster, len(extra_bytes))
     root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
     image[root_offset:root_offset + len(root)] = root
 
