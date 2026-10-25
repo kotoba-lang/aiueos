@@ -48,8 +48,9 @@ With `AIUEOS_NATIVE_DESKTOP_PROFILE=local-draft`, the same entry also builds
 the opt-in workspace kernel and checks F5 save, cold restore, refusal cases
 and visible restored Goal text without Screen Sharing or a password.
 See 90-docs/native-macos-selfhost-build.md. This is a diagnostic candidate;
-compiler fixed-point requalification on the expanded FS2 runtime, release
-and physical qualification remain open.
+the expanded FS2 Mac compiler fixed point and merged-root diagnostic VM repeat
+have local evidence, while exact-head native Linux compiler/controller gates,
+release and physical qualification remain open.
 
 ## CDCI migration: native only (2026-10-24)
 

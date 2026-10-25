@@ -14,6 +14,11 @@ AIUEOS kernel directly. That historical receipt used a Linux build host; the
 reproduces the exact-source kernel, EFI and media with a Mac native compiler
 and passes the same headless restart gate. Neither guest run depends on a
 Linux runtime.
+The [merged CCF + FS2 Mac root repeat](../docs/evidence/aiueos-mac-ccf-merged-20261026/README.md)
+rebuilt that media through the ordinary entry from the updated Amu selfhost
+root, passed all 11 restart observations, and passed an additional unattended
+Itonami Goal input and screen check. Its compiler and media identities are
+recorded separately from the earlier Mac receipt.
 
 The [interactive-fuel repeat](evidence/native-draft-fuel-20261025/README.md)
 rebuilds both profiles with the admitted `2^53-1` initial kernel budget and
