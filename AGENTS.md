@@ -6,6 +6,9 @@ See `90-docs/shared-browser-native-progress.md` and the source-bound native
 qualification record. Shared text/DOM/text-edit component execution, kernel
 desktop integration, dapps/broker consent and durable restore are separate
 gates. The diagnostic Browser-frame2 cards do not execute registered services.
+AWAI-90's opt-in local-draft transport has a source-bound native cold-boot
+receipt; see `90-docs/native-workspace-restore-progress.md`. It does not qualify
+the D2 workspace codec, signed Cell head, user target or release admission.
 The legacy hosted maturity ladder and scores retain their original scope;
 do not run KBB/NBB/JVM or count those receipts as current native acceptance.
 

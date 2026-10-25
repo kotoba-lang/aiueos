@@ -17,7 +17,7 @@ flowchart BT
   F --> G[Native desktop drawing + PS2 keyboard / mouse]
 ```
 
-Local candidates reproduce all30 modules, including the complete kernel
+Current local candidates reproduce all31 modules, including the complete kernel
 and live runtime. Nothing supplies a C/reference kernel, object file or
 hosted compiler/packager. `build-kotoba-native-desktop.sh` now invokes
 `build-native-desktop.py`; a hosted bootstrap request refuses. Select an
@@ -52,6 +52,14 @@ command. The native Itonami card accepts a bounded lowercase ASCII goal draft
 in its own 64-code-point surface slot. Typing and Backspace update RAM only;
 closing the card does not submit the goal, invoke an agent loop, or persist it.
 This is a native AIUEOS UI entry with no Linux guest or host text service.
+
+An explicit `build-native-desktop.py --profile local-draft` candidate enables
+bounded native disk commit/cold restore for that diagnostic text. The default
+profile retains RAM-only behavior. The extra locked module is the draft store;
+it uses reserved desktop-context scratch rather than DMA/snapshot pages. See
+[AWAI-90 progress](native-workspace-restore-progress.md) for the source-bound
+receipt and the still-open D2 image, shared Browser, user-target and release
+connections. This optional probe is not registered dapp/workspace execution.
 
 `check-native-desktop-qemu.py` boots raw media on QEMU q35 SATA using a
 temporary overlay and no NIC. It checks sealed PCI/GOP/font bytes, native

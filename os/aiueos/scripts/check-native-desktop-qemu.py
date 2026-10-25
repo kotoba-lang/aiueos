@@ -50,7 +50,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
    work=struct.unpack('<2048I',dump(context+0x23a000,8192,'desktop-context.bin'))
    goal_length=surface[2038]
    goal=''.join(chr(cp) for cp in surface[224:224+goal_length]) if 12<=goal_length<=63 else None
-   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79])
+   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79],draftGeneration=work[80],draftCommit=work[82],draftEnabled=work[84])
   def wait(name,predicate,timeout=120):
    end=time.monotonic()+timeout
    while time.monotonic()<end:
@@ -67,6 +67,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   initial=wait('native-first-frame',lambda s:s['magic']==0x31545844 and s['framesCompleted']>=1)
   assert initial['windows']==0 and initial['focus']==0 and initial['keys']==0
   assert initial['itonamiGoal']=='Goal (RAM):\n'
+  assert initial['draftEnabled']==0 and initial['draftGeneration']==0 and initial['draftCommit']==0
   registers=hmp('info registers');(out/'registers-native-desktop.txt').write_text(registers)
   reg=lambda name:int(re.search(rf'\b{name}\s*=([0-9a-f]+)',registers,re.I)[1],16)
   assert reg('CR3')==context+0x30000 and reg('CR0')&0x10000 and reg('EFER')&0x801==0x801
@@ -87,6 +88,8 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   goal_a_pixels=screenshot('itonami-goal-a')
   key('b');typed_b=wait('itonami-native-goal-ab',lambda s:s['lastKey']==48 and s['itonamiGoal']=='Goal (RAM):\nab' and s['framesCompleted']>typed_a['framesCompleted'])
   goal_ab_pixels=screenshot('itonami-goal-ab');assert goal_a_pixels!=goal_ab_pixels
+  key('f5');disabled=wait('normal-profile-has-no-draft-commit',lambda s:s['lastKey']==63 and s['framesCompleted']>typed_b['framesCompleted'])
+  assert disabled['draftEnabled']==0 and disabled['draftCommit']==0 and disabled['draftGeneration']==0 and disabled['itonamiGoal']=='Goal (RAM):\nab'
   key('backspace');deleted=wait('itonami-native-goal-backspace',lambda s:s['lastKey']==14 and s['itonamiGoal']=='Goal (RAM):\na' and s['framesCompleted']>typed_b['framesCompleted'])
   call('input-send-event',{'events':[{'type':'rel','data':{'axis':'x','value':80}},{'type':'rel','data':{'axis':'y','value':40}}]})
   moved=wait('mouse-moves-native-pointer',lambda s:s['x']>two['x'] and s['y']>two['y'] and s['packets']>two['packets'] and s['framesCompleted']>two['framesCompleted'])
