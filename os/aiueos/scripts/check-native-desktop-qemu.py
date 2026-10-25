@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Observe native framebuffer/input on raw VM media; no rendering verdict shim."""
-import argparse,hashlib,importlib.util,json,os,re,socket,struct,subprocess,time,zlib
+import argparse,hashlib,importlib.util,json,os,re,select,struct,subprocess,time,zlib
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 def pin(p):
@@ -20,24 +20,20 @@ def main(media,efi,kernel,font,qemu,firmware,out):
  out.mkdir(parents=True,exist_ok=False)
  args=[str(qemu),'-machine','q35,accel=tcg','-cpu','max','-m','128M','-smp','1','-drive',f'if=pflash,format=raw,readonly=on,file={firmware}',
        '-drive',f'file={media},format=raw,if=ide,snapshot=on','-boot','order=c','-nic','none','-display','none','-no-reboot',
-       '-serial','file:serial.log','-debugcon','file:debug.log','-qmp','unix:qmp.sock,server=on,wait=off','-d','int','-D','exceptions.log']
- (out/'command.json').write_text(json.dumps(args,indent=2)+'\n');log=open(out/'qemu.log','wb');p=subprocess.Popen(args,cwd=out,stdout=log,stderr=subprocess.STDOUT)
- old=Path.cwd();os.chdir(out);sock=None;stream=None;seq=0;events=[]
+       '-serial','file:serial.log','-debugcon','file:debug.log','-qmp','stdio','-d','int','-D','exceptions.log']
+ (out/'command.json').write_text(json.dumps(args,indent=2)+'\n');log=open(out/'qemu.log','wb')
+ p=subprocess.Popen(args,cwd=out,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=log,bufsize=0)
+ old=Path.cwd();os.chdir(out);stream=p.stdout;input_pipe=p.stdin;seq=0;events=[]
  try:
-  deadline=time.monotonic()+15
-  while True:
-   assert p.poll() is None,('QEMU exited',p.returncode)
-   try:
-    sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);sock.settimeout(10);sock.connect('qmp.sock');break
-   except (FileNotFoundError,ConnectionRefusedError):
-    sock.close();sock=None;assert time.monotonic()<deadline;time.sleep(.1)
-  stream=sock.makefile('rwb',buffering=0);assert 'QMP' in json.loads(stream.readline())
+  assert select.select([stream],[],[],15)[0],('QMP greeting timeout',p.poll())
+  assert 'QMP' in json.loads(stream.readline())
   def call(name,data=None):
    nonlocal seq
    seq+=1;row=dict(execute=name,id=seq)
    if data is not None:row['arguments']=data
-   stream.write(json.dumps(row).encode()+b'\n')
+   input_pipe.write(json.dumps(row).encode()+b'\n')
    while True:
+    assert select.select([stream],[],[],10)[0],('QMP response timeout',name,p.poll())
     row=json.loads(stream.readline())
     if row.get('id')==seq:
      assert 'error' not in row,row
@@ -111,8 +107,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
    except (OSError,ValueError,AssertionError):pass
    try:p.wait(timeout=5)
    except subprocess.TimeoutExpired:p.terminate();p.wait(timeout=5)
-  if stream:stream.close()
-  if sock:sock.close()
+  input_pipe.close();stream.close()
   log.close();os.chdir(old)
 if __name__=='__main__':
  p=argparse.ArgumentParser()

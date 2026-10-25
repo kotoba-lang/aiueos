@@ -113,3 +113,18 @@ VM without Screen Sharing. Sending `2` yielded `focus=2`, `keys=3`,
 The [live receipt and screenshot](evidence/headless-debug-20261026/README.md)
 record this run. The shell's restricted sandbox required local QMP socket
 access for the observer; it did not require guest credentials or user input.
+
+## Full normal desktop gate on Mac-built media
+
+`build-native-media-macos.py` emits a fresh Kotoba-built GPT/FAT16 image
+using a pinned Mac Amu compiler and packager. Run
+`check-native-desktop-qemu.py` with its `awai-native.img`, matching EFI,
+kernel, font, QEMU and OVMF firmware, and a new output directory. The gate
+uses QMP over private standard-input/output pipes, `-nic none`, a temporary
+disk overlay, and no VNC listener. It sends keys and mouse events, checks
+guest memory and framebuffer changes, and writes
+`native-desktop-qemu.json` plus screenshots.
+The [Mac build and QEMU receipt](../docs/evidence/aiueos-mac-native-build-20261026/README.md)
+records a passing run without Screen Sharing or password input. Use the
+separate local-draft restart gate above for persistence; this normal profile
+keeps Goal in RAM.

@@ -1,10 +1,10 @@
 # Mac native selfhost build progress (2026-10-26)
 
-This is a local Apple Silicon build candidate for JUN-417 and JUN-89. It is
-separate from Linux static-ELF builder qualification, QEMU boot, the Itonami
-desktop gate, release signing and physical hardware admission.
-The bounded result is recorded in
-[the evidence receipt](../docs/evidence/aiueos-mac-native-build-20261026/receipt.json).
+This is a local Apple Silicon build and QEMU desktop candidate for JUN-417
+and JUN-89. Linux static-ELF builder qualification, release signing and
+physical hardware admission are separate. The font/kernel/EFI result is in
+[the first receipt](../docs/evidence/aiueos-mac-native-build-20261026/receipt.json);
+Mac media and desktop receipts follow below.
 
 ## Native product route measured
 
@@ -42,19 +42,29 @@ Python staged and observed bytes; it did not compile or package them. Mac
 code signing and Mach-O inspection used macOS OS tools. The actual font,
 kernel and EFI were produced by Kotoba/Amu native programs.
 
-## Media remains blocked
+## Mac media and QEMU desktop candidate
 
-The unmodified Kotoba media-builder source compiled to a signed Mac program,
-but its first FS2 F/E read trapped (-5) because the Mac FS2 provider currently
-implements D/A/B/C and KSL1, not F/E. A scratch-only diagnostic replaced
-chunked reads with full-file reads: it emitted an 8 MiB GPT/FAT16 disk whose
-SHA-256 matched the Linux comparator exactly,
-dcbb5274789f345d20519aa61137166085fe511d5ad6ec7b42f02bca5ef6b60a.
-That diagnostic trapped while reading back the full 8 MiB file, and is not
-an accepted Mac media builder or native verifier. The scratch source was not
-adopted. The next product step is bounded FS2 F/E range/stat support in the
-Mac runtime, followed by the canonical media builder's positive and negative
-gates, independent format verification, and a QEMU boot of that exact media.
+The Mac Kotoba packager now supplies scoped FS2 F metadata and E range reads.
+The unmodified media-builder source compiled to a signed Mac program and
+generated the 8 MiB disk with SHA-256
+`dcbb5274789f345d20519aa61137166085fe511d5ad6ec7b42f02bca5ef6b60a`.
+It is byte-identical to the exact-source Linux comparator. The native program
+also verified and reproduced the disk; the independent GPT/FAT16 reader and
+10 named refusals passed. [The media receipt](../docs/evidence/aiueos-mac-native-build-20261026/media.json)
+pins the compiler, packager, four source parts, media program, EFI and output.
+The [Mac media builder](../os/aiueos/scripts/build-native-media-macos.py)
+rejects wrong image pins and runs without a Linux/JVM/Node compiler process.
+Format emission and verification execute in the Kotoba program.
 
-The full Mac compiler's fixed-point self-rebuild and end-to-end release or
-physical device qualification also remain open.
+The exact Mac-produced disk booted under QEMU TCG. The
+[desktop gate](../docs/evidence/aiueos-mac-native-build-20261026/desktop-qemu.json)
+used private QMP stdio and passed 12 input, redraw and device observations:
+Itonami opened, Goal `ab` appeared, F5 stayed disabled in the normal profile,
+and keyboard/mouse events and the [guest screenshot](../docs/evidence/aiueos-mac-native-build-20261026/itonami-goal-ab.png)
+matched. No VNC password, Screen Sharing or manual guest key was used.
+The Amu [FS2 F/E gate](https://github.com/kotoba-lang/amu/pull/1580) checks
+FD3 scope, size/count bounds, missing files and traversal separately.
+This is a local diagnostic VM candidate, not a release or physical boot.
+
+The full Mac compiler's F1=F2=F3 fixed-point self-rebuild, integration into
+the default AIUEOS builder, signed release and physical qualification remain open.
