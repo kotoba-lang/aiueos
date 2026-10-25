@@ -50,8 +50,10 @@ def main(media,efi,kernel,font,qemu,firmware,out):
    work=struct.unpack('<2048I',dump(context+0x23a000,8192,'desktop-context.bin'))
    goal_length=surface[2038]
    goal=''.join(chr(cp) for cp in surface[224:224+goal_length]) if 12<=goal_length<=63 else None
+   title_words=surface[64:96]
+   title=''.join(chr(cp) for cp in title_words[:title_words.index(0)]) if 0 in title_words else None
    itonami_rect=next((surface[6+5*i:10+5*i] for i in range(surface[1]) if surface[5+5*i]==2),None)
-   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,itonamiRect=itonami_rect,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79])
+   return dict(windows=surface[1],focus=surface[2],width=surface[3],height=surface[4],itonamiGoal=goal,itonamiTitle=title,itonamiRect=itonami_rect,x=work[50],y=work[51],buttons=work[67],magic=work[72],keys=work[73],packets=work[75],clicks=work[76],lastKey=work[77],framesStarted=work[78],framesCompleted=work[79])
   def wait(name,predicate,timeout=120):
    end=time.monotonic()+timeout
    while time.monotonic()<end:
@@ -129,6 +131,12 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   key('backspace');deleted=wait('itonami-native-goal-backspace',lambda s:s['lastKey']==14 and s['itonamiGoal']=='Goal (RAM):\na' and s['framesCompleted']>typed_b['framesCompleted'])
   goal_deleted_ink=goal_line('itonami-goal-backspace',rect)
   assert goal_deleted_ink==goal_a_ink
+  before_enter=(out/'itonami-goal-backspace.png').read_bytes()
+  key('ret');unavailable=wait('itonami-enter-reports-no-agent',lambda s:s['lastKey']==28 and s['keys']>deleted['keys'] and s['itonamiGoal']==deleted['itonamiGoal'] and s['itonamiTitle']=='Itonami (no agent)' and s['framesCompleted']>deleted['framesCompleted'])
+  unavailable_ink=goal_line('itonami-agent-unavailable',rect)
+  assert unavailable_ink==goal_a_ink and (out/'itonami-agent-unavailable.png').read_bytes()!=before_enter
+  key('b');resumed=wait('itonami-edit-clears-no-agent-title',lambda s:s['lastKey']==48 and s['itonamiTitle']=='Itonami' and s['itonamiGoal']=='Goal (RAM):\nab' and s['framesCompleted']>unavailable['framesCompleted'])
+  key('backspace');restored=wait('itonami-draft-preserved-after-enter',lambda s:s['lastKey']==14 and s['itonamiGoal']=='Goal (RAM):\na' and s['framesCompleted']>resumed['framesCompleted'])
   call('input-send-event',{'events':[{'type':'rel','data':{'axis':'x','value':80}},{'type':'rel','data':{'axis':'y','value':40}}]})
   moved=wait('mouse-moves-native-pointer',lambda s:s['x']>two['x'] and s['y']>two['y'] and s['packets']>two['packets'] and s['framesCompleted']>two['framesCompleted'])
   call('input-send-event',{'events':[{'type':'btn','data':{'down':True,'button':'left'}}]})
@@ -138,7 +146,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   key('esc');closed=wait('keyboard-closes-focused-card',lambda s:s['windows']==1 and s['lastKey']==1 and s['framesCompleted']>released['framesCompleted'])
   final=screenshot('desktop-after-input');assert first!=final
   assert pin(media)==before
-  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,initialFuelRemaining=initial_fuel,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),goalScanout=scanout_evidence,screenshots=['desktop-initial.png','itonami-goal-empty.png','itonami-goal-a.png','itonami-goal-ab.png','itonami-goal-backspace.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
+  report=dict(status='PASS_NATIVE_DESKTOP_INPUT_QEMU',kernel=pin(kernel),efi=pin(efi),media=before,font=pin(font),firmware=pin(firmware),observer=pin(Path(__file__)),independentMedia=format_proof,events=events,initialFuelRemaining=initial_fuel,sealedGop=dict(base=base,bytes=size,width=width,height=height,stride=stride,format=fmt,pciBarContained=True),goalScanout=scanout_evidence,screenshots=['desktop-initial.png','itonami-goal-empty.png','itonami-goal-a.png','itonami-goal-ab.png','itonami-goal-backspace.png','itonami-agent-unavailable.png','desktop-after-input.png'],guestEmulation='QEMU TCG',blockDevice='q35 SATA with temporary overlay',privatePageTables=True,currentDomain=73,nativeCDCI=False,BrowserCSSOMParity=False,dappsExecuted=False,preemptiveScheduler=False,completeKernel=False,physicalHardware=False)
   (out/'native-desktop-qemu.json').write_text(json.dumps(report,indent=2)+'\n');print(report['status'])
  finally:
   if p.poll() is None:

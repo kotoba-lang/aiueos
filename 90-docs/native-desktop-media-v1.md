@@ -51,6 +51,10 @@ The four diagnostic cards perform no network operation, inference or dapp
 command. The native Itonami card accepts a bounded lowercase ASCII goal draft
 in its own 64-code-point surface slot. Typing and Backspace update RAM only;
 closing the card does not submit the goal, invoke an agent loop, or persist it.
+Enter changes the title to `Itonami (no agent)` while preserving the draft;
+the next edit restores the normal title. A live VM received Enter (PS/2 code
+28) but left Goal and pixels unchanged before this correction. The missing
+response was in the UI reducer, not the keyboard delivery path.
 This is a native AIUEOS UI entry with no Linux guest or host text service.
 
 The desktop's native fuel counter is decremented on each loop iteration.
@@ -75,8 +79,10 @@ the receipt includes scanout hashes. This prevents a RAM update and a stale
 or partly drawn screen from passing as a rendered goal. The original media
 digest must remain unchanged. QEMU TCG is guest emulation; native compiler
 execution, controller qualification and physical-hardware boot are
-distinct proof surfaces. Virtio block boot and general installer/media
-compatibility are not qualified by this diagnostic.
+distinct proof surfaces. The Enter gate checks the received key, unchanged
+RAM draft, changed rendered title, and successful later edit; it does not
+count as a submitted goal or agent turn. Virtio block boot and general
+installer/media compatibility are not qualified by this diagnostic.
 
 Kernel/EFI/media binaries containing private owner code stay local or in
 the owner's private consumer CI. Public changes contain source and bounded
