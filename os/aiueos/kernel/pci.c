@@ -784,6 +784,62 @@ int aiueos_crash_receipt_consume(uint32_t *reason, uint32_t *sequence) {
 }
 
 
+/* ---- F5 USB storage slice 1 (JUN-140): UHCI HCD discovery ---------------
+   The guest had no USB stack (measured 2026-10-25). UHCI is the q35 ICH9
+   companion controller: the simplest HCD whose registers are 16-bit port
+   I/O. Slice 1 finds the controller (PCI class 0c/03/00, prog-if 0x00),
+   reads its I/O BAR, resets the host controller and reads the port-status
+   registers. Later slices add the frame list, control/bulk transfers
+   (BBB) and SCSI READ(10). */
+static uint16_t uhci_iobase;
+static uint16_t uhci_ports;
+int aiueos_uhci_ports(void) { return (int)uhci_ports; }
+
+static inline void out16(uint16_t port, uint16_t value) {
+  __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+static inline uint16_t in16(uint16_t port) {
+  uint16_t value;
+  __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+  return value;
+}
+
+uint32_t aiueos_uhci_scan_seen[12];
+int aiueos_uhci_probe(void) {
+  int seen = 0;
+  for (uint32_t bus = 0; bus < 8 && seen < 12; bus++) {
+    for (uint32_t dev = 0; dev < 32 && seen < 12; dev++) {
+      for (uint32_t fn = 0; fn < 8 && seen < 12; fn++) {
+        uint32_t id = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0);
+        if ((id & 0xffffu) == 0xffffu) continue;
+        aiueos_uhci_scan_seen[seen++] = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 8);
+        uint32_t classreg = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 8);
+        uint32_t classcode = classreg >> 24, subclass = (classreg >> 16) & 255u, progif = (classreg >> 8) & 255u;
+        if (classcode != 0x0c || subclass != 0x03 || progif != 0x00) continue;
+        uint32_t bar4 = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0x20);
+        if (!(bar4 & 1u)) continue; /* UHCI is I/O space */
+        uhci_iobase = (uint16_t)(bar4 & ~3u);
+        if (!uhci_iobase) continue;
+        /* legacy support register: route PIRQ + enable the keyboard/mouse legacy */
+        config_write((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0xC0, 0x8F00);
+        /* host controller reset: GRESET for 10ms-equivalent, then run/stop clear */
+        out16(uhci_iobase + 0x00, 0x0004);      /* USBCMD: host controller reset */
+        for (volatile int spin = 0; spin < 100000; spin++) { }
+        out16(uhci_iobase + 0x00, 0x0000);      /* stopped */
+        out16(uhci_iobase + 0x04, 0x003f);      /* USBSTS: clear all */
+        /* count the ports from PORTSC1/2 (offsets 0x10/0x12) */
+        uint16_t p1 = in16(uhci_iobase + 0x10);
+        uint16_t p2 = in16(uhci_iobase + 0x12);
+        uhci_ports = 0;
+        if ((p1 & 0x0080u) || (p1 != 0xffffu)) uhci_ports++;
+        if ((p2 & 0x0080u) || (p2 != 0xffffu)) uhci_ports++;
+        if (uhci_ports) return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 /* ---- F2 durable file system (JUN-140) ------------------------------------
    A bounded file table over the existing A/B journal pattern: two table
    sectors (50/51) hold 15 entries (name, state, size, first data sector,

@@ -440,6 +440,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
    :evidence ["README.md capability table"]
+   :note "Scoped 2026-10-25: the guest has no USB stack (measured: zero USB code in the kernel). The row needs a USB mass-storage read path — the bounded design is a UHCI HCD (the q35 ICH9 UHCI companion, simpler than the harness's xhci) + BBB bulk-only transport + SCSI READ(10)/INQUIRY/READ CAPACITY, then the file copy into the internal file system (F2's table) with the readback. The QEMU test attaches usb-storage on the default UHCI bus with a known file; the copy target and the readback are the internal FS. Scale: ~500 lines of new driver — a multi-wakeup kernel feature, the last internally-movable row."
    }
   {:id :F6 :category :storage :title "Bluetooth"
    :weight 1 :required true :required-level :device

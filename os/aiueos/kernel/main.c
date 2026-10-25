@@ -5462,6 +5462,26 @@ qwen_runtime_boot_complete:
       if (fs & 8) { debug_string("AIUEOS_FS_FULL_REPORTED not-corrupted\n"); serial_string("AIUEOS_FS_FULL_REPORTED not-corrupted\r\n"); }
       if (fs & 16) { debug_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\n"); serial_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\r\n"); }
     }
+    /* F5 slice 1: the UHCI host controller discovery. */
+    {
+      extern int aiueos_uhci_probe(void);
+      extern int aiueos_uhci_ports(void);
+      if (aiueos_uhci_probe()) {
+        debug_string("AIUEOS_UHCI_OK controller=uhci ports-see-serial\n");
+        serial_string("AIUEOS_UHCI_OK controller=uhci ports=");
+        serial_decimal((uint32_t)aiueos_uhci_ports());
+        serial_string("\r\n");
+      } else {
+        extern uint32_t aiueos_uhci_scan_seen[12];
+        serial_string("AIUEOS_UHCI_PROBE_NONE classes=");
+        for (int s = 0; s < 12 && aiueos_uhci_scan_seen[s]; s++) {
+          serial_hex_byte((uint8_t)(aiueos_uhci_scan_seen[s] >> 24));
+          serial_hex_byte((uint8_t)(aiueos_uhci_scan_seen[s] >> 16));
+          serial_string(" ");
+        }
+        serial_string("\r\n");
+      }
+    }
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");

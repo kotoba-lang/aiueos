@@ -224,6 +224,16 @@ case "$boot_transport" in
     ;;
 esac
 usb_args=
+# F5 USB storage (JUN-140): a UHCI host controller with a usb-storage disk
+# behind it. The guest probes the UHCI controller (class 0c/03/00); the disk
+# carries AIUEOS_USB_STORAGE as its raw contents.
+if [ -n "${AIUEOS_USB_STORAGE:-}" ]; then
+  [ -f "$AIUEOS_USB_STORAGE" ] || {
+    echo "error: AIUEOS_USB_STORAGE does not exist: $AIUEOS_USB_STORAGE" >&2
+    exit 1
+  }
+  usb_args="$usb_args -device piix3-usb-uhci,id=aiueos_uhci -drive if=none,id=aiueos_usb,file=$AIUEOS_USB_STORAGE,format=raw -device usb-storage,drive=aiueos_usb,bus=aiueos_uhci.0"
+fi
 if [ -n "${AIUEOS_CDROM_IMAGE:-}" ]; then
   [ -f "$AIUEOS_CDROM_IMAGE" ] || {
     echo "error: AIUEOS_CDROM_IMAGE does not exist: $AIUEOS_CDROM_IMAGE" >&2
