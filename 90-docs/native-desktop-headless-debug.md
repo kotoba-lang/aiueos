@@ -27,6 +27,19 @@ python3 os/aiueos/scripts/debug-native-desktop-unattended.py "$BUILD" \
   --goal 'a b'
 ```
 
+For the UI and persistence check together, run:
+
+```sh
+python3 os/aiueos/scripts/debug-native-desktop-unattended.py "$BUILD" \
+  --goal 'a b' --verify-restore
+```
+
+This creates a separate scratch disk under the private observation directory,
+checks F5 save and a cold boot in a new QEMU process, then runs the refusal
+cases. The printed `restoreReceipt` points to that gate's result. The typed
+Goal in the quick UI check and the save/restart gate's fixed `ab` fixture are
+separate observations; the former is not claimed as a committed workspace.
+
 Keep `BUILD` under `github/workspaces/` so the default observation directory
 is scratch rather than a repository file. `--output` selects another new
 private directory. The command starts a fresh isolated VM; it does not attach

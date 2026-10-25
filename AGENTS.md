@@ -4,7 +4,8 @@
 
 For routine QEMU Itonami debugging, run
 `os/aiueos/scripts/debug-native-desktop-unattended.py` on a workspace build,
-or use the headless save/restart gate in
+adding `--verify-restore` to check the isolated save and cold reboot, or use
+the headless save/restart gate in
 `90-docs/native-desktop-headless-debug.md`.
 Read guest state, send test keys, and capture the framebuffer there before
 asking a person to reconnect Screen Sharing, enter a VNC password, or press
