@@ -108,7 +108,7 @@ def main(media,efi,kernel,font,qemu,firmware,out):
   first=screenshot('desktop-initial')
   def key(qcode):call('send-key',{'keys':[{'type':'qcode','data':qcode}],'hold-time':60})
   key('1');one=wait('keyboard-opens-murakumo-card',lambda s:s['windows']==1 and s['focus']==1 and s['lastKey']==2 and s['framesCompleted']>initial['framesCompleted'])
-  key('a');unfocused=wait('itonami-goal-ignores-other-focus',lambda s:s['focus']==1 and s['lastKey']==30 and s['itonamiGoal']=='Goal (RAM):\n' and s['keys']>one['keys'])
+  key('a');unfocused=wait('itonami-goal-ignores-other-focus',lambda s:s['focus']==1 and s['lastKey']==30 and s['itonamiGoal']=='Goal (RAM):\n' and s['keys']>one['keys'] and s['framesCompleted']>one['framesCompleted'])
   key('2');two=wait('keyboard-opens-itonami-card',lambda s:s['windows']==2 and s['focus']==2 and s['lastKey']==3 and s['framesCompleted']>one['framesCompleted'])
   assert two['itonamiGoal']=='Goal (RAM):\n'
   rect=two['itonamiRect'];assert rect is not None
