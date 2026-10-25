@@ -100,3 +100,12 @@ be tested against real committed state after the dapp path works. Old packed
 window-selection values and historical two-record backup tests do not supply
 that proof. Hardware/release acceptance and the historical scorecard remain
 separate; no product completion percentage is derived from these component jobs.
+
+For the 2026-10-25 Itonami integration audit, the required canonical broker
+source `kotoba-lang/wasm-webcomponent/src/kotoba-client-runtime.js` was absent
+from the local owner checkout. The current `itonami-agent` CLI entry imports
+Node host APIs (`node:readline`, `node:crypto`) and its KBB/JS host adapters;
+that implementation is not an AIUEOS native app artifact. The next native
+integration gate is a canonical broker plus a target app/runtime artifact with
+declared operations, followed by a real agent turn, committed state, and
+restart recovery on AIUEOS. No product-local consent implementation is used.
