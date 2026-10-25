@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build and exercise the native scorecard core on macOS without hosted runtimes.
 
-This is a schema/point-ledger and receipt-shape probe. It does not verify
-artifact digests, release signatures, evidence freshness, or physical hardware.
+This is a schema/point-ledger probe with native release-receipt file hashing.
+It does not verify the RSA signature, other evidence, freshness, or hardware.
 """
 
 import argparse
@@ -33,10 +33,15 @@ NEGATIVES = {
         b'"record os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn"'),
 }
 RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict',
-                     'bad-release-signature-field', 'missing-release-verdict')
+                     'bad-release-signature-field', 'missing-release-verdict',
+                     'tampered-release-json', 'tampered-release-signature')
 A1_RECEIPT = Path('os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn')
 SIGNED_RELEASE_RECEIPT = Path(
     'os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn')
+SIGNED_RELEASE_JSON = SIGNED_RELEASE_RECEIPT.with_name(
+    'aiueos-x86_64-build-receipt.json')
+SIGNED_RELEASE_SIGNATURE = SIGNED_RELEASE_RECEIPT.with_name(
+    'aiueos-x86_64-build-receipt.sig')
 EXPECTED_LEDGER = (
     b'AIUEOS_SCORE 48\n'
     b'AIUEOS_CATEGORY boot weight=10 pass=6 gap=4\n'
@@ -174,9 +179,12 @@ def main():
         else:
             data = card_bytes
             expected_exit, expected_stdout = 1, b'AIUEOS_SCORE -1\n'
-            target = directory/(SIGNED_RELEASE_RECEIPT if name in
-                                ('bad-release-signature-field',
-                                 'missing-release-verdict') else A1_RECEIPT)
+            target = directory/(
+                SIGNED_RELEASE_RECEIPT if name in
+                ('bad-release-signature-field', 'missing-release-verdict')
+                else SIGNED_RELEASE_JSON if name == 'tampered-release-json'
+                else SIGNED_RELEASE_SIGNATURE if name == 'tampered-release-signature'
+                else A1_RECEIPT)
             if name == 'missing-receipt-file':
                 target.unlink()
             elif name == 'bad-release-signature-field':
@@ -194,6 +202,11 @@ def main():
                     raise ValueError('image-bound verdict anchor missing')
                 target.write_bytes(receipt_bytes.replace(
                     before, b'"image-unbound"', 1))
+            elif name in ('tampered-release-json', 'tampered-release-signature'):
+                artifact_bytes = target.read_bytes()
+                if not artifact_bytes:
+                    raise ValueError('release artifact empty')
+                target.write_bytes(bytes([artifact_bytes[0] ^ 1]) + artifact_bytes[1:])
             else:
                 receipt_bytes = target.read_bytes()
                 if b':green? true' not in receipt_bytes:
@@ -218,6 +231,7 @@ def main():
               'executableSha256': digest(executable),
               'observations': observations,
               'receiptFieldsVerified': True, 'evidenceArtifactsVerified': False,
+              'signedReleaseReceiptFileDigestsVerified': True,
               'releaseSignatureVerified': False,
               'evidenceFreshnessVerified': False, 'physicalHardwareQualified': False,
               'linuxJvmNodeExecuted': False}

@@ -38,19 +38,26 @@ and levels, owner confirmation, valid status/progress, receipt presence, and
 the receipt's 40-hex commit and nonempty green verdict map. A passing
 `:release` or `:user` row must cite the fixed v1 signed-release receipt; that
 receipt must have 64-hex signature and artifact digest fields plus the three
-named green verdicts. These are shape checks, not cryptographic verification.
+named green verdicts. The probe reads the referenced JSON and binary signature
+as FS2 bytes and computes their SHA-256 in Kotoba; both must match the receipt
+fields. This uses the pure SHA-256 source copied from Amu
+`seed/03-source-sha256.kotoba` at commit `392118c8` (source SHA-256
+`40be511b6879d1c4c6a4b443b796ec1ef5cbe561d5c69c6ae52b8e62a96393d1`).
+Known empty, `abc`, and multiblock vectors run in the native executable.
+Matching the signature file's digest is not RSA signature verification.
 The probe prints the recorded score of 48 and category weights, passes and
-gaps. Ten negative controls change the required weight, duplicate an ID,
+gaps. Twelve negative controls change the required weight, duplicate an ID,
 remove a receipt reference, clear owner confirmation, introduce an unknown
 category, remove a receipt file, turn one receipt verdict red, remove the
-signed-release reference, damage its signature digest field, or remove its
-named image-bound verdict. All must produce a nonzero native result. The
-positive and negative outputs are checked exactly.
+signed-release reference, damage its signature digest field, remove its
+named image-bound verdict, or alter one byte in either release file. All must
+produce a nonzero native result. The positive and negative outputs are checked
+exactly.
 
-This is a **core schema and receipt-field probe**. Receipt marker text is
-not yet checked against the underlying log/image, and the release signature
-is not cryptographically verified by this native route. Receipt commit age
-and relevant-source freshness remain unqualified. The 48 points describe
+This is a **core schema and release-file digest probe**. Other receipt marker
+text and artifact digests are not yet checked against the underlying log/image,
+and the RSA release signature is not verified by this native route. Receipt
+commit age and relevant-source freshness remain unqualified. The 48 points describe
 the existing reference VM ledger; they do not qualify physical hardware or
 a release. The runner and receipt name keep `EVIDENCE_PENDING` until those
 gates pass. The legacy checker stays historical and must not be used for
