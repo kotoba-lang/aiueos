@@ -16,6 +16,14 @@ returned exit 1 and a `FAIL` receipt with expected 1 and actual 2;
 see [qmp-negative-control.json](qmp-negative-control.json). The framebuffer
 captured in the workspace showed the Itonami card with `Goal local:`.
 
+A second attachment to the still-running :5902 VM sent `2` through QMP and
+passed all four state assertions with no VNC login or manual key press.
+Its [live receipt](qmp-live-20261026.json) records `focus=2`, `keys=3`,
+`framesStarted=frames=4`, `draftEnabled=1`, `generation=0`, and exact goal
+`Goal local:\n`. The [captured image](qmp-live-20261026.png) shows the
+Itonami card and blank local goal editor. The shell sandbox needed permission
+to connect to the local QMP socket; no guest authentication was involved.
+
 The kernel SHA-256 in all receipts is
 `38872271cda98dfdd5482ef06451f99b3dd9ac15e1bb5fd9b9aec8a8af993801`.
 This proves the local diagnostic desktop path, not a registered Itonami dapp,

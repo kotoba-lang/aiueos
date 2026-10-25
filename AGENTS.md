@@ -1,5 +1,16 @@
 # AGENTS.md — aiueos
 
+## Native desktop debug without a human login
+
+For routine QEMU Itonami debugging, use the local QMP observer and the
+headless save/restart gate in `90-docs/native-desktop-headless-debug.md`.
+Read guest state, send test keys, and capture the framebuffer there before
+asking a person to reconnect Screen Sharing, enter a VNC password, or press
+guest keys. Keep any separately shared VNC session password protected.
+QMP is a local VM control channel, so keep its Unix socket inside a private
+task workspace. A QMP screenshot and diagnostic desktop state do not qualify
+the full Itonami agent loop or physical AIUEOS hardware.
+
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native

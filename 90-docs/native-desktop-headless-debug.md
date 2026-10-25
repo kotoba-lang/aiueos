@@ -65,3 +65,11 @@ the still-running diagnostic VM sent `2`, saw `focus=2`, `keys=2`,
 The [headless debug receipts](evidence/headless-debug-20261026/README.md)
 include a failing expected-focus control. These are VM diagnostics, not
 physical-device or full Itonami-agent acceptance.
+
+An independent readback later that day attached to the same running :5902
+VM without Screen Sharing. Sending `2` yielded `focus=2`, `keys=3`,
+`framesStarted=frames=4`, `draftEnabled=1`, `generation=0`, and exact goal
+`Goal local:\n`. The QMP screenshot visibly contains the Itonami card.
+The [live receipt and screenshot](evidence/headless-debug-20261026/README.md)
+record this run. The shell's restricted sandbox required local QMP socket
+access for the observer; it did not require guest credentials or user input.
