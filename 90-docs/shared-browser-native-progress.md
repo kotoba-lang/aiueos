@@ -1,0 +1,91 @@
+# Shared Browser native integration
+
+JUN-93 proceeds from the compiler and shared components through the complete
+kernel UI graph, then Itonami dapps and state restoration. The machine-readable
+record is `os/aiueos/qualification/native-shared-browser-20261025.json`.
+
+```mermaid
+flowchart BT
+  A[Amu selfhost / root / controller] --> T[Shared text and DOM]
+  A --> K[AIUEOS kernel / protected value ABI / native media]
+  T --> E[Shared text-edit]
+  T --> C[Complete CSSOM core and layout]
+  C --> B[Browser surface and input]
+  E --> B
+  K --> U[AIUEOS shared UI event loop]
+  B --> U
+  U --> I[Itonami agent-first dapps and shared broker]
+  I --> R[Durable state and restart / crash recovery]
+```
+
+The source-pinned native component jobs in
+[Amu run40165507318](https://github.com/kotoba-lang/amu/actions/runs/40165507318)
+execute actual canonical text, DOM and text-edit modules on native ARM and x86
+Linux. Their Kotoba verdicts are zero. Text/facade has32 golden assertions,
+DOM retains nine native exports, and text-edit retains all13 reducer operations,
+including Japanese/emoji caret/selection/delete and IME composition. The x86
+project additionally executes multi-hop imports, schemas, callbacks and
+library-only keyword output, with six compiler refusal controls. These are
+bounded component proofs, not the full hosted parity suite.
+
+The first candidate's actual x86 DOM trap exposed missing keyword-table
+linkage. The corrected adapter converts canonical table positions to byte
+units and tail-jumps library tables to the final root union. The all47 compiler
+retains all18 normal adopted core modules and the adopted core image. The
+combined private-store/sleep-resume source now regenerates the full47 root,
+public compiler, controller and gate pins. The complete local ARM main-tier
+passes with 95 production-source bindings to candidate `979049caf96a`.
+The exact-head shared component jobs also pass on both native ISAs.
+Full compiler/controller/public CI now passes for the exact head of
+[Amu #1565](https://github.com/kotoba-lang/amu/pull/1565), merged at
+`33d23f4c1abb85663bedf066a9e607e9127c9776`. Independent readback binds190 source
+records, the x86 three-generation fixed point,24 cases/18 refusals, parent-death
+cleanup,3 public aliases and90 lock-boundary observations. All41 changed
+files match actual remote main. These gates do not qualify the complete
+shared CSSOM/kernel UI/dapps/restoration scope below.
+
+The bounded source-owner changes are merged in [Browser #36](https://github.com/kotoba-lang/browser/pull/36),
+[DOM #10](https://github.com/kotoba-lang/dom-gpu/pull/10) and
+[Kotoba #838](https://github.com/kotoba-lang/kotoba/pull/838).
+The merged Browser and DOM main revisions also passed their own native ARM/x86
+workflows: [Browser run40162008901](https://github.com/kotoba-lang/browser/actions/runs/40162008901)
+and [DOM run40162030605](https://github.com/kotoba-lang/dom-gpu/actions/runs/40162030605).
+Source locks and native verdicts were independently bound to those merged main bytes.
+Both owners now have a native-only workflow; the removed JVM matrix is not restored.
+The text owner is `kotoba/lib/kotoba.text`; its former repository is archived.
+Native qualification must use the canonical owner and immutable source locks.
+
+The retained complete CSSOM candidates still require typed calc AST/pair and
+collection contracts. Layout has67 regex occurrences across39 patterns with
+capture/split/replace/lookaround semantics that the group-free matcher cannot
+silently replace. Native float/document support and every original suite
+remain required. Review of the unadopted f64 compiler also found that shared
+admission allowed x86 floating SIR into integer-only AArch64/Wasm emitters;
+two emitted modules trapped in Chrome. The explicit backend refusal guard
+now passes a native whole48 unit and all22 unchanged-source float refusals
+across AArch64/Wasm, with integer42 still executing on ARM and Chrome. The
+unadopted full48 candidate still requires latest-main reconciliation and all
+compiler/runtime/floating caller-state gates; the existing refusal cases were
+retained.
+These are JUN-134/135/136/137 dependencies, not closed floors.
+
+The native full30 diagnostic desktop is separately reproduced with the current
+combined full47 ARM compiler. Its regenerated kernel/EFI/font/media bytes exactly match the images
+used by the fresh seven-operation Mac QEMU run; that byte binding does not
+claim QEMU was rerun for the new compiler root.
+Seven real keyboard/mouse/redraw milestones pass, with private CR3/domain73 and
+an unchanged snapshot medium. The receipt explicitly sets BrowserCSSOMParity
+and dappsExecuted false: it still uses Browser-frame2 and unregistered cards.
+Itonami is the agent-first workspace in this design; a card carrying its name
+does not execute its dapps or connect a Murakumo node.
+
+The protected value runtime and complete surface/input graph are both
+prerequisites of the shared UI event loop. The existing kernel's bounded ABI
+does not yet supply the complete string/document/f64 runtime needed by CSSOM.
+Keep its context, memory and floating-state contracts explicit before wiring
+actual app operations. Use the canonical client-runtime broker
+and fresh operation-specific consent. Durable restart/crash restoration must
+be tested against real committed state after the dapp path works. Old packed
+window-selection values and historical two-record backup tests do not supply
+that proof. Hardware/release acceptance and the historical scorecard remain
+separate; no product completion percentage is derived from these component jobs.

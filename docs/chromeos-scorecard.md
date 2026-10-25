@@ -2,8 +2,12 @@
 
 Fixed on 2026-10-23 for Linear JUN-90, JUN-89 and JUN-140. The data is
 [`os/aiueos/qualification/chromeos-scorecard-v1.edn`](../os/aiueos/qualification/chromeos-scorecard-v1.edn);
-`kbb --backend sci scripts/chromeos-scorecard.cljk` validates it and prints the score
-(registered as the task `:chromeos-scorecard`).
+The retired hosted checker produced the historical figures below. Its KBB/JVM
+route must not be used for current native qualification. Current source-bound
+native progress is recorded in
+[`90-docs/shared-browser-native-progress.md`](../90-docs/shared-browser-native-progress.md).
+The historical percentages are not a score for the current native OS or
+evidence that shared Browser/Itonami/restoration have been integrated.
 
 ## What 100% is
 
