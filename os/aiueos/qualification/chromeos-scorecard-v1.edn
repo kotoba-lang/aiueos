@@ -479,8 +479,9 @@
    :procedure "Read the disk from outside the OS."
    :expected "Only ciphertext is readable."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g3-data-encrypted-at-rest/receipt.edn"]
+   :note "Measured 2026-10-25: every virtio-blk sector read/write is AES-128-GCM wrapped with a sector-number nonce under a key the loader carries in boot-info v6 from \\EFI\\AIUEOS\\DATA.KEY on the system ESP (a different disk from the data volume). The boot run green-lights the whole storage stack through the cipher (AIUEOS_VIRTIO_BLK_OK, AIUEOS_JOURNAL_OK, AIUEOS_KOTOBA_JOURNAL_PLAN_OK, AIUEOS_KOTOBA_OBJECT_WRITE_OK, AIUEOS_OBJECT_STORE_OK, AIUEOS_OBJECT_TXN_OK — F1 non-regression) and an external raw read of the data disk finds zero plaintext record magics (AIUECRS1 / AIUEOBJ / AIUEJRN). Caveats, owner may reject: the filesystem format superblock (AIUEFS1, sector 0) is plaintext by host-side construction; the GCM tag is discarded (integrity stays with the journal checksums); the key entropy is the TSC (weak, qualification source) and losing DATA.KEY makes the data unreadable; the ciphertext-strength claim is a magic/payload scan, not a formal analysis."
    }
   {:id :G4 :category :security :title "Permission broker"
    :weight 1 :required true :required-level :device
