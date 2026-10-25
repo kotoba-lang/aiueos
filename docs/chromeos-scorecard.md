@@ -1,8 +1,9 @@
 # The ChromeOS-grade scorecard (v1)
 
-Fixed on 2026-10-23 for Linear JUN-90, JUN-89 and JUN-140. The data is
+Fixed on 2026-10-23 for Linear JUN-90, JUN-89 and JUN-140. Reconciled with
+the 2026-10-25 signed-release receipt. The data is
 [`os/aiueos/qualification/chromeos-scorecard-v1.edn`](../os/aiueos/qualification/chromeos-scorecard-v1.edn);
-The retired hosted checker produced the historical figures below. Its KBB/JVM
+The retired hosted checker produced the historical scores used by this ledger. Its KBB/JVM
 route must not be used for current native qualification. Current source-bound
 native progress is recorded in
 [`90-docs/shared-browser-native-progress.md`](../90-docs/shared-browser-native-progress.md).
@@ -23,14 +24,12 @@ evidence that shared Browser/Itonami/restoration have been integrated.
 
 Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user`. A QEMU run is `:qemu` unless it is a run in the reference VM with a kept receipt (below); only then does it count as `:device`.
 
-## Where AIUEOS stands (re-scored 2026-10-23)
+## Where AIUEOS stands (ledger reconciled 2026-10-25)
 
-**SCORE 45%.** Twenty-eight rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G2, G4, H4, I1, I4, I5, I7 and I8
-(weight 45 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
-reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
-`:spec`) and the release rows (A3..A5) are not covered by the VM.
+**Recorded reference-VM score: 48%.** Twenty-nine rows are `:pass`: A1, A3, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C10, D1, D2, D4, D5, D6, D7, F1, F4, G2, G4, H4, I1, I4, I5, I7 and I8
+(weight 48 of 100). A3 adds three points on the strength of the signed-release receipt and the earlier installation readback of the same disk image bytes. A4 and A5 remain `:unachieved`. The old hosted checker refuses a `:pass` without a readable green receipt, with an unconfirmed reference, or at `:release` level on a VM receipt alone. The checker has not been ported to the native Amu/Kotoba qualification route, so 48% is the recorded score in the EDN, not a freshly run native verdict. P5 real-hardware qualification remains `:spec`.
 
-**Current-tree receipt.** `os/aiueos/qualification/receipts/vm-20261024/ui-current` is one boot of the tree after the size-optimized guest-browser build (ADR-0270) and the backup stage (ADR-0271), with 33 profiles green: the 28 of the first `ui` receipt (vm-20261023) plus clock, layout, notify, passkey and backup. The rows' own receipts stay the ones they cite; this one shows the passes above still hold on the current build.
+**Historical UI receipt.** `os/aiueos/qualification/receipts/vm-20261024/ui-current` is one boot after the size-optimized guest-browser build (ADR-0270) and the backup stage (ADR-0271), with 33 profiles green: the 28 of the first `ui` receipt (vm-20261023) plus clock, layout, notify, passkey and backup. The rows' own receipts stay the ones they cite. This receipt predates the current tree and does not qualify later native Browser/Itonami integration.
 
 Beside the score, and never added to it, the **QEMU-level progress** is 61% of the required weight (it counts the rows above too) (a row whose behaviour is gated
 on QEMU counts 1, a row with some of it 1/2, none 0). By category: shell 14.5 of 15, input 9 of 12, boot 8 of 10, web 6 of 20,
@@ -61,15 +60,24 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | G2 Per-app isolation | 2 | a kernel self-test creates two processes with distinct CR3 and private pages; a cross-access faults and the test continues | kernel-created processes, not two user-launched apps; 'the other app is unaffected' is the test's continuation, not a separate user-visible check |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The eleven weigh 18 points: rejecting all of them would take the score from 45% to 27%. The 27% is the stricter figure; the 45% is what the checker prints.
+The eleven weigh 18 points: rejecting all of them would take the recorded score from 48% to 30%. This is a sensitivity check, not a second qualification score.
 
-## What is not fixed by this file -- the owner's to confirm
+## ChromeOS comparison boundary
 
-JUN-90's acceptance asks the owner to confirm the **supported machine and the exclusions**. The file records the target as the
-K16 (JUN-140 names "実機 K16") and leaves `:model`, `:firmware`, the ChromeOS device it is compared with and `:exclusions` as
-`:owner-to-confirm`; `:confirmed-by-owner` is `false`. Until it is `true`, no row can be `:pass`. The rows, weights and levels
-are fixed; the machine they run on is not. If the owner removes a row for the chosen machine (a camera, Bluetooth, a touchpad),
-the denominator is re-derived and the change is dated here.
+The required rows compare user-visible outcomes. The Google/Chromium sources behind the boot, update, recovery and accessibility rows are [verified boot](https://www.chromium.org/chromium-os/chromiumos-design-docs/security-overview/), [automatic updates with a fallback partition](https://www.chromium.org/chromium-os/chromiumos-design-docs/filesystem-autoupdate/), [user recovery](https://support.google.com/chromebook/answer/1080595?hl=en), and [accessibility features](https://support.google.com/chromebook/answer/177893?hl=en). These sources define comparison criteria; they are not AIUEOS test evidence. ChromeOS behaviour has not been measured in the owner's same-host comparison VM.
+
+| Axis | Current AIUEOS evidence | Remaining product gate |
+|---|---|---|
+| Kotoba/Amu selfhost | Native compiler and diagnostic media receipts are recorded separately in `90-docs/native-selfhost-integration.md`. | Whole source and runtime closure, including shared Browser/CSSOM and Itonami, needs native self-rebuild and runtime receipts. |
+| Boot and install | QEMU/OVMF desktop and the signed-image identity for A3 are recorded. | A4/A5 release runs and physical device boot/install remain open. |
+| Security and update | Selected isolation and permission rows have VM receipts. | Hardware-rooted verified boot, encrypted user data, signed update, automatic rollback and recovery remain open. |
+| Daily use | Some shell, input and accessibility rows have VM receipts. | Shared Browser, real Itonami workflow, screen reader, hardware/power and long-running use remain open. |
+
+The 48% figure applies only to the owner-selected **QEMU/OVMF VM reference** and this scorecard's accepted receipts. It is not a ChromeOS feature-completeness claim, a native selfhost percentage, or a physical-hardware readiness figure.
+
+## Reference scope and open comparison
+
+The owner selected the QEMU/OVMF VM on the Mac as this scorecard's reference on 2026-10-23; the current EDN records `:confirmed-by-owner true` and no exclusions. The K16 remains a separate physical-machine qualification target. If the owner changes the supported machine or excludes a row, rederive the denominator and date the change here.
 
 ## How a row changes
 
