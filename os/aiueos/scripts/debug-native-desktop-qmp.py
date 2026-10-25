@@ -92,6 +92,12 @@ def main():
     parser.add_argument('--allow-draft-write', action='store_true',
                         help='required before sending F5 to a live VM')
     parser.add_argument('--expect-goal', help='exact goal text after the final key')
+    parser.add_argument('--expect-focus', type=int,
+                        help='expected focused window after the final key')
+    parser.add_argument('--expect-draft-enabled', type=int, choices=(0, 1),
+                        help='expected native draft availability (0 or 1)')
+    parser.add_argument('--expect-generation', type=int,
+                        help='expected committed draft generation')
     args = parser.parse_args()
     if 'f5' in args.keys and not args.allow_draft_write:
         parser.error('F5 can write the attached VM disk; pass --allow-draft-write')
@@ -116,21 +122,29 @@ def main():
             state = wait_for_frame(qmp, rw[3], output, prior_keys=previous['keys'])
             events.append({'action': key, 'state': state})
             time.sleep(.12)
-        if args.expect_goal is not None:
-            assert state['goal'] == args.expect_goal, (state['goal'], args.expect_goal)
         ppm = output/'desktop.ppm'
         qmp.call('screendump', {'filename': str(ppm)})
         spec = importlib.util.spec_from_file_location('desktop_observer', HERE/'check-native-desktop-qemu.py')
         observer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(observer)
         observer.ppm_png(ppm, output/'desktop.png')
+        expected = {'goal': args.expect_goal, 'focus': args.expect_focus,
+                    'draftEnabled': args.expect_draft_enabled,
+                    'generation': args.expect_generation}
+        expected = {name: value for name, value in expected.items() if value is not None}
+        failures = {name: {'expected': value, 'actual': state[name]}
+                    for name, value in expected.items() if state[name] != value}
         report = {'schema': 'aiueos.native-desktop-qmp-debug.v1',
+                  'status': 'PASS' if not failures else 'FAIL',
                   'kernelSha256': hashlib.sha256(image).hexdigest(),
                   'screenshotSha256': hashlib.sha256(ppm.read_bytes()).hexdigest(),
-                  'events': events, 'vncUsed': False, 'networkUsed': False,
+                  'events': events, 'expected': expected, 'failures': failures,
+                  'vncUsed': False, 'networkUsed': False,
                   'guestStoreEmulated': False}
         (output/'debug.json').write_text(json.dumps(report, indent=2)+'\n')
         print(json.dumps(state, ensure_ascii=False))
+        if failures:
+            parser.exit(1, f'guest state assertion failed; see {output / "debug.json"}\n')
     finally:
         qmp.close()
 
