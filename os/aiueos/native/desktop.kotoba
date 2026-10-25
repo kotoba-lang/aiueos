@@ -189,6 +189,7 @@
       (put-word s 31 15)
       (seed-app-labels s 1)
       (seed-app-bodies s 1)
+      (put-word s 2038 (app-catalog/app-body-length 2))
       (put-word s 2046 41)
       (put-word s 2047 40)))
 
@@ -304,7 +305,35 @@
             (put-word s (+ slot 3) window-width)
             (put-word s (+ slot 4) window-height))))))
 
+(defn goal-codepoint [code]
+  ;; PS/2 set-1 make codes. The native goal draft accepts lowercase ASCII and
+  ;; spaces only; no host text service, model call, or implicit network access.
+  (case code
+    16 113 17 119 18 101 19 114 20 116 21 121 22 117 23 105 24 111 25 112
+    30 97 31 115 32 100 33 102 34 103 35 104 36 106 37 107 38 108
+    44 122 45 120 46 99 47 118 48 98 49 110 50 109 57 32 0))
+
+(defn edit-itonami-goal [s code]
+  (let [length (word s 2038)
+        slot (+ 224 length)
+        cp (goal-codepoint code)]
+    (if (= code 14)
+      (if (> length 12)
+        (do (put-word s (- slot 1) 0)
+            (put-word s 2038 (- length 1))
+            1)
+        0)
+      (if (and (> cp 0) (< length 63))
+        (do (put-word s slot cp)
+            (put-word s (+ slot 1) 0)
+            (put-word s 2038 (+ length 1))
+            1)
+        0))))
+
 (defn reduce-key [s code ctx]
+  (if (and (= (word s 2) 2)
+           (or (= code 14) (> (goal-codepoint code) 0)))
+    (edit-itonami-goal s code)
   (if (= code 1)
     (close-app s (word s 2))
     (if (= code 15)
@@ -312,7 +341,7 @@
       (if (= code 2) (launch-app s 1 (word ctx 40) (word ctx 41))
         (if (= code 3) (launch-app s 2 (word ctx 40) (word ctx 41))
           (if (= code 4) (launch-app s 3 (word ctx 40) (word ctx 41))
-            (if (= code 5) (launch-app s 4 (word ctx 40) (word ctx 41)) 0)))))))
+            (if (= code 5) (launch-app s 4 (word ctx 40) (word ctx 41)) 0))))))))
 
 (defn clamp-coordinate [value extent]
   (if (< value 0) 0
