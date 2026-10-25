@@ -281,11 +281,24 @@ static int process_create_kotoba_elf(const uint8_t app_id[16],uint16_t domain,ui
     if (address_space>=0) aiueos_address_space_reclaim((unsigned)address_space);
     return -1;
   }
-  uint64_t runtime_handle=aiueos_capability_ensure_runtime_handle(domain);
-  if (!runtime_handle || !*result) {
+  if (!*result) {
     aiueos_address_space_reclaim((unsigned)address_space); return -1;
   }
-  (*result)[10]=runtime_handle;
+  uint64_t cap_bitmap=(*result)[2];
+  if (cap_bitmap==0) {
+    /* A source with no capability calls must not receive a runtime handle. */
+    if ((*result)[10]!=0) {
+      aiueos_address_space_reclaim((unsigned)address_space); return -1;
+    }
+  } else if (cap_bitmap==60) {
+    uint64_t runtime_handle=aiueos_capability_ensure_runtime_handle(domain);
+    if (!runtime_handle) {
+      aiueos_address_space_reclaim((unsigned)address_space); return -1;
+    }
+    (*result)[10]=runtime_handle;
+  } else {
+    aiueos_address_space_reclaim((unsigned)address_space); return -1;
+  }
   return process_create_in_space((void (*)(uint64_t))(uintptr_t)entry,domain,address_space);
 }
 #ifdef AIUEOS_PLC_RT_SMOKE

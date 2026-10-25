@@ -142,11 +142,10 @@ kotoba_digest_equal_object=${AIUEOS_KOTOBA_DIGEST_EQUAL_OBJECT:-"$aiueos/kotoba/
 kotoba_catalog_valid_object=${AIUEOS_KOTOBA_CATALOG_VALID_OBJECT:-"$aiueos/kotoba/app-catalog-valid.o"}
 kotoba_app_lookup_object=${AIUEOS_KOTOBA_APP_LOOKUP_OBJECT:-"$aiueos/kotoba/app-lookup-plan.o"}
 kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kotoba/user-elf-valid.o"}
-# The rebuild (23dd642) replaced this object's bytes: the digest tracks the
-# committed os/aiueos/kotoba/user-elf-valid.o (ab027deff...), not the
-# pre-rebuild d79cc375... the PLC branch used to pin here. The PLC-RT-SMOKE
-# override below still swaps in plc-user-elf-valid.o with its own digest.
-kotoba_user_elf_valid_sha=bcfd72c3914667fbf1bfee027d1bcc03129fd6f5281736b2e287c9e36afa2e6c
+# This native Amu object admits the capability-free scalar user profile and
+# retains the legacy 2..5-capability image. Keep the object and digest paired;
+# the PLC-RT-SMOKE override below uses its separate validator and digest.
+kotoba_user_elf_valid_sha=205d6ed2d5e9742e40e6a81f67685f92270fbeb9a7db615515992fc6af62bfe2
 kotoba_user_context_object=${AIUEOS_KOTOBA_USER_CONTEXT_OBJECT:-"$aiueos/kotoba/user-context-build.o"}
 # The kernel-selector twin of the object above, for tasks `iret` enters at ring
 # 0. Same 160-byte frame in the same bounded 4 KiB stack; CS 0x08 / SS 0x10 and
