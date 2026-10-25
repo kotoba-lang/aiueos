@@ -1,11 +1,12 @@
 # Native desktop debugging without screen sharing
 
-The native AIUEOS diagnostic desktop can be debugged through QEMU's local
-QMP Unix socket. VNC, a VNC password, and a person pressing guest keys are
-unnecessary. Keep QMP on a local Unix socket and `-nic none`; the QMP socket
-controls the VM and must stay in a mode 0700 task directory. The restart gate
-creates private session directories, and the observer creates a private output
-directory for guest memory dumps and screenshots.
+The native AIUEOS diagnostic desktop can be debugged through QEMU QMP.
+VNC, a VNC password, and a person pressing guest keys are unnecessary.
+The headless restart gate uses QMP over private standard-input/output pipes,
+with no listener, and `-nic none`. It creates mode 0700 session directories
+for guest memory dumps and screenshots. An already running interactive VM can
+instead be inspected through its local QMP Unix socket; keep that socket in a
+mode 0700 task directory because it controls the VM.
 
 For routine agent debugging, use the headless QEMU gates and this QMP observer
 first. They read the guest's completed frame, goal, focus, draft generation,
@@ -20,9 +21,11 @@ with a newly built `local-draft` media, matching EFI and kernel, QEMU and
 OVMF firmware, and a fresh output directory. The complete command and
 artifact roles are in [AWAI-90 progress](native-workspace-restore-progress.md#reproduce-the-component-gates).
 The observer provisions its own 64 KiB scratch draft disk, sends PS/2 keys
-through QMP, checks native guest state and framebuffer, commits with F5,
-boots a new QEMU process, and verifies the restored bytes and rejection
-cases. It never needs a VNC listener.
+through its private QMP pipe, checks native guest state and framebuffer,
+commits with F5, boots a new QEMU process, and verifies the restored bytes
+and rejection cases. It never opens a VNC or QMP listener. This path ran in
+the default local sandbox on 2026-10-26 without a socket-bind exception or
+human input; see the [stdio gate receipt](evidence/headless-debug-20261026/qmp-stdio-gate.json).
 
 ## Inspect a running VM
 

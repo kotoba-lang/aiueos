@@ -28,3 +28,10 @@ The kernel SHA-256 in all receipts is
 `38872271cda98dfdd5482ef06451f99b3dd9ac15e1bb5fd9b9aec8a8af993801`.
 This proves the local diagnostic desktop path, not a registered Itonami dapp,
 full agent loop, physical hardware, or Linux-free build producer.
+
+The [QMP stdio gate](qmp-stdio-gate.json) reran the same 11 guest cases with
+the headless controller using private pipes instead of a Unix listener. It
+returned `PASS_NATIVE_LOCAL_DRAFT_COLD_RESTORE` in the default local sandbox,
+without a VNC login, password entry, manual key press, or socket-bind approval.
+The receipt pins the updated observer source and the same kernel, EFI, media,
+and firmware digests.

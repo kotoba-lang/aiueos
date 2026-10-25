@@ -8,7 +8,9 @@ Read guest state, send test keys, and capture the framebuffer there before
 asking a person to reconnect Screen Sharing, enter a VNC password, or press
 guest keys. Keep any separately shared VNC session password protected.
 QMP is a local VM control channel, so keep its Unix socket inside a private
-task workspace. A QMP screenshot and diagnostic desktop state do not qualify
+task workspace when attaching to a running VM. The headless restart gate uses
+private QMP standard-input/output pipes and needs no socket listener. A QMP
+screenshot and diagnostic desktop state do not qualify
 the full Itonami agent loop or physical AIUEOS hardware.
 
 ## Shared Browser native progress (JUN-93)

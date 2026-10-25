@@ -8,9 +8,8 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 from pathlib import Path
-import socket
+import select
 import struct
 import subprocess
 import time
@@ -27,8 +26,9 @@ def pin(path):
 class Guest:
     def __init__(self, args, directory, disk):
         self.directory = directory
-        # QMP controls the VM and its memory. Never expose the socket through
-        # a world-searchable test directory, regardless of the caller's umask.
+        # QMP controls the VM and its memory. Keep its pipe private to this
+        # process; a Unix listener also makes sandboxed local runs require
+        # approval merely to bind a socket.
         directory.mkdir(mode=0o700)
         rw = struct.unpack_from('<IIQQQQQQ', args.kernel.read_bytes(), 120)
         assert rw[0:2]==(1, 6) and rw[5]==0x240000, 'unexpected kernel context contract'
@@ -40,50 +40,40 @@ class Guest:
                    '-boot', 'order=c', '-nic', 'none', '-display', 'none',
                    '-no-reboot', '-serial', 'file:serial.log',
                    '-debugcon', 'file:debug.log',
-                   '-qmp', 'unix:qmp.sock,server=on,wait=off']
+                   '-qmp', 'stdio']
         if disk:
             command += ['-device', 'isa-ide,id=draft-controller', '-drive',
                         f'file={disk},format=raw,if=none,id=draft,cache=directsync',
                         '-device', 'ide-hd,drive=draft,bus=draft-controller.0,unit=1,serial=AWAI90DRAFT000001']
         (directory/'command.json').write_text(json.dumps(command, indent=2)+'\n')
         self.log = (directory/'qemu.log').open('wb')
-        self.process = subprocess.Popen(command, cwd=directory, stdout=self.log, stderr=subprocess.STDOUT)
-        self.sock = None
-        self.stream = None
+        self.process = subprocess.Popen(command, cwd=directory,
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=self.log, bufsize=0)
         self.seq = 0
         try:
-            end = time.monotonic()+15
-            while True:
-                assert self.process.poll() is None, (directory, 'QEMU exit', self.process.returncode)
-                try:
-                    self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                    self.sock.settimeout(10)
-                    previous = Path.cwd()
-                    try:
-                        os.chdir(directory)
-                        self.sock.connect('qmp.sock')
-                    finally:
-                        os.chdir(previous)
-                    break
-                except (FileNotFoundError, ConnectionRefusedError):
-                    self.sock.close()
-                    assert time.monotonic()<end, 'QMP unavailable'
-                    time.sleep(.1)
-            self.stream = self.sock.makefile('rwb', buffering=0)
-            assert 'QMP' in json.loads(self.stream.readline())
+            greeting = self.read_qmp_line(15)
+            assert greeting and 'QMP' in json.loads(greeting), (directory, 'QMP unavailable')
             self.call('qmp_capabilities')
         except BaseException:
             self.close(hard=True)
             raise
+
+    def read_qmp_line(self, timeout):
+        if not select.select([self.process.stdout], [], [], timeout)[0]:
+            raise TimeoutError((self.directory, 'QMP response timed out'))
+        response = self.process.stdout.readline()
+        assert response, (self.directory, 'QMP closed', self.process.poll())
+        return response
 
     def call(self, name, data=None):
         self.seq += 1
         row = dict(execute=name, id=self.seq)
         if data is not None:
             row['arguments'] = data
-        self.stream.write(json.dumps(row).encode()+b'\n')
+        self.process.stdin.write(json.dumps(row).encode()+b'\n')
         while True:
-            row = json.loads(self.stream.readline())
+            row = json.loads(self.read_qmp_line(10))
             if row.get('id') == self.seq:
                 assert 'error' not in row, row
                 return row['return']
@@ -166,10 +156,8 @@ class Guest:
             else:
                 self.call('quit')
             self.process.wait(timeout=10)
-        if self.stream:
-            self.stream.close()
-        if self.sock:
-            self.sock.close()
+        self.process.stdin.close()
+        self.process.stdout.close()
         self.log.close()
 
 
