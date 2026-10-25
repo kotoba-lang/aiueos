@@ -6,7 +6,7 @@ HERE=Path(__file__).resolve().parent
 def main(amu,out):
  out.mkdir(parents=True,exist_ok=False)
  spec=importlib.util.spec_from_file_location('native_kernel',HERE/'build-native-kernel.py');driver=importlib.util.module_from_spec(spec);spec.loader.exec_module(driver)
- compiler,digest=driver.select_native_compiler(amu);env=dict(os.environ,AIUEOS_AMU_SELFHOST_BIN=str(compiler),AIUEOS_AMU_SELFHOST_SHA256=digest)
+ compiler,digest,_=driver.select_native_compiler(amu);env=dict(os.environ,AIUEOS_AMU_SELFHOST_BIN=str(compiler),AIUEOS_AMU_SELFHOST_SHA256=digest)
  calls=[]
  def run(name,args,custom=env):
   r=subprocess.run([sys.executable,*map(str,args)],env=custom,capture_output=True,timeout=10800)

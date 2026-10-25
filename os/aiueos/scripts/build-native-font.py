@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Stage the licensed font and observe native copying/padding; emit no font."""
-import argparse,hashlib,json,platform,shutil,struct,subprocess
+import argparse,hashlib,importlib.util,json,shutil,struct,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 def pin(p):
  b=p.read_bytes();return dict(bytes=len(b),sha256=hashlib.sha256(b).hexdigest())
 def main(amu,compiler,expected,font,out):
- assert platform.system()=='Linux' and platform.machine() in ('aarch64','arm64','x86_64')
- assert pin(compiler)['sha256']==expected
+ if pin(compiler)['sha256']!=expected:raise ValueError('compiler pin drift')
+ spec=importlib.util.spec_from_file_location('native_kernel',HERE/'build-native-kernel.py');driver=importlib.util.module_from_spec(spec);spec.loader.exec_module(driver)
+ target,suffix=driver.native_tool_spec(driver.inspect_current_host_image(compiler.read_bytes()))
  out.mkdir(parents=True,exist_ok=False);original=pin(font);shutil.copy2(font,out/'original.fnt')
  parts=[amu/'seed/00-ns-static.kotoba',amu/'seed/01-mem.kotoba',amu/'seed/02-io.kotoba',HERE.parent/'native/font-pad.kotoba']
  source=out/'font-pad.kotoba';source.write_bytes(b''.join(p.read_bytes()+b'\n' for p in parts))
- target='x86_64-linux' if platform.machine()=='x86_64' else 'aarch64-linux';tool=out/'font-pad.elf'
+ tool=out/('font-pad'+suffix)
  env=dict(PATH='/nonexistent',KEXE_CAP_RESOURCES_35=str(out),KEXE_STACK_BYTES='8388608');calls=[]
  for name,args in [('compile',[compiler,'compile',source,'--target',target,'--output',tool,'--format','static']),('pad',[tool,out/'original.fnt',out/'aiueos-padded.fnt'])]:
   if name=='pad':tool.chmod(0o755)
