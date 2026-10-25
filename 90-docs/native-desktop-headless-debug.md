@@ -3,7 +3,9 @@
 The native AIUEOS diagnostic desktop can be debugged through QEMU's local
 QMP Unix socket. VNC, a VNC password, and a person pressing guest keys are
 unnecessary. Keep QMP on a local Unix socket and `-nic none`; the QMP socket
-controls the VM and must stay in a private task workspace.
+controls the VM and must stay in a mode 0700 task directory. The restart gate
+creates private session directories, and the observer creates a private output
+directory for guest memory dumps and screenshots.
 
 For routine agent debugging, use the headless QEMU gates and this QMP observer
 first. They read the guest's completed frame, goal, focus, draft generation,

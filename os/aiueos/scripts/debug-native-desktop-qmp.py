@@ -108,7 +108,8 @@ def main():
     if rw[0:2] != (1, 6) or rw[5] != 0x240000:
         parser.error('unexpected native desktop kernel context contract')
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    # Screenshots and memory dumps may contain user state.
+    output.mkdir(parents=True, exist_ok=False, mode=0o700)
     qmp = QMP(args.qmp_socket)
     try:
         status = qmp.call('query-status')

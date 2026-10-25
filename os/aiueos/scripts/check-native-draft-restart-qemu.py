@@ -27,7 +27,9 @@ def pin(path):
 class Guest:
     def __init__(self, args, directory, disk):
         self.directory = directory
-        directory.mkdir()
+        # QMP controls the VM and its memory. Never expose the socket through
+        # a world-searchable test directory, regardless of the caller's umask.
+        directory.mkdir(mode=0o700)
         rw = struct.unpack_from('<IIQQQQQQ', args.kernel.read_bytes(), 120)
         assert rw[0:2]==(1, 6) and rw[5]==0x240000, 'unexpected kernel context contract'
         self.context = rw[3]
@@ -174,7 +176,7 @@ class Guest:
 def main(args):
     for name in ('media', 'efi', 'kernel', 'qemu', 'firmware'):
         assert getattr(args, name).is_file(), (name, 'regular file required')
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     before = pin(args.media)
     assert args.efi.read_bytes().count(args.kernel.read_bytes())==1
     spec = importlib.util.spec_from_file_location('media_reader', HERE/'check-native-media-format.py')
