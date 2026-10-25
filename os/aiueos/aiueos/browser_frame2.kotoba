@@ -74,7 +74,8 @@
 ;;   2036 2037      the selection, browser-ime.kotoba's (ADR-0240): the window
 ;;                  id it belongs to (0 none) and its length k, the last k code
 ;;                  points of that window's body
-;;   2038 2039      not assigned
+;;   2038           native Itonami RAM goal length (desktop adapter)
+;;   2039           not assigned
 ;;   2040..2043     the vertical scroll offset of window id 1..4
 ;;                  (browser-reduce.kotoba's, ADR-0238), at most 65535
 ;;   2044 2045      scratch owned by this object (ADR-0238): the body's top

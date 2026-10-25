@@ -1,5 +1,10 @@
 # Native diagnostic media and desktop/input
 
+AIUEOS owns the OS, framebuffer and input surface. Itonami GUI is the human
+entry to an agent-first workspace; an Awai Node Console would own node setup,
+resources and observation. Murakumo names the dedicated hardware that can host
+an Awai Node. These UI and node roles do not require a Linux guest.
+
 The native closure follows this order (lower layers supply the upper ones):
 
 ```mermaid
@@ -42,14 +47,19 @@ the image's private page tables and IDT, and remains in CPL0. It polls PS2
 devices with interrupts disabled. This is not a preemptive scheduler or
 proof of user-mode dapp execution. Its Browser-frame2 adapter is the
 existing bounded behavior mirror; actual Browser/CSSOM parity remains open.
-The four cards state that services are unregistered and perform no network
-operation, inference or dapp command.
+The four diagnostic cards perform no network operation, inference or dapp
+command. The native Itonami card accepts a bounded lowercase ASCII goal draft
+in its own 64-code-point surface slot. Typing and Backspace update RAM only;
+closing the card does not submit the goal, invoke an agent loop, or persist it.
+This is a native AIUEOS UI entry with no Linux guest or host text service.
 
 `check-native-desktop-qemu.py` boots raw media on QEMU q35 SATA using a
 temporary overlay and no NIC. It checks sealed PCI/GOP/font bytes, native
 page-table/domain state, completed frames, keyboard open/close operations,
 mouse movement/click/release and changed screenshots. It checks that the
-original media digest is unchanged. QEMU TCG is guest emulation; native
+Itonami goal changes from keyboard input and returns to the previous text on
+Backspace, and that the original media digest is unchanged. QEMU TCG is guest
+emulation; native
 compiler execution, controller qualification and physical-hardware boot are
 distinct proof surfaces. Virtio block boot and general installer/media
 compatibility are not qualified by this diagnostic.

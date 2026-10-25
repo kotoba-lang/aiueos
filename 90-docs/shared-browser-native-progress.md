@@ -79,6 +79,17 @@ and dappsExecuted false: it still uses Browser-frame2 and unregistered cards.
 Itonami is the agent-first workspace in this design; a card carrying its name
 does not execute its dapps or connect a Murakumo node.
 
+The 2026-10-25 local native desktop candidate adds an Itonami goal draft to
+that diagnostic card. A locked 30-module kernel, EFI, font and media reproduced;
+the Mac QEMU TCG check booted the AIUEOS kernel directly with no Linux guest or
+NIC. PS/2 input opened Itonami, entered `ab`, then Backspace restored `a` in
+the surface and the rendered screenshot. This verifies a bounded RAM-only GUI
+interaction, not the Itonami agent loop, operation broker, durable workspace,
+or complete Browser/CSSOM graph. The build compiler itself ran in a Linux
+container; that is a build toolchain property, not a guest runtime dependency.
+The source-bound local receipt and screenshots are in
+[`native-itonami-goal-20261025`](evidence/native-itonami-goal-20261025/README.md).
+
 The protected value runtime and complete surface/input graph are both
 prerequisites of the shared UI event loop. The existing kernel's bounded ABI
 does not yet supply the complete string/document/f64 runtime needed by CSSOM.
