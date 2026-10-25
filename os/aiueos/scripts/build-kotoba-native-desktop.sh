@@ -18,7 +18,7 @@ if [ -n "$amu_bin" ]; then
   export AIUEOS_AMU_SELFHOST_BINARY_SHA256="$amu_binary_sha256"
   compiler_route=native-selfhost
 elif [ "${AIUEOS_AMU_BOOTSTRAP:-0}" = "1" ]; then
-  command -v node >/dev/null 2>&1 || {
+  command -v node >/dev/null 2>&1 || [ "$(od -An -tx1 -N4 "$amu/bin/amu" | tr -d ' \n')" = "7f454c46" ] || {
     echo "error: node is required for the explicit NBB bootstrap route" >&2; exit 1;
   }
   unset AIUEOS_AMU_SELFHOST_BINARY_SHA256
@@ -30,17 +30,30 @@ fi
 export AIUEOS_NATIVE_COMPILER_ROUTE="$compiler_route"
 export AIUEOS_NATIVE_PACKAGE_ROUTE=amu-nbb
 
-run_compiler() {
-  if [ "$compiler_route" = "native-selfhost" ]; then
-    "$amu_bin" "$@"
+# bin/amu is a native ELF since the Amu selfhost transition; the node route
+# only applies to a JS launcher. Measured 2026-10-25: node refuses the ELF
+# with a SyntaxError at byte 1.
+amu_is_elf() {
+  [ "$(od -An -tx1 -N4 "$amu/bin/amu" | tr -d ' \n')" = "7f454c46" ]
+}
+run_amu() {
+  if amu_is_elf; then
+    KEXE_SECCOMP=if-available KEXE_COMMAND=1 "$amu/bin/amu" "$@"
   else
     node "$amu/bin/amu" "$@"
   fi
 }
-package_with_amu_nbb() {
-  node "$amu/bin/amu" "$@"
+run_compiler() {
+  if [ "$compiler_route" = "native-selfhost" ]; then
+    "$amu_bin" "$@"
+  else
+    run_amu "$@"
+  fi
 }
-command -v node >/dev/null 2>&1 || {
+package_with_amu_nbb() {
+  run_amu "$@"
+}
+command -v node >/dev/null 2>&1 || [ "$(od -An -tx1 -N4 "$amu/bin/amu" | tr -d ' \n')" = "7f454c46" ] || {
   echo "error: node is required for the Amu/NBB packaging steps" >&2; exit 1;
 }
 git -C "$amu" rev-parse --show-toplevel >/dev/null || {

@@ -302,6 +302,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
+   :note "Scoped 2026-10-25: the desktop objects' sources are in the repo (os/aiueos/kotoba/browser-frame.kotoba, browser-frame2.kotoba) and the window manager already handles titlebar drags (ADR-0229) — the D&D work is a browser-frame2 event extension plus the flow and readback. The BLOCKER is the object rebuild toolchain: build-kotoba-native-desktop.sh compiles with the --selfhost-desktop flag, which lives only in the legacy public entry RETIRED on 2026-10-23 (amu/docs/retired/legacy-public-entry-20261023/) and exists in no current compiler (neither the amu checkout's seed nor the amu-1560 full compiler know it — E1 usage). Rebuilding desktop objects natively needs the desktop profile ported into the native compiler (amu-side work) or the pipeline rewritten for the native route. Pipeline fixes landed meanwhile (the wrapper detects the native ELF instead of running it under node; the node checks relax for the ELF)."
    }
   {:id :D9 :category :input :title "On-screen keyboard"
    :weight 0 :required false :required-level :device
