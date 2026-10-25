@@ -42,7 +42,8 @@ The separate Apple Silicon Mac selfhost candidate builds the same font,
 31-module desktop kernel, EFI and GPT/FAT16 media bytes with signed
 Kotoba/Amu Mach-O images; the exact Mac media passed QEMU desktop input.
 See 90-docs/native-macos-selfhost-build.md. This is a diagnostic candidate;
-Mac full-compiler fixed point, release and physical qualification remain open.
+compiler fixed-point requalification on the expanded FS2 runtime, release
+and physical qualification remain open.
 
 ## CDCI migration: native only (2026-10-24)
 

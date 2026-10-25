@@ -19,4 +19,5 @@ The media SHA-256 is
 This normal profile has a RAM-only Goal and F5 does not commit it. The
 separate opt-in local-draft restart gate covers isolated persistence.
 The receipts do not establish complete Itonami agent operation,
-Mac compiler fixed point, release or physical hardware qualification.
+compiler fixed-point requalification on the expanded FS2 runtime,
+release or physical hardware qualification.

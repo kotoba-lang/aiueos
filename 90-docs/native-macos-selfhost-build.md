@@ -66,5 +66,6 @@ The Amu [FS2 F/E gate](https://github.com/kotoba-lang/amu/pull/1580) checks
 FD3 scope, size/count bounds, missing files and traversal separately.
 This is a local diagnostic VM candidate, not a release or physical boot.
 
-The full Mac compiler's F1=F2=F3 fixed-point self-rebuild, integration into
+Pinned full-compiler F1–F5 fixed-point evidence predates this expanded
+FS2 F/E runtime. Requalification on the expanded runtime, integration into
 the default AIUEOS builder, signed release and physical qualification remain open.
