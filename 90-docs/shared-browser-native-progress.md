@@ -53,15 +53,6 @@ and dappsExecuted false: it still uses Browser-frame2 and unregistered cards.
 Itonami is the agent-first workspace in this design; a card carrying its name
 does not execute its dapps or connect a Murakumo node.
 
-The existing private TCP owner CI also reproduces all seven complete consumer
-graphs on native x86 with the final public compiler (`40153896101`, workflow
-head `e3a11cfb5e9c951ff48dbeaa9b515a962d3aa192`). Every source blob matches the
-immutable AIUEOS and five dependency pins. QEMU passes context 12, typed-call
-16, user-entry eight modes, media 11 negative controls and desktop seven input
-events. Its desktop kernel/EFI/media match the final ARM-emitted bytes above.
-Private source remains in that owner's existing CI context. This regression
-does not add shared CSSOM, actual dapp execution or persistent restoration.
-
 The shared kernel value runtime and complete surface/input graph must close
 before wiring actual app operations. Use the canonical client-runtime broker
 and fresh operation-specific consent. Durable restart/crash restoration must
