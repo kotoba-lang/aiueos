@@ -11,6 +11,14 @@ record native compilation, reproduced ELF/EFI/media, cold boots, a real
 uncommitted-edit power loss, and seven refusal controls. QEMU executes the
 AIUEOS kernel directly. The build compiler runs in Linux; the guest does not.
 
+The [interactive-fuel repeat](evidence/native-draft-fuel-20261025/README.md)
+rebuilds both profiles with the admitted `2^53-1` initial kernel budget and
+reads the live fuel counter after boot. Local-draft cold restore and the
+normal profile's input/F5-disabled gate both pass. This removes the observed
+short-session fuel failure from this diagnostic candidate; idle polling,
+finite fuel, canonical workspace restore and release qualification remain
+open.
+
 ## Implemented local transport probe
 
 `os/aiueos/native/workspace-entry.kotoba` selects `desktop/workspace-main`.

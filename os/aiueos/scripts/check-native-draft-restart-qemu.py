@@ -122,6 +122,10 @@ class Guest:
 
     def boot(self, restore, goal):
         state = self.wait('boot', lambda s:s['magic']==0x31545844 and s['frames']>=1)
+        assert self.hmp(f'pmemsave 0x{self.context+8:x} 8 fuel.bin') == ''
+        fuel = struct.unpack('<Q', (self.directory/'fuel.bin').read_bytes())[0]
+        assert 2**52 <= fuel <= 2**53-1, ('interactive fuel exhausted or too short', fuel)
+        state['fuelRemaining'] = fuel
         assert state['enabled']==1 and state['restore']==restore and state['goal']==PREFIX+goal, state
         assert state['keys']==0 and state['focus']==0, state
         return state
