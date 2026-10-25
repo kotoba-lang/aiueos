@@ -23,12 +23,14 @@
       "sha256": "ee84a1f879775cd3b69ffff5782e7584f9348627394ad04525127f50ca5c98b2"
     },
     "nativeWorkflowRun": 40165507318,
-    "nativeWorkflowTerminalSuccess": false,
+    "nativeWorkflowTerminalSuccess": true,
     "nativeArmMainSourceBindings": 95,
     "nativeArmMainReceipt": {
       "bytes": 286189,
       "sha256": "d6f192805b3fd2a367859eafdaa6c042f45cb1111ab5d0e9cdd08f6c32bed73b"
-    }
+    },
+    "mergedMain": "33d23f4c1abb85663bedf066a9e607e9127c9776",
+    "nativeCISourceBindings": 190
   },
   "sourceOwners": {
     "browser": {

@@ -36,8 +36,13 @@ combined private-store/sleep-resume source now regenerates the full47 root,
 public compiler, controller and gate pins. The complete local ARM main-tier
 passes with 95 production-source bindings to candidate `979049caf96a`.
 The exact-head shared component jobs also pass on both native ISAs.
-Full compiler/controller/public CI and merge/readback are separately required
-by [Amu #1565](https://github.com/kotoba-lang/amu/pull/1565).
+Full compiler/controller/public CI now passes for the exact head of
+[Amu #1565](https://github.com/kotoba-lang/amu/pull/1565), merged at
+`33d23f4c1abb85663bedf066a9e607e9127c9776`. Independent readback binds190 source
+records, the x86 three-generation fixed point,24 cases/18 refusals, parent-death
+cleanup,3 public aliases and90 lock-boundary observations. All41 changed
+files match actual remote main. These gates do not qualify the complete
+shared CSSOM/kernel UI/dapps/restoration scope below.
 
 The bounded source-owner changes are merged in [Browser #36](https://github.com/kotoba-lang/browser/pull/36),
 [DOM #10](https://github.com/kotoba-lang/dom-gpu/pull/10) and
