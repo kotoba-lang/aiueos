@@ -1,6 +1,6 @@
 {
-  "schema": "aiueos.native-user-payload-qemu.v1",
-  "status": "PASS_CFREE_ELF_BOOT_SLOT_AND_DIGEST_REFUSAL",
+  "schema": "aiueos.native-user-payload-qemu.v2",
+  "status": "PASS_CFREE_ELF_BOOT_SLOT_AND_TWO_REFUSALS",
   "kernel": {
     "bytes": 3408152,
     "sha256": "19fd9487cffaa5b2b1461ca04008987d332cd59745e23613512a7bc93963ea19"
@@ -30,8 +30,8 @@
     "sha256": "33090cc07675baa5190d9f1e84bf5176b33bcbfa9bacac522961150cdb6dbb2a"
   },
   "observer": {
-    "bytes": 7661,
-    "sha256": "ef3cd25f89a4472b56a0470f0dcaeb4577718a4b334fe8b81be5683ddd1504be"
+    "bytes": 8087,
+    "sha256": "9bb0592a0dee07c740d2f274f7ef2473ea62ff4d444ad6326d64fb9a2ab3d7ae"
   },
   "context": 2097152,
   "codePage": 2228224,
@@ -43,6 +43,12 @@
     "codeBytesMatchCompiledElf": true
   },
   "modifiedPayloadRefusal": {
+    "kernelRefusalSamples": 12,
+    "lastRip": 1052747,
+    "cpl": 0,
+    "result": 0
+  },
+  "invalidSlotHeaderRefusal": {
     "kernelRefusalSamples": 12,
     "lastRip": 1052747,
     "cpl": 0,

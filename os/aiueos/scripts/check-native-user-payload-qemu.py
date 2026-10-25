@@ -137,15 +137,23 @@ def verify(args):
     negative = boot(qmp_type, args.output / "negative", changed,
                     args.firmware.resolve(), args.qemu.resolve(), code,
                     request, elf[4096:4205], True)
+    bad_header = bytearray(efi)
+    bad_header[efi.index(slot)] ^= 1
+    assert sum(a != b for a, b in zip(efi, bad_header)) == 1
+    header_refusal = boot(qmp_type, args.output / "invalid-slot-header",
+                          bad_header, args.firmware.resolve(),
+                          args.qemu.resolve(), code, request,
+                          elf[4096:4205], True)
     report = {
-        "schema": "aiueos.native-user-payload-qemu.v1",
-        "status": "PASS_CFREE_ELF_BOOT_SLOT_AND_DIGEST_REFUSAL",
+        "schema": "aiueos.native-user-payload-qemu.v2",
+        "status": "PASS_CFREE_ELF_BOOT_SLOT_AND_TWO_REFUSALS",
         "kernel": pin(args.kernel), "efi": pin(args.efi),
         "elf": pin(args.elf), "slot": pin(args.slot),
         "source": pin(args.source), "qemu": pin(args.qemu),
         "firmware": pin(args.firmware), "observer": pin(Path(__file__)),
         "context": context, "codePage": code, "requestPage": request,
         "positive": positive, "modifiedPayloadRefusal": negative,
+        "invalidSlotHeaderRefusal": header_refusal,
         "qmpTransport": "private-stdio", "vncUsed": False,
         "networkUsed": False, "guestSignatureAdmission": False,
         "registeredItonamiTurn": False, "releaseAdmission": False,

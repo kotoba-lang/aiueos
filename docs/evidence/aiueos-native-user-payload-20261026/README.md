@@ -8,12 +8,13 @@ a general ELF loader or signed application installer.
 
 The [Mac native build receipt](build-state.json) binds the 27-module AIUEOS
 kernel source graph, Amu compiler, slot, reproducible kernel ELF and EFI.
-The [private QMP receipt](qmp.json) records two fresh QEMU boots. The first
+The [private QMP receipt](qmp.json) records three fresh QEMU boots. The first
 reaches CPL3 at `0x220015`, returns `42`, and has code bytes identical to the
 selfhost-produced ELF. The second changes one code byte in the EFI-embedded
 slot: the guest remains in its kernel refusal loop at CPL0 and leaves the
-result zero. QEMU has no network, display listener or VNC password, and the
-observer needs no person to press keys.
+result zero. The third changes the slot header magic and is likewise refused
+at CPL0 with result zero. QEMU has no network, display listener or VNC
+password, and the observer needs no person to press keys.
 
 With a new scratch output directory under `github/workspaces`, repeat the
 VM check using the matching build, ELF and slot:
