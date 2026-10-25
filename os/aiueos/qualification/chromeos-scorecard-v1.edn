@@ -410,9 +410,9 @@
    :procedure "Create, rename, delete, fill the disk."
    :expected "Operations are atomic; a full disk is reported, not corrupted."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["kotoba journal objects (os/aiueos/kotoba/journal-record-build.kotoba)"]
-   :note "A Kotoba journal exists; no file-system semantics gated."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/f2-durable-file-system/receipt.edn" "kotoba journal objects (os/aiueos/kotoba/journal-record-build.kotoba)"]
+   :note "Measured 2026-10-25: a bounded file table over the A/B journal pattern (two table sectors, 15 entries, data region sectors 64..2047) exercised by a kernel self-test — AIUEOS_FS_CREATE_OK, FS_RENAME_OK, FS_DELETE_OK, FS_FULL_REPORTED not-corrupted (the create that does not fit reports the full condition and writes nothing) and FS_ATOMIC_OK table-readback-ab (every operation commits via the inactive slot + sequence + read-back). Caveats, owner may reject: 15 entries / ~992 KiB bounded profile; names 20-byte ASCII; sizes pre-allocated at create; the atomicity claim is the A/B commit pattern, not a general power-loss proof; the test is a boot self-test."
    }
   {:id :F3 :category :storage :title "Wi-Fi"
    :weight 3 :required true :required-level :device

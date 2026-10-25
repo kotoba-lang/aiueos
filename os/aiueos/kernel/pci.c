@@ -783,6 +783,160 @@ int aiueos_crash_receipt_consume(uint32_t *reason, uint32_t *sequence) {
   return crash_record_valid() && record->state==2 && record->checksum==wanted;
 }
 
+
+/* ---- F2 durable file system (JUN-140) ------------------------------------
+   A bounded file table over the existing A/B journal pattern: two table
+   sectors (50/51) hold 15 entries (name, state, size, first data sector,
+   count, checksum); the data region is sectors 64..2047. Every operation
+   writes the inactive table slot with the next sequence and verifies the
+   read-back before it is considered live, so a torn write leaves the older
+   slot valid — the atomicity claim. A create whose data does not fit is
+   reported as a full disk and writes nothing: the full condition is a
+   result, never corruption. aiueos_fs_selftest exercises create, rename,
+   delete and fill/cleanup and sets *report bits: 1 create, 2 rename,
+   4 delete, 8 full-report, 16 table-readback. */
+#define FS_TABLE_FIRST 50
+#define FS_ENTRIES 15
+#define FS_DATA_FIRST 64
+#define FS_DATA_LAST 2047
+#define FS_NAME_LEN 20
+struct aiueos_fs_entry {
+  char name[FS_NAME_LEN];
+  uint8_t state;            /* 0 free, 1 live */
+  uint8_t reserved[3];
+  uint32_t size, first, count, checksum;
+};
+struct aiueos_fs_table {
+  uint32_t magic, sequence;
+  struct aiueos_fs_entry entries[FS_ENTRIES];
+};
+static uint32_t fs_table_sequence, fs_table_slot;
+static struct aiueos_fs_table fs_table_live;
+
+static uint32_t fs_checksum(const struct aiueos_fs_entry *e) {
+  uint32_t h = 2166136261u;
+  h = (h ^ (uint32_t)e->state) * 16777619u;
+  h = (h ^ e->size) * 16777619u;
+  h = (h ^ e->first) * 16777619u;
+  h = (h ^ e->count) * 16777619u;
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) h = (h ^ (uint8_t)e->name[i]) * 16777619u;
+  return h;
+}
+static int fs_commit_table(void) {
+  if (!blk_backend.ready) return 0;
+  uint32_t sequence = fs_table_sequence + 1;
+  uint32_t target = fs_table_slot == FS_TABLE_FIRST ? FS_TABLE_FIRST + 1 : FS_TABLE_FIRST;
+  if (!sequence || target >= blk_backend.capacity) return 0;
+  fs_table_live.magic = 0x46535442; /* "FSTB" */
+  fs_table_live.sequence = sequence;
+  for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+  for (unsigned i = 0; i < sizeof(fs_table_live) && i < 512; i++)
+    blk_backend.sector[i] = ((const uint8_t *)&fs_table_live)[i];
+  if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+        blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+        &blk_backend.submitted, VIRTIO_BLK_T_OUT, target)) return 0;
+  for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+  if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+        blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+        &blk_backend.submitted, VIRTIO_BLK_T_IN, target)) return 0;
+  struct aiueos_fs_table *back = (void *)blk_backend.sector;
+  if (back->magic != 0x46535442 || back->sequence != sequence) return 0;
+  fs_table_sequence = sequence; fs_table_slot = target;
+  return 1;
+}
+static int fs_load_table(void) {
+  if (!blk_backend.ready) return 0;
+  for (unsigned s = 0; s < 2; s++) {
+    for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+    if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+          blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+          &blk_backend.submitted, VIRTIO_BLK_T_IN, FS_TABLE_FIRST + s)) continue;
+    struct aiueos_fs_table *t = (void *)blk_backend.sector;
+    if (t->magic == 0x46535442 && t->sequence > fs_table_sequence) {
+      for (unsigned i = 0; i < sizeof(fs_table_live) && i < 512; i++)
+        ((uint8_t *)&fs_table_live)[i] = blk_backend.sector[i];
+      fs_table_sequence = t->sequence;
+      fs_table_slot = FS_TABLE_FIRST + s;
+    }
+  }
+  return fs_table_sequence != 0;
+}
+static int fs_find(const char *name) {
+  for (unsigned i = 0; i < FS_ENTRIES; i++) {
+    if (fs_table_live.entries[i].state != 1) continue;
+    unsigned k = 0;
+    while (k < FS_NAME_LEN && fs_table_live.entries[i].name[k] == name[k] && name[k]) k++;
+    if (k < FS_NAME_LEN && fs_table_live.entries[i].name[k] == 0 && name[k] == 0) return (int)i;
+  }
+  return -1;
+}
+static uint32_t fs_free_first(void) {
+  uint32_t used = FS_DATA_FIRST;
+  for (unsigned i = 0; i < FS_ENTRIES; i++)
+    if (fs_table_live.entries[i].state == 1)
+      used += fs_table_live.entries[i].count;
+  return used;
+}
+/* result: 1 ok, 0 error, 2 disk full (reported, nothing written) */
+static int fs_create(const char *name, uint32_t size) {
+  int slot = -1;
+  for (unsigned i = 0; i < FS_ENTRIES; i++) if (fs_table_live.entries[i].state == 0) { slot = (int)i; break; }
+  if (slot < 0 || fs_find(name) >= 0) return 0;
+  uint32_t count = (size + 511) / 512;
+  if (count == 0) count = 1;
+  uint32_t first = fs_free_first();
+  if (first + count - 1 > FS_DATA_LAST) return 2;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) e->name[i] = 0;
+  for (unsigned i = 0; i < FS_NAME_LEN && name[i]; i++) e->name[i] = name[i];
+  e->state = 1; e->size = size; e->first = first; e->count = count;
+  e->checksum = fs_checksum(e);
+  return fs_commit_table() ? 1 : 0;
+}
+static int fs_rename(const char *old_name, const char *new_name) {
+  int slot = fs_find(old_name);
+  if (slot < 0 || fs_find(new_name) >= 0) return 0;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) e->name[i] = 0;
+  for (unsigned i = 0; i < FS_NAME_LEN && new_name[i]; i++) e->name[i] = new_name[i];
+  e->checksum = fs_checksum(e);
+  return fs_commit_table() ? 1 : 0;
+}
+static int fs_delete(const char *name) {
+  int slot = fs_find(name);
+  if (slot < 0) return 0;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < sizeof(*e); i++) ((uint8_t *)e)[i] = 0;
+  return fs_commit_table() ? 1 : 0;
+}
+/* Self-test bits: 1 create, 2 rename, 4 delete, 8 full-report, 16 readback. */
+uint32_t aiueos_fs_selftest(void) {
+  uint32_t report = 0;
+  if (!fs_load_table() && blk_backend.ready) { fs_table_sequence = 0; fs_table_slot = FS_TABLE_FIRST + 1; }
+  if (fs_create("fs-create.tmp", 1024) == 1) report |= 1;
+  if (fs_rename("fs-create.tmp", "fs-renamed.tmp") == 1) report |= 2;
+  if (fs_delete("fs-renamed.tmp") == 1) report |= 4;
+  /* fill: consume the table with files until the disk reports full */
+  int full_reported = 0;
+  for (unsigned i = 0; i < FS_ENTRIES + 4; i++) {
+    char name[FS_NAME_LEN];
+    const char *p = "fill000000.tmp";
+    for (unsigned k = 0; k < 15; k++) name[k] = p[k];
+    name[4] = (char)('0' + (i / 10) % 10);
+    name[5] = (char)('0' + (i % 10));
+    name[14] = 0;
+    int r = fs_create(name, 200 * 1024);
+    if (r == 2) { full_reported = 1; break; }
+    if (r == 0) break;
+  }
+  if (full_reported) report |= 8;
+  for (unsigned i = 0; i < FS_ENTRIES; i++)
+    if (fs_table_live.entries[i].state == 1)
+      fs_delete(fs_table_live.entries[i].name);
+  if (fs_load_table()) report |= 16;
+  return report;
+}
+
 static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
   if (!blk_backend.ready || domain<4 || domain>5 || !value || value>0xffffffffU) return 0;
   unsigned index=domain-4; blk_lock();

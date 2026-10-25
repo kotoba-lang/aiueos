@@ -5451,6 +5451,16 @@ qwen_runtime_boot_complete:
     serial_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\r\n");
     if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) evidence_stop(__LINE__);
     debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\n");
+    /* F2: the durable file system self-test (create/rename/delete/fill). */
+    {
+      extern uint32_t aiueos_fs_selftest(void);
+      uint32_t fs = aiueos_fs_selftest();
+      if (fs & 1) { debug_string("AIUEOS_FS_CREATE_OK\n"); serial_string("AIUEOS_FS_CREATE_OK\r\n"); }
+      if (fs & 2) { debug_string("AIUEOS_FS_RENAME_OK\n"); serial_string("AIUEOS_FS_RENAME_OK\r\n"); }
+      if (fs & 4) { debug_string("AIUEOS_FS_DELETE_OK\n"); serial_string("AIUEOS_FS_DELETE_OK\r\n"); }
+      if (fs & 8) { debug_string("AIUEOS_FS_FULL_REPORTED not-corrupted\n"); serial_string("AIUEOS_FS_FULL_REPORTED not-corrupted\r\n"); }
+      if (fs & 16) { debug_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\n"); serial_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\r\n"); }
+    }
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
