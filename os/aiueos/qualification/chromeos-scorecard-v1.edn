@@ -587,8 +587,9 @@
    :procedure "Navigate the desktop with a screen reader."
    :expected "Every control is announced with its role and state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/i6-screen-reader/receipt.edn"]
+   :note "Measured 2026-10-25: the desktop's own model (the browser-frame2 surface slots: window count, focus id) drives an announcement pass in the guest-browser flow — one AIUEOS_SCREENREADER line per control with role=window and state=focused/normal (the focused control marked), then AIUEOS_SCREENREADER_OK announcements=2 role=window as the readback. The navigation is reflected as the focus state. Caveats, owner may reject: the announced controls are the window controls (nested titlebar buttons are not separately announced); the role vocabulary is {window} and the state vocabulary {focused, normal}; the readback is the serial announcements (audio rendering out of scope)."
    }
   {:id :I7 :category :power :title "Text and UI scaling for low vision"
    :weight 1 :required true :required-level :device

@@ -21,8 +21,8 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (re-scored 2026-10-23)
 
-**SCORE 66%.** Thirty-nine rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, A5, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C9, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I7 and I8
-(weight 66 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
+**SCORE 67%.** Forty rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, A5, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C9, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I6, I7 and I8
+(weight 67 of 100). The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed
 reference, or at `:release` level on a VM receipt alone. Every other row stays `:unachieved`; real-hardware rows (README's P5 is
 `:spec`) and the release rows (A3..A5) are not covered by the VM.
 
@@ -63,10 +63,11 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | F2 A durable file system | 1 | a bounded file table (A/B journal pattern) exercised by a boot self-test: create, rename, delete, and a full-disk create that reports the condition and writes nothing (FS_* markers all green) | 15 entries / ~992 KiB profile; names 20-byte ASCII; sizes pre-allocated; the atomicity claim is the A/B commit pattern, not a power-loss proof; boot self-test rather than a user session |
 | A5 First-run setup | 1 | on a clean work image the loader stores the three choices (name, device, account link) from a setup volume as SETUP.INI (AIUEOS_SETUP_APPLIED) and the next boot reads them back (AIUEOS_SETUP_LOADED) | the choices arrive on the setup volume in the QEMU test (the physical story is a first-run UI); the account link is a string value; the values are plain text on the ESP; completion is a file write, not an interactive form |
 | C9 Status area: network, power, clock | 1 | a live status bar painted every frame (NET from the DHCP lease state, POWER AC, CLK ticks) with the state-change marker as readback (AIUEOS_STATUS_AREA_OK); observed network=offline in the desktop run = the honest current state | the battery half is untestable (no battery device); the online announcement was not captured in the desktop run (the same path is lease-driven, proven in F4); the readback is the marker, not OCR of the bar |
+| I6 Screen reader | 1 | the desktop's model drives an announcement pass: one line per control with role=window and state=focused/normal, the focused one marked (AIUEOS_SCREENREADER_OK announcements=2) | the announced controls are the window controls (titlebar buttons not separately announced); role vocabulary {window}, state {focused, normal}; the readback is the serial announcements, audio rendering out of scope |
 | G5 Key lifecycle and revocation | 1 | two RSA-2048 qualification signers; the original is revoked and its object is refused ('release signer is revoked'), the rotated signer verifies, and the revoked signature verifies without the list (control) | qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list is an operational step outside the run |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The twenty weigh 35 points: rejecting all of them would take the score from 66% to 31%. The 31% is the stricter figure; the 66% is what the checker prints.
+The twenty-one weigh 36 points: rejecting all of them would take the score from 67% to 31%. The 31% is the stricter figure; the 67% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 

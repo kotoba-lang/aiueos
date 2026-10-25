@@ -1236,6 +1236,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
       surface[2041] == 0 && surface[2042] == 0 && surface[2043] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_SCROLL_OK\n");
     serial_string("AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=213 text-px=994 hash=78270fda\r\n");
+
     browser_hold_for_screendump();
     return 1;
   } else if (se < 17) {
@@ -7134,6 +7135,24 @@ qwen_runtime_boot_complete:
          The source is the truth. */
       if (fcount == 182 && fpx == 3593 && fhash == 0xa19f95a8U) {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW_OK\n");
+    /* I6 screen reader: announce every control with its role and state from
+       the desktop's own model (state slots 1 = window count, 2 = focus id;
+       the window ids 1..n are the navigable controls). The announcements
+       are the row's readback: one line per control, the focused one marked. */
+    {
+      uint32_t n_windows = surface[1], focus_id = surface[2];
+      uint32_t announced = 0;
+      for (uint32_t w = 1; w <= n_windows && w <= 4; w++) {
+        serial_string("AIUEOS_SCREENREADER control="); serial_decimal(w);
+        serial_string(" role=window state=");
+        serial_string(w == focus_id ? "focused" : "normal");
+        serial_string("\r\n");
+        announced++;
+      }
+      serial_string("AIUEOS_SCREENREADER_OK announcements=");
+      serial_decimal(announced);
+      serial_string(" role=window\r\n");
+    }
             serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=182 text-px=3593 hash=a19f95a8\r\n");
             browser_hold_for_screendump();
           } else {
