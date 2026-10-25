@@ -160,6 +160,24 @@ def native_tool_spec(profile):
     return target, '.macho' if target == 'aarch64-macos' else '.elf'
 
 
+def verify_macos_compiler_launch(compiler):
+    signature = subprocess.run(
+        ['/usr/bin/codesign', '--verify', '--strict', str(compiler)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        timeout=10, check=False)
+    if signature.returncode != 0:
+        raise ValueError('macOS compiler code signature did not verify')
+    try:
+        probe = subprocess.run(
+            [str(compiler)], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+            env={'PATH': '/usr/bin:/bin'}, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError('macOS compiler did not start its native CLI') from exc
+    if probe.returncode != 2 or b'seed: E1 usage: seed ' not in probe.stderr:
+        raise ValueError('macOS compiler did not answer its native CLI probe')
+
+
 def select_native_compiler(amu):
     amu = amu.resolve()
     descriptor = json.loads((amu / 'native-product.json').read_text())
@@ -171,6 +189,9 @@ def select_native_compiler(amu):
     profile = inspect_current_host_image(compiler.read_bytes())
     if not override and descriptor.get('host') != profile['host']:
         raise ValueError('native-product host does not match this machine')
+    if profile['host'] == 'aarch64-macos':
+        verify_macos_compiler_launch(compiler)
+        profile['launchProbe'] = 'native-cli-usage-v1'
     return compiler, expected, profile
 
 

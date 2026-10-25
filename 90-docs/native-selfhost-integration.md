@@ -56,8 +56,11 @@ selector accepts native static ELF64 on matching Linux x86-64/AArch64 hosts
 or a thin Mach-O64 arm64 executable on Apple Silicon. The Mach-O preflight
 allows only `/usr/lib/dyld` and `/usr/lib/libSystem.B.dylib` as dynamic
 dependencies, refuses RPATH/weak/reexported libraries, and records the
-selected format and declared libraries in the build receipt. A structural
-Mach-O match is not a selfhost proof: no Amu-produced macOS full compiler or
+selected format and declared libraries in the build receipt. On macOS the
+selected image must also pass the system's strict code-signature verification
+and return the pinned native CLI usage response before an output directory is
+created. This rejects structurally valid images that cannot start. These
+preflight checks are not a selfhost proof: no Amu-produced macOS full compiler or
 Mac build receipt is qualified yet (JUN-417). Five owner inputs are pinned in
 `os/aiueos/native/source-dependencies.json`. Native discovery supplies the
 complete source set; immutable inputs and both outputs are read back.
