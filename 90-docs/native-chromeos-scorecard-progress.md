@@ -50,3 +50,32 @@ the existing reference VM ledger; they do not qualify physical hardware or
 a release. The runner and receipt name keep `EVIDENCE_PENDING` until those
 gates pass. The legacy checker stays historical and must not be used for
 current native qualification.
+
+## Evidence audit of the recorded VM score (2026-10-26)
+
+A read-only host diagnostic inspected the canonical ledger's 31 receipt
+references (14 distinct files). The 17 checked digest fields for adjacent
+serial logs, WAV files, the qualification signature, and the signed JSON
+receipt matched their files. The qualification release signature also passed
+the existing host verifier with the checked-in qualification public key.
+These observations are independent of the native scorecard probe and do not
+make the release-production signing key or release gate qualified.
+
+Six VM receipts name feature commits which are known locally but are not
+ancestors of this branch's source commit: `ui`, `audio`, `backup`, `layout`,
+`notify`, and `passkey`. Twenty-one `:pass` rows, weighing 33 of the ledger's
+48 recorded points, reference at least one of them. Later squash merges may
+contain those changes, so ancestry failure alone is not a failed feature.
+The files changed by each original feature commit have since changed again;
+the old receipts do not prove the present source at this branch's commit.
+Rerun the affected gates against the selected release source before promoting
+their points from recorded VM evidence to current-release evidence.
+
+The six receipts' screenshot maps contain 117 distinct PPM names and no
+conflicting hashes. A read-only check found all 117 files in local diagnostic
+output `github/workspaces/claude/aiueos-gate/out31` and matched every declared
+SHA-256. The image bytes are outside this repository and are not a durable
+release evidence bundle. This check establishes local artifact integrity for
+that output only; it does not establish source freshness, hardware behavior,
+or native evidence admission. The diagnostic summary is kept under
+`github/workspaces/codex/aiueos-scorecard-evidence-audit-20261026`.
