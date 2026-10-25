@@ -606,12 +606,25 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
 extern int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t height,
                                            uint32_t stride, uint32_t pixel_format,
                                            uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+/* A2: drain a host display change, re-read the geometry and drop the GPU
+   desktop resource so the next present re-binds it. Returns 1 when the
+   geometry changed and the caller must send a full frame. */
+extern int aiueos_gpu_display_refresh(void);
+extern void aiueos_kernel_serial_marker(const char *text);
 extern int64_t kotoba_aiueos_browser_damage(uint64_t ops, uint64_t ops_bytes, uint64_t shadow,
                                             uint64_t shadow_bytes, uint64_t count);
 int aiueos_desktop_show(void) {
   uint32_t x = 0, y = 0, w, h;
   int ok, listed;
   if (!desktop_surface_ready) return 0;
+  /* A2: a display change re-binds the GPU resource; the frame after one is
+     always whole. FRAMEBUFFER_PROGRESS(258) is the qualification channel;
+     AIUEOS_GPU_DISPLAY_CHANGE_OK is the evidence marker (production). */
+  if (aiueos_gpu_display_refresh()) {
+    desktop_shadow[0] = 0;
+    FRAMEBUFFER_PROGRESS(258);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_DISPLAY_CHANGE_OK rebind-fullframe\r\n");
+  }
   w = desktop_surface.width;
   h = desktop_surface.height;
   listed = desktop_list_ops && desktop_list_generation == desktop_surface.generation;

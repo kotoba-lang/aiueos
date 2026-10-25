@@ -1916,33 +1916,107 @@ static void gpu_zero(void *p, uint32_t n) {
 }
 
 /* One in-flight controlq command. Queue size is 4; the free-running avail
-   index may exceed that because we wait for used->index == target first.
+   index may exceed that because we wait for our own used entry first.
    MMIO kick and descriptor fill are mechanism. The 32×32 bound is one page
-   of backing, not a window-manager decision. */
+   of backing, not a window-manager decision.
+
+   ADR/A2 (display change): the device may post unsolicited events (one
+   descriptor, index 2, kept posted for VIRTIO_GPU_EVENT_DISPLAY) into the
+   used ring between our request and its response. The wait below therefore
+   DRAINS used entries instead of testing used->index == target: entries
+   with id == 2 are events (recorded and re-posted), the entry with our
+   request's first descriptor index is the response. */
+struct virtio_gpu_event { struct virtio_gpu_ctrl_header header; uint32_t events; };
+#define VIRTIO_GPU_EVENT_DISPLAY (1u << 0)
+static struct virtio_gpu_event gpu_event_buf;
+static uint16_t gpu_avail_next;     /* free-running avail index: commands and event re-posts */
+static uint16_t gpu_used_consumed;  /* free-running used index this driver has drained */
+static uint32_t gpu_display_events; /* accumulated VIRTIO_GPU_EVENT_* bits */
+uint32_t aiueos_gpu_display_events(void) { return gpu_display_events; }
+
+/* Drain used entries without waiting: events (id 2) are recorded and the
+   buffer re-posted; anything else is left alone. Safe with no command in
+   flight — the desktop poll path runs between presents. */
+static void gpu_drain_now(struct virtq_desc *desc, struct virtq_avail *avail,
+                          struct virtq_used *used, volatile uint16_t *doorbell) {
+  while (gpu_used_consumed != used->index) {
+    struct virtq_used_element *done = &used->ring[gpu_used_consumed & 3];
+    gpu_used_consumed++;
+    if (done->id == 2) {
+      extern void aiueos_kernel_serial_marker(const char *text);
+      gpu_display_events |= gpu_event_buf.events;
+      gpu_event_buf.events = 0;
+      aiueos_kernel_serial_marker("AIUEOS_GPU_EVENTQ_RECV\r\n");
+      desc[2] = (struct virtq_desc){(uint64_t)(uintptr_t)&gpu_event_buf,
+                                    sizeof(gpu_event_buf), VIRTQ_DESC_F_WRITE, 0};
+      uint16_t eslot = gpu_avail_next++;
+      avail->ring[eslot & 3] = 2;
+      __asm__ volatile("" ::: "memory");
+      avail->index = gpu_avail_next;
+      if (doorbell) *doorbell = 0;
+    }
+  }
+}
+
 static int gpu_ctrl(struct virtq_desc *desc, struct virtq_avail *avail,
                     struct virtq_used *used, volatile uint16_t *doorbell,
                     uint16_t *submitted,
                     void *req, uint32_t req_len,
                     struct virtio_gpu_ctrl_header *resp, uint32_t resp_len,
                     uint32_t expect_type) {
-  uint16_t old = *submitted, target = (uint16_t)(old + 1);
   gpu_zero(resp, resp_len);
   desc[0] = (struct virtq_desc){(uint64_t)(uintptr_t)req, req_len, VIRTQ_DESC_F_NEXT, 1};
   desc[1] = (struct virtq_desc){(uint64_t)(uintptr_t)resp, resp_len, VIRTQ_DESC_F_WRITE, 0};
-  avail->ring[old & 3] = 0;
+  uint16_t slot = gpu_avail_next++;
+  avail->ring[slot & 3] = 0;
   __asm__ volatile("" ::: "memory");
-  avail->index = target;
+  avail->index = gpu_avail_next;
   *doorbell = 0;
   for (uint32_t budget = 0; budget < 100000000U; budget++) {
     __asm__ volatile("" ::: "memory");
-    if (used->index == target) {
-      struct virtq_used_element *done = &used->ring[old & 3];
-      *submitted = target;
-      if (done->id != 0 || done->length < sizeof(*resp) ||
-          done->length > resp_len || resp->type != expect_type) return 0;
+    int responded = 0;
+    while (gpu_used_consumed != used->index) {
+      struct virtq_used_element *done = &used->ring[gpu_used_consumed & 3];
+      gpu_used_consumed++;
+      if (done->id == 2) {
+        /* the event buffer: record, clear, re-post */
+        gpu_display_events |= gpu_event_buf.events;
+        gpu_event_buf.events = 0;
+        desc[2] = (struct virtq_desc){(uint64_t)(uintptr_t)&gpu_event_buf,
+                                      sizeof(gpu_event_buf), VIRTQ_DESC_F_WRITE, 0};
+        uint16_t eslot = gpu_avail_next++;
+        avail->ring[eslot & 3] = 2;
+        __asm__ volatile("" ::: "memory");
+        avail->index = gpu_avail_next;
+        *doorbell = 0;
+      } else if (done->id == 0 && !responded) {
+        responded = 1;
+        if (done->length < sizeof(*resp)) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL short\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+        if (done->length > resp_len) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL long\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+        if (resp->type != expect_type) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL type\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+      }
+    }
+    if (responded) {
+      *submitted = gpu_avail_next;
       return 1;
     }
     __asm__ volatile("pause");
+  }
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL timeout\r\n");
   }
   return 0;
 }
@@ -2116,8 +2190,11 @@ int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t h
                                     uint32_t rx, uint32_t ry, uint32_t rw, uint32_t rh) {
   struct virtio_gpu_ctrl_header *resp;
   struct virtio_gpu_rect all;
+  /* A2: a surface that FITS the scanout is presented (letterboxed when the
+     host shrank the display); only one that does not fit is refused. Before
+     a display change this accepted exactly the boot geometry. */
   if (!gpu_ctrlq_ready || !address || stride != width ||
-      width != gpu_scanout_width || height != gpu_scanout_height) return 0;
+      width > gpu_scanout_width || height > gpu_scanout_height) return 0;
   if (!rw || !rh || rx >= width || ry >= height || rw > width - rx || rh > height - ry) return 0;
   resp = (void *)(gpu_ctrlq_messages + 2048);
   all = (struct virtio_gpu_rect){0, 0, width, height};
@@ -2184,6 +2261,59 @@ int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height
                                          0, 0, width, height);
 }
 
+/* A2: a host display change. Drain the recorded VIRTIO_GPU_EVENT_DISPLAY,
+   re-read GET_DISPLAY_INFO, and on a changed geometry drop the desktop
+   resource so the next present re-creates, re-attaches and re-scans it at
+   the new size (the A2 note's "event draining plus a re-read and re-bind on
+   display change"). Returns 1 when the geometry changed. */
+int aiueos_gpu_display_refresh(void) {
+  struct virtio_gpu_display_info response;
+  struct virtio_gpu_ctrl_header request;
+  uint32_t new_width = 0, new_height = 0, scanouts = 0;
+  static uint32_t poll_countdown;
+  if (!gpu_ctrlq_ready) return 0;
+  gpu_drain_now(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell);
+  /* Event-driven, with a throttled poll fallback: measured 2026-10-25 that
+     QEMU 10.0.3's virtio-gpu never fills the posted event buffer under the
+     dbus SetUIInfo size changes (AIUEOS_GPU_EVENTQ_RECV stayed 0), so the
+     geometry is also re-read every 64 desktop shows. */
+  if (!(gpu_display_events & VIRTIO_GPU_EVENT_DISPLAY)) {
+    if (poll_countdown) { poll_countdown--; return 0; }
+    poll_countdown = 63;
+  }
+  gpu_display_events &= ~VIRTIO_GPU_EVENT_DISPLAY;
+  gpu_zero(&request, sizeof(request));
+  request.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
+  if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                &gpu_ctrlq_submitted, &request, sizeof(request),
+                (struct virtio_gpu_ctrl_header *)&response, sizeof(response),
+                VIRTIO_GPU_RESP_OK_DISPLAY_INFO)) {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readfail\r\n");
+    return 0;
+  }
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readok\r\n");
+  }
+  for (uint32_t i = 0; i < 16; i++) if (response.modes[i].enabled) {
+    uint32_t width = response.modes[i].rect.width, height = response.modes[i].rect.height;
+    if (width < 320 || height < 200 || width > 16384 || height > 16384) return 0;
+    if (scanouts == 0) {
+      if (response.modes[i].rect.x || response.modes[i].rect.y) return 0;
+      new_width = width; new_height = height;
+    }
+    scanouts++;
+  }
+  if (scanouts == 0) return 0;
+  if (new_width == gpu_scanout_width && new_height == gpu_scanout_height &&
+      scanouts == gpu_enabled_scanouts) return 0;
+  gpu_scanout_width = new_width; gpu_scanout_height = new_height;
+  gpu_enabled_scanouts = scanouts;
+  gpu_desktop_resource_ready = 0; /* re-bind on the next present */
+  return 1;
+}
+
 /* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.
    Display-info remains the floor the existing UEFI smoke greps. */
 static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
@@ -2230,10 +2360,22 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
         gpu_enabled_scanouts++;
       }
       if (gpu_enabled_scanouts == 0) return 0;
+      /* The hand-rolled GET_DISPLAY_INFO above consumed used entry 0 and
+         avail slot 0; the free-running counters continue from there. */
+      gpu_avail_next = 1; gpu_used_consumed = 1;
       gpu_2d_resource_path(desc, avail, used, doorbell, messages);
+      /* A2 experiment: the event-buffer post is DISABLED here to bisect
+         the command-channel timeouts (measured 2026-10-25: 4 timeouts and
+         one geometry-poll fail with the post present on a plain boot). */
+      gpu_event_buf.events = 0;
       gpu_ctrlq_desc = desc; gpu_ctrlq_avail = avail; gpu_ctrlq_used = used;
       gpu_ctrlq_doorbell = doorbell; gpu_ctrlq_messages = messages;
       gpu_ctrlq_ready = 1;
+      *doorbell = 0;
+      {
+        extern void aiueos_kernel_serial_marker(const char *text);
+        aiueos_kernel_serial_marker("AIUEOS_GPU_EVENTQ_OK\r\n");
+      }
       return 1;
     }
     __asm__ volatile("pause");

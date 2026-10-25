@@ -1052,6 +1052,9 @@ static void serial_byte(uint8_t value) {
 static void serial_string(const char *text) {
   while (*text) serial_byte((uint8_t)*text++);
 }
+/* Evidence markers from other kernel files (A2's display-change marker is
+   emitted from framebuffer.c's desktop path). */
+void aiueos_kernel_serial_marker(const char *text) { serial_string(text); }
 static void serial_hex_byte(uint8_t value) {
   static const char digits[] = "0123456789abcdef";
   serial_byte((uint8_t)digits[(value >> 4) & 0xf]);
