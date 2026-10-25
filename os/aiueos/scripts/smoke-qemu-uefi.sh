@@ -1946,10 +1946,20 @@ grep -F "AIUEOS_PAGE_FAULT_OK no-execute vector=14" "$serial_log" >/dev/null || 
   echo "error: no-execute page-fault evidence was not observed" >&2
   exit 1
 }
-grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null || {
-  echo "error: kernel exception dispatch evidence was not observed" >&2
-  exit 1
-}
+# A loop-terminated boot never arms the final #UD probe. Require the marker
+# that actually ended this mode; a probe-armed run must still prove exception
+# dispatch, even when its caller also supplied AIUEOS_LOOP_EXIT_OK.
+if [ -n "${AIUEOS_LOOP_EXIT_OK:-}" ] && [ "${AIUEOS_SMOKE_FINAL_PROBE:-0}" != 1 ]; then
+  grep -F "AIUEOS_DESKTOP_LOOP_OK persistent input service" "$serial_log" >/dev/null || {
+    echo "error: persistent desktop loop evidence was not observed" >&2
+    exit 1
+  }
+else
+  grep -F "AIUEOS_EXCEPTION_OK vector=6 invalid-opcode" "$serial_log" >/dev/null || {
+    echo "error: kernel exception dispatch evidence was not observed" >&2
+    exit 1
+  }
+fi
 # SHA-STREAM-PARITY (ADR-0155). The full line, not a prefix: a run that printed
 # `SHA-STREAM-PARITY mismatch case=6` would satisfy a prefix match, and case 6
 # is the 131,080-byte hash that is the entire reason these objects exist.
