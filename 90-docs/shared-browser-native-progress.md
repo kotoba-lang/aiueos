@@ -7,12 +7,14 @@ record is `os/aiueos/qualification/native-shared-browser-20261025.json`.
 ```mermaid
 flowchart BT
   A[Amu selfhost / root / controller] --> T[Shared text and DOM]
+  A --> K[AIUEOS kernel / protected value ABI / native media]
   T --> E[Shared text-edit]
   T --> C[Complete CSSOM core and layout]
   C --> B[Browser surface and input]
   E --> B
-  B --> K[Kernel value runtime and UI event loop]
-  K --> I[Itonami agent-first dapps and shared broker]
+  K --> U[AIUEOS shared UI event loop]
+  B --> U
+  U --> I[Itonami agent-first dapps and shared broker]
   I --> R[Durable state and restart / crash recovery]
 ```
 
@@ -53,8 +55,11 @@ and dappsExecuted false: it still uses Browser-frame2 and unregistered cards.
 Itonami is the agent-first workspace in this design; a card carrying its name
 does not execute its dapps or connect a Murakumo node.
 
-The shared kernel value runtime and complete surface/input graph must close
-before wiring actual app operations. Use the canonical client-runtime broker
+The protected value runtime and complete surface/input graph are both
+prerequisites of the shared UI event loop. The existing kernel's bounded ABI
+does not yet supply the complete string/document/f64 runtime needed by CSSOM.
+Keep its context, memory and floating-state contracts explicit before wiring
+actual app operations. Use the canonical client-runtime broker
 and fresh operation-specific consent. Durable restart/crash restoration must
 be tested against real committed state after the dapp path works. Old packed
 window-selection values and historical two-record backup tests do not supply

@@ -176,12 +176,13 @@
   },
   "dependencyOrder": [
     "Amu selfhost/root/controller",
+    "AIUEOS kernel/protected value ABI/native media",
     "shared text and DOM",
-    "complete CSSOM core/layout",
-    "shared Browser surface/input/text-edit",
-    "kernel value runtime and actual UI event loop",
-    "Itonami agent-first dapps and shared operation broker",
-    "persistent state and restart/crash recovery"
+    "complete CSSOM core/layout and shared text-edit",
+    "Browser surface/input",
+    "AIUEOS shared UI event loop",
+    "Itonami agent-first dapps and canonical broker consent",
+    "durable state/restart/crash restoration"
   ],
   "remaining": {
     "core": "Full retained candidate reaches E2103 at calc if-let tuple binding after text API/string-case ports; typed AST/collections and all original suite remain.",
