@@ -124,9 +124,12 @@ struct efi_file;
 typedef efi_status(EFIAPI *efi_file_open)(struct efi_file *, struct efi_file **, const char16 *, uint64_t, uint64_t);
 typedef efi_status(EFIAPI *efi_file_close)(struct efi_file *);
 typedef efi_status(EFIAPI *efi_file_read)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_write)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_set_position)(struct efi_file *, uint64_t);
 struct efi_file {
   uint64_t revision; efi_file_open open; efi_file_close close;
-  void *delete_file; efi_file_read read; void *write, *get_position, *set_position;
+  void *delete_file; efi_file_read read; efi_file_write write;
+  void *get_position; efi_file_set_position set_position;
   void *get_info, *set_info, *flush;
 };
 struct efi_simple_file_system {
@@ -558,6 +561,106 @@ static efi_status fail(uint32_t code, const char *message) {
 #endif
 #endif
   return EFI_INVALID_PARAMETER;
+}
+
+/* ---- H3 recovery reinstall (JUN-140) -------------------------------------
+   Booting the recovery volume (RECOVERY.ID present on the loaded volume) or
+   falling back to an alternate volume for the kernel means the system
+   volume's boot chain is gone or suspect. The recovery volume carries the
+   three boot-chain files; restore them file-by-file to the system ESP so
+   the system boots on its own again. The data partition is not touched.
+   The copy is bounded: one file at a time through a staging buffer, each
+   write followed by a read-back comparison. */
+#define REINSTALL_MAX_FILE (8U * 1024U * 1024U)
+static uint8_t *reinstall_stage;
+
+static int recovery_marker_present(struct efi_file *root) {
+  struct efi_file *file = 0;
+  if (root->open(root, &file, u"\\RECOVERY.ID", 1, 0) != EFI_SUCCESS || !file) return 0;
+  file->close(file);
+  return 1;
+}
+
+static int reinstall_copy(struct efi_file *src_root, struct efi_file *dst_root,
+                          const char16 *path, struct efi_boot_services *bs) {
+  struct efi_file *src = 0, *dst = 0;
+  uint64_t size = 0;
+  if (src_root->open(src_root, &src, path, 1, 0) != EFI_SUCCESS || !src) return 0;
+  size = REINSTALL_MAX_FILE;
+  if (src->read(src, &size, reinstall_stage) != EFI_SUCCESS || size == 0 ||
+      size > REINSTALL_MAX_FILE) { src->close(src); return 0; }
+  src->close(src);
+  if (dst_root->open(dst_root, &dst, path, 2 | 0x8000000000000000ULL, 0) != EFI_SUCCESS || !dst)
+    return 0;
+  uint64_t written = size;
+  if (dst->write(dst, &written, reinstall_stage) != EFI_SUCCESS || written != size) {
+    dst->close(dst); return 0;
+  }
+  dst->close(dst);
+  /* read back and compare */
+  struct efi_file *chk = 0;
+  uint64_t back = 0;
+  if (dst_root->open(dst_root, &chk, path, 1, 0) != EFI_SUCCESS || !chk) return 0;
+  back = REINSTALL_MAX_FILE;
+  int same = (chk->read(chk, &back, reinstall_stage + REINSTALL_MAX_FILE) == EFI_SUCCESS &&
+              back == size);
+  chk->close(chk);
+  if (same) {
+    for (uint64_t k = 0; k < size; k++) {
+      if (reinstall_stage[k] != reinstall_stage[REINSTALL_MAX_FILE + k]) { same = 0; break; }
+    }
+  }
+  return same;
+}
+
+/* Restore the boot chain to the system ESP (the first non-own FAT volume
+   that has an EFI\AIUEOS directory). Returns 1 when a restore ran. */
+static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_device) {
+  static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
+  static const char16 initramfs_path[] = u"\\EFI\\AIUEOS\\INITRD.IMG";
+  static const char16 boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
+  static const char16 marker_dir[] = u"\\EFI\\AIUEOS";
+  efi_handle handles[16];
+  uint64_t handle_bytes = sizeof(handles);
+  int ran = 0;
+  struct efi_simple_file_system *own_fs = 0;
+  struct efi_file *own_root = 0;
+  if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&own_fs) != EFI_SUCCESS ||
+      !own_fs || own_fs->open_volume(own_fs, &own_root) != EFI_SUCCESS || !own_root)
+    return 0;
+  if (!recovery_marker_present(own_root)) { own_root->close(own_root); return 0; }
+  if (bs->allocate_pool(2, 2 * REINSTALL_MAX_FILE, (void **)&reinstall_stage) != EFI_SUCCESS)
+    return 0;
+  if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) {
+    own_root->close(own_root); return 0;
+  }
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count; i++) {
+    struct efi_simple_file_system *fs = 0;
+    struct efi_file *root = 0;
+    struct efi_file *probe = 0;
+    if (handles[i] == own_device) continue;
+    if (bs->handle_protocol(handles[i], &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs)
+      continue;
+    if (fs->open_volume(fs, &root) != EFI_SUCCESS || !root) continue;
+    if (root->open(root, &probe, marker_dir, 1, 0) != EFI_SUCCESS || !probe) {
+      root->close(root); continue;
+    }
+    probe->close(probe);
+    int ok = reinstall_copy(own_root, root, kernel_path, bs) &&
+             reinstall_copy(own_root, root, initramfs_path, bs) &&
+             reinstall_copy(own_root, root, boot_path, bs);
+    root->close(root);
+    if (ok) {
+      debug_string("AIUEOS_RECOVERY_REINSTALL_OK boot-chain-restored\n");
+      ran = 1;
+    } else {
+      debug_string("AIUEOS_RECOVERY_REINSTALL_FAIL copy\n");
+    }
+    break;
+  }
+  own_root->close(own_root);
+  return ran;
 }
 
 static efi_status read_verified_file(struct efi_file *root, const char16 *path,
@@ -1090,6 +1193,8 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
   }
 #endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
+  progress(212, "AIUEOS_LOADER_PROGRESS recovery-reinstall");
+  recovery_reinstall(bs, loaded->device_handle);
 #ifdef AIUEOS_MODEL_NVME_SLOTS
   progress(211,"AIUEOS_LOADER_PROGRESS model-usb-to-nvme-ab");
   if (stage_model_to_nvme(bs, loaded->device_handle) != EFI_SUCCESS)
