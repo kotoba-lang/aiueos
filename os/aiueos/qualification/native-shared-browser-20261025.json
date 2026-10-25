@@ -4,14 +4,30 @@
   "date": "2026-10-25",
   "compiler": {
     "repository": "kotoba-lang/amu",
-    "revision": "6a77cd91182b858fff435c679e8ef71f514fc2ae",
+    "revision": "979049caf96ac7b12dd9c089021a60922089717c",
     "publicImage": {
-      "bytes": 9302528,
-      "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+      "bytes": 9327104,
+      "sha256": "f8f69188817729997c89d63e513918be5a02bdb3ef91ab0e7d92b254c4a2b014"
     },
     "armRoot": {
-      "bytes": 3539456,
-      "sha256": "d5ef9cee05b4c9194e7ecb1c7084c48d06db43c51c2dd85e3b36c340b46615cd"
+      "bytes": 3559936,
+      "sha256": "285c54f826d5f7f77db6827bc21c622c2c777cea252a1ba4816d8b01351807e1"
+    },
+    "sourceUnity": {
+      "bytes": 3454909,
+      "sha256": "24039e0f0ed95eaad39b71cbd9d71f1e38bd440dc8d0b505b3adfb9aeb347f82"
+    },
+    "nativeArmMainTier": true,
+    "controllerImage": {
+      "bytes": 90624,
+      "sha256": "ee84a1f879775cd3b69ffff5782e7584f9348627394ad04525127f50ca5c98b2"
+    },
+    "nativeWorkflowRun": 40165507318,
+    "nativeWorkflowTerminalSuccess": false,
+    "nativeArmMainSourceBindings": 95,
+    "nativeArmMainReceipt": {
+      "bytes": 286189,
+      "sha256": "d6f192805b3fd2a367859eafdaa6c042f45cb1111ab5d0e9cdd08f6c32bed73b"
     }
   },
   "sourceOwners": {
@@ -44,7 +60,7 @@
     }
   },
   "componentExecution": {
-    "runId": 40151980803,
+    "runId": 40165507318,
     "targets": [
       {
         "target": "arm64",
@@ -54,8 +70,8 @@
           "6.17.0-1022-azure"
         ],
         "compiler": {
-          "bytes": 3539456,
-          "sha256": "d5ef9cee05b4c9194e7ecb1c7084c48d06db43c51c2dd85e3b36c340b46615cd"
+          "bytes": 3559936,
+          "sha256": "285c54f826d5f7f77db6827bc21c622c2c777cea252a1ba4816d8b01351807e1"
         },
         "sourceBindings": 8,
         "cases": [
@@ -93,8 +109,8 @@
           "6.17.0-1022-azure"
         ],
         "compiler": {
-          "bytes": 9302528,
-          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+          "bytes": 9327104,
+          "sha256": "f8f69188817729997c89d63e513918be5a02bdb3ef91ab0e7d92b254c4a2b014"
         },
         "sourceBindings": 8,
         "cases": [
@@ -132,10 +148,10 @@
     "textEditExports": 13
   },
   "desktopRegression": {
-    "status": "PASS_FINAL_COMPILER_QEMU_BYTES_BINDING",
+    "status": "PASS_KPV1_COMBINED47_ARM_QEMU_BYTE_BINDING",
     "compiler": {
-      "bytes": 3539456,
-      "sha256": "d5ef9cee05b4c9194e7ecb1c7084c48d06db43c51c2dd85e3b36c340b46615cd"
+      "bytes": 3559936,
+      "sha256": "285c54f826d5f7f77db6827bc21c622c2c777cea252a1ba4816d8b01351807e1"
     },
     "sourceModuleCount": 30,
     "qemuProof": {
@@ -164,7 +180,9 @@
     "reproduced": true,
     "sharedBrowserCSSOM": false,
     "dappsExecuted": false,
-    "stateRestoreQualified": false
+    "stateRestoreQualified": false,
+    "qemuReexecution": false,
+    "latestCompilerGeneratesObservedImages": true
   },
   "acceptance": {
     "sharedCSSOM": false,
@@ -190,5 +208,101 @@
     "kernel": "The current native desktop consumes Browser-frame2; pure native Linux component execution does not provide a kernel reference-value runtime.",
     "apps": "Current cards are unregistered service diagnostics. Actual app commands/consent and durable restore remain open."
   },
-  "historicalEvidenceIsCurrentQualification": false
+  "historicalEvidenceIsCurrentQualification": false,
+  "mergedOwnerExecution": {
+    "status": "PASS_MERGED_OWNER_NATIVE_ARM_X86_SOURCE_BINDING",
+    "runs": {
+      "browser": 40162008901,
+      "dom-gpu": 40162030605
+    },
+    "cases": [
+      {
+        "owner": "browser",
+        "target": "arm64",
+        "main": "d41d10f3de9e072775919de18d0ac58d015d539c",
+        "sourceBindings": 2,
+        "verdict": 0,
+        "compiler": {
+          "bytes": 3539456,
+          "sha256": "d5ef9cee05b4c9194e7ecb1c7084c48d06db43c51c2dd85e3b36c340b46615cd"
+        },
+        "kernelDesktopQualified": false,
+        "cssomQualified": false,
+        "restorationQualified": false
+      },
+      {
+        "owner": "browser",
+        "target": "x86_64",
+        "main": "d41d10f3de9e072775919de18d0ac58d015d539c",
+        "sourceBindings": 2,
+        "verdict": 0,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "kernelDesktopQualified": false,
+        "cssomQualified": false,
+        "restorationQualified": false
+      },
+      {
+        "owner": "dom-gpu",
+        "target": "arm64",
+        "main": "03b839c638ae836e306c00fca9897cef67acc974",
+        "sourceBindings": 3,
+        "verdict": 0,
+        "compiler": {
+          "bytes": 3539456,
+          "sha256": "d5ef9cee05b4c9194e7ecb1c7084c48d06db43c51c2dd85e3b36c340b46615cd"
+        },
+        "kernelDesktopQualified": false,
+        "cssomQualified": false,
+        "restorationQualified": false
+      },
+      {
+        "owner": "dom-gpu",
+        "target": "x86_64",
+        "main": "03b839c638ae836e306c00fca9897cef67acc974",
+        "sourceBindings": 3,
+        "verdict": 0,
+        "compiler": {
+          "bytes": 9302528,
+          "sha256": "04f96f888f2658466125d6d9e8cb25f942299d1dc68d6c8fc84565332a77b77a"
+        },
+        "kernelDesktopQualified": false,
+        "cssomQualified": false,
+        "restorationQualified": false
+      }
+    ]
+  },
+  "mergedOwnerPullRequests": {
+    "browser": {
+      "repository": "kotoba-lang/browser",
+      "mergeCommit": "d41d10f3de9e072775919de18d0ac58d015d539c",
+      "pr": 36
+    },
+    "dom": {
+      "repository": "kotoba-lang/dom-gpu",
+      "mergeCommit": "03b839c638ae836e306c00fca9897cef67acc974",
+      "pr": 10
+    },
+    "text": {
+      "repository": "kotoba-lang/kotoba",
+      "mergeCommit": "41a27e33220a561383512f53a0a34cf4e5ffc670",
+      "pr": 838
+    }
+  },
+  "f64BackendGuard": {
+    "repository": "kotoba-lang/amu",
+    "revision": "171f5a54bd070c06912e6f47ccc995395e1d94bf",
+    "sourceModules": 48,
+    "allDeclarationsRetained": true,
+    "nativeArmUnitResult": 15,
+    "floatingTags": 36,
+    "integerBackendRefusals": 22,
+    "integerArmResult": 42,
+    "integerChromeResult": 42,
+    "publicCompilerAdopted": false,
+    "completeCompilerQualified": false,
+    "latestPrivateStoreMainReconciled": false
+  }
 }
