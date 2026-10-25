@@ -522,6 +522,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
+   :note "Scoped 2026-10-25 (measured on the built release image): the recovery volume already exists and boots — GPT part 1 'aiueos recovery', LBA 98271..131038 (16 MiB FAT16), holding exactly the boot chain (EFI/BOOT/BOOTX64.EFI, EFI/AIUEOS/KERNEL.ELF, EFI/AIUEOS/INITRD.IMG; built by make-release-image.py's make_fat16(efi, kernel, initramfs)). The system ESP is GPT part 0 'aiueos ESP', LBA 2048..98270 (47 MiB); both carry the EFI System Partition type GUID and are told apart by name/position, and the two regions are NOT byte-identical in the release image (the byte-identical-slices design applies to the install USB). The reinstall is therefore a FILE-level restore of the boot chain (three files) from the recovery FAT to the system ESP — cleanest in the loader (BOOTX64.EFI has EFI FAT write services), detecting recovery boot by its loaded-from volume; the data partition is untouched by construction. 'next=rescue-inspect' in the install refusal is only a pointer today — no rescue flow is implemented. Evidence for this row: boot recovery after destroying the system ESP, observe the restore marker, then boot the restored system and read back the data partition digest unchanged (the A3/A4 harness already covers install/destroy/verify)."
    }
   {:id :H4 :category :update :title "Backup and restore of user data"
    :weight 1 :required true :required-level :device
