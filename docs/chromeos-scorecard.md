@@ -60,7 +60,7 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | G5 Key lifecycle and revocation | 1 | two RSA-2048 qualification signers; the original is revoked and its object is refused ('release signer is revoked'), the rotated signer verifies, and the revoked signature verifies without the list (control) | qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list is an operational step outside the run |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The fourteen weigh 24 points: rejecting all of them would take the score from 53% to 31%. The 31% is the stricter figure; the 55% is what the checker prints.
+The fourteen weigh 24 points: rejecting all of them would take the score from 55% to 31%. The 31% is the stricter figure; the 55% is what the checker prints.
 
 ## What is not fixed by this file -- the owner's to confirm
 
@@ -127,7 +127,7 @@ weights that do not sum to 100.
 | G5 | Key lifecycle and revocation | 1 | release | pass |
 | H1 | Signed update download and apply | 3 | release | none |
 | H2 | Rollback after a bad update | 3 | release | none |
-| H3 | Recovery mode and recovery image | 2 | release | none |
+| H3 | Recovery mode and recovery image | 2 | release | pass |
 | H4 | Backup and restore of user data | 1 | release | none |
 | I1 | Suspend and resume | 2 | device | none |
 | I2 | Battery and power management | 1 | device | none |
