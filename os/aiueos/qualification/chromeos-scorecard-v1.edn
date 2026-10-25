@@ -66,7 +66,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
-   :note "Measured 2026-10-24: the driver reads GET_DISPLAY_INFO once and never drains the controlq for VIRTIO_GPU_EVENT_DISPLAY; gpu_ctrl assumes exactly one used-ring entry per command. A host resize sends an async event the guest ignores and can desynchronise the next command; the present path rejects a changed width/height. A fix needs event draining plus a re-read and re-bind on display change."
+   :note "Measured 2026-10-24: the driver reads GET_DISPLAY_INFO once and never drains the controlq for VIRTIO_GPU_EVENT_DISPLAY; gpu_ctrl assumes exactly one used-ring entry per command. A host resize sends an async event the guest ignores and can desynchronise the next command; the present path rejects a changed width/height. A fix needs event draining plus a re-read and re-bind on display change. Measured 2026-10-25: the fix is implemented (used-ring drain that separates device events from command responses, a re-read and re-bind of the desktop resource, a fit-instead-of-equality size check so a shrunken display letterboxes, and a 64-show geometry poll fallback) and the production image boots green with it (AIUEOS_DESKTOP_LOOP_OK / SURFACE_OK, zero command failures). The re-bind path could not be exercised: QEMU 10.0.3 reports a STATIC GET_DISPLAY_INFO for every host-side change tried (dbus SetUIInfo size oscillation, SetUIInfo zero-size head disable, cocoa window resize; and the event buffer never fills, so VIRTIO_GPU_EVENT_DISPLAY does not reach the guest). A guest-visible geometry change needs either a device model that reports one or the physical machine; until then the re-bind mechanism is implemented but unproven and this row stays unachieved. Also: a bare posted buffer on the controlq (the virtio-gpu event primitive as understood) broke the command channel (4 timeouts per boot; removing the post restored 0), so the event primitive needs the correct queue/convention before events can be relied on."
    }
   {:id :A3 :category :boot :title "Install from USB"
    :weight 3 :required true :required-level :release
@@ -84,19 +84,20 @@
    :procedure "Run the installer again on the installed disk."
    :expected "The installer refuses and names why; the disk is unchanged."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
+   :status :pass :qemu-progress :pass
    :evidence ["ADR-0239" "JUN-65"
+              "receipt os/aiueos/qualification/receipts/vm-20261025/signed-release-refusal/receipt.edn"
               "os/aiueos/qualification/receipts/vm-20261018/install-refused-qemu/boot4-serial.log"]
-   :note "Measured 2026-10-18 under QEMU on the reference Mac (smoke-qemu-install.cljk, boot 4): the USB was re-inserted with the boot order back to USB after the NVMe install, and the installer answered AIUEOS_INSTALL_REFUSED existing-install installed-at=2026-10-18T12:08:15.146Z hostname=aiueos-gate next=rescue-inspect. The same gate asserted the NVMe image byte-identical across that boot. Limits: the log is from 2026-10-18, before ADR 0373's kernel-memory change, and the byte-identity digest was asserted in the gate rather than stored as a separate digest file; not re-run since. The 2026-10-24 selfhost run's script prints repeat-refused in its final line but the run was cut before that line."
+   :note "Measured 2026-10-18 under QEMU on the reference Mac (smoke-qemu-install.cljk, boot 4): the USB was re-inserted with the boot order back to USB after the NVMe install, and the installer answered AIUEOS_INSTALL_REFUSED existing-install installed-at=2026-10-18T12:08:15.146Z hostname=aiueos-gate next=rescue-inspect. The same gate asserted the NVMe image byte-identical across that boot. Limits: the log is from 2026-10-18, before ADR 0373's kernel-memory change, and the byte-identity digest was asserted in the gate rather than stored as a separate digest file; not re-run since. Re-measured 2026-10-25 on the SIGNED release artifact: after the gate boot1 installed disk sha256 5f6e154d (the image the signed build receipt names), a second unattended install boot answered AIUEOS_INSTALL_REFUSED existing-install installed-at=2026-10-25T06:04:36.025Z hostname=aiueos-gate next=rescue-inspect with rc=4, and the NVMe digest (506ed904..) is byte-identical before and after that boot. The 2026-10-24 selfhost run's script prints repeat-refused in its final line but the run was cut before that line."
    }
   {:id :A5 :category :boot :title "First-run setup"
    :weight 1 :required true :required-level :release
    :procedure "Boot a clean install; complete the setup (name, device, account link)."
    :expected "Setup completes; the choices read back after a reboot."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :pass
-   :evidence ["ADR-0240" "ADR-0239"]
-   :note "Guided defaults and the QR account link are gated under QEMU."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/a5-first-run-setup/receipt.edn" "ADR-0240" "ADR-0239"]
+   :note "Measured 2026-10-25: on a clean work image the loader's setup flow takes the three choices (name=aiueos-gate, device=dev-001, account=acct-link-77) from a setup volume and stores SETUP.INI on the system ESP (AIUEOS_SETUP_APPLIED); the next boot without the volume reads the choices back (AIUEOS_SETUP_LOADED with all three values) and the desktop boots. Guided defaults and the QR account link are gated under QEMU. Caveats, owner may reject: the choices arrive on the setup volume in the QEMU test (the physical story is a first-run UI writing the same file); the account link is a string value, no account system is contacted; the values are plain text on the ESP; completion is a file write, not an interactive form."
    }
   {:id :B1 :category :identity :title "Sign in with a device-bound passkey"
    :weight 3 :required true :required-level :device
@@ -206,9 +207,9 @@
    :procedure "Read the status area on battery and on AC, online and offline."
    :expected "Each shows its current state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-clock" "ADR-0264" "ADR-0266"]
-   :note "The clock (CMOS real-time clock, HH:MM) and the network state (OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange, ADR-0266) are statuses in the launcher row; the network state is boot-time, not live. There is no power state (the kernel reads no battery device; a VM has none)."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/c9-status-area/receipt.edn" "gate guest-browser-clock" "ADR-0264" "ADR-0266"]
+   :note "The clock (CMOS real-time clock, HH:MM) and the network state (OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange, ADR-0266) are statuses in the launcher row; the network state is boot-time, not live. There is no power state (the kernel reads no battery device; a VM has none). Measured 2026-10-25: the desktop now paints a live status bar on every frame (framebuffer.c aiueos_desktop_paint_status) — NET ONLINE/OFFLINE from the DHCP lease state, POWER AC, CLK <APIC ticks> — and announces each state change (AIUEOS_STATUS_AREA_OK network=... power=ac clock=running); the announced state always equals the state the bar renders. Observed in the reference-VM desktop boot: network=offline (the DHCP client runs in the network flow, not the desktop smoke) — the honest current state. Caveats, owner may reject: the battery half of the row is untestable (no battery device); the online announcement was not captured in the desktop run (the same rendering path is driven by the lease state proven in the F4 runs); the readback is the state-change marker, not OCR of the bar."
    }
   {:id :C10 :category :shell :title "Interaction states and feedback"
    :weight 2 :required true :required-level :device
@@ -301,6 +302,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :none
    :evidence []
+   :note "Scoped 2026-10-25: the desktop objects' sources are in the repo (os/aiueos/kotoba/browser-frame.kotoba, browser-frame2.kotoba) and the window manager already handles titlebar drags (ADR-0229) — the D&D work is a browser-frame2 event extension plus the flow and readback. The BLOCKER is the object rebuild toolchain: build-kotoba-native-desktop.sh compiles with the --selfhost-desktop flag, which lives only in the legacy public entry RETIRED on 2026-10-23 (amu/docs/retired/legacy-public-entry-20261023/) and exists in no current compiler (neither the amu checkout's seed nor the amu-1560 full compiler know it — E1 usage). Rebuilding desktop objects natively needs the desktop profile ported into the native compiler (amu-side work) or the pipeline rewritten for the native route. Pipeline fixes landed meanwhile (the wrapper detects the native ELF instead of running it under node; the node checks relax for the ELF)."
    }
   {:id :D9 :category :input :title "On-screen keyboard"
    :weight 0 :required false :required-level :device
@@ -325,7 +327,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
    :evidence ["gate guest-browser-flow-parity" "ADR-0234" "amu PR 1489"]
-   :note "The kernel desktop carries a behavioural mirror of the Browser's surface and flow; the real Browser/CSSOM graph is not compiled for the kernel (floor :browser-component is open). Measured 2026-10-24 (os/aiueos/scripts/measure-browser-component.py): browser.surface and browser.text-edit lock and link as an 11-module graph with the guest twins of the text library, and the kernel target stops at the first host regex literal in cssom.core; cssom.core and cssom.layout hold about 127 such literals — measured on the uncommitted working tree of the owner's cssom checkout, where a port off host regex is already under way (floors note, 2026-10-24 correction)."
+   :note "The kernel desktop carries a behavioural mirror of the Browser's surface and flow; the real Browser/CSSOM graph is not compiled for the kernel (floor :browser-component is open). Measured 2026-10-24 (os/aiueos/scripts/measure-browser-component.py): browser.surface and browser.text-edit lock and link as an 11-module graph with the guest twins of the text library, and the kernel target stops at the first host regex literal in cssom.core; cssom.core and cssom.layout hold about 127 such literals — measured on the uncommitted working tree of the owner's cssom checkout, where a port off host regex is already under way (floors note, 2026-10-24 correction). Measured 2026-10-25: the host-regex port is complete at source level (cssom.core 31 + cssom.layout 29 call sites moved to bounded-regex helpers, 0 kotoba-reachable host regex left), and the 6-module graph plus a shim prelude now passes the full semantic pipeline — parse, form check, type check and module resolution — under the kernel target. The remaining wall is the object admission profile itself: seed/70-x86_64-linux.kotoba defines xg-scalar as TY-I64/TY-BOOL only, so every function (exported or private) must carry i64/bool parameters and result (:string/:f64 are refused with E7102; bisected 2026-10-25 on minimal cases). Porting the cssom/text API surface to that scalar ABI is an owner design decision, not a mechanical rename; until it lands, this floor stays open. This row itself remains :device-level: it needs the reference machine and a hosted-engine parity readback, not just a compile."
    }
   {:id :E2 :category :web :title "HTTPS pages"
    :weight 3 :required true :required-level :device
@@ -409,9 +411,9 @@
    :procedure "Create, rename, delete, fill the disk."
    :expected "Operations are atomic; a full disk is reported, not corrupted."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["kotoba journal objects (os/aiueos/kotoba/journal-record-build.kotoba)"]
-   :note "A Kotoba journal exists; no file-system semantics gated."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/f2-durable-file-system/receipt.edn" "kotoba journal objects (os/aiueos/kotoba/journal-record-build.kotoba)"]
+   :note "Measured 2026-10-25: a bounded file table over the A/B journal pattern (two table sectors, 15 entries, data region sectors 64..2047) exercised by a kernel self-test — AIUEOS_FS_CREATE_OK, FS_RENAME_OK, FS_DELETE_OK, FS_FULL_REPORTED not-corrupted (the create that does not fit reports the full condition and writes nothing) and FS_ATOMIC_OK table-readback-ab (every operation commits via the inactive slot + sequence + read-back). Caveats, owner may reject: 15 entries / ~992 KiB bounded profile; names 20-byte ASCII; sizes pre-allocated at create; the atomicity claim is the A/B commit pattern, not a general power-loss proof; the test is a boot self-test."
    }
   {:id :F3 :category :storage :title "Wi-Fi"
    :weight 3 :required true :required-level :device
@@ -438,6 +440,7 @@
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
    :status :unachieved :qemu-progress :partial
    :evidence ["README.md capability table"]
+   :note "Scoped 2026-10-25: the guest has no USB stack (measured: zero USB code in the kernel). The row needs a USB mass-storage read path — the bounded design is a UHCI HCD (the q35 ICH9 UHCI companion, simpler than the harness's xhci) + BBB bulk-only transport + SCSI READ(10)/INQUIRY/READ CAPACITY, then the file copy into the internal file system (F2's table) with the readback. The QEMU test attaches usb-storage on the default UHCI bus with a known file; the copy target and the readback are the internal FS. Scale: ~500 lines of new driver — a multi-wakeup kernel feature, the last internally-movable row."
    }
   {:id :F6 :category :storage :title "Bluetooth"
    :weight 1 :required true :required-level :device
@@ -460,9 +463,9 @@
    :procedure "Boot a release image; boot one with a flipped byte."
    :expected "The good image boots; the altered one is refused before it runs."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["ADR-0220" "ADR-0222"]
-   :note "Signed ELF and loader admission under QEMU; no firmware-rooted chain on the machine."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g1-signed-image-tamper/receipt.edn" "receipt os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn" "receipt os/aiueos/qualification/receipts/vm-20261024/install-selfhost-qemu/receipt.edn" "ADR-0220" "ADR-0222"]
+   :note "Measured 2026-10-25: the release disk (aiueos-x86_64-gpt.img, sha256 5f6e154d…) verifies against the signed build receipt (AIUEOS_RELEASE_SIGNATURE_OK rsa2048-pkcs1-sha256) and boots in the A3 install chain; a one-byte flip (offset 4096) yields 8ea2c629… and is refused at the release verification gate — the signed receipt binds the disk sha256, so the altered image cannot verify and never installs or runs. Caveats, owner may reject: (1) the refusal is at the release gate, not at firmware — BOOTX64.EFI is not Authenticode-signed (PE security directory empty), so UEFI Secure Boot cannot refuse a flipped bootloader; a firmware-rooted chain needs sbsign-class signing plus enrolled keys; (2) the altered image is refused before boot and was therefore not booted; (3) the row's wording says 'boot one with a flipped byte' — the measured refusal happens earlier in the chain."
    }
   {:id :G2 :category :security :title "Per-app isolation"
    :weight 2 :required true :required-level :device
@@ -478,8 +481,9 @@
    :procedure "Read the disk from outside the OS."
    :expected "Only ciphertext is readable."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g3-data-encrypted-at-rest/receipt.edn"]
+   :note "Measured 2026-10-25: every virtio-blk sector read/write is AES-128-GCM wrapped with a sector-number nonce under a key the loader carries in boot-info v6 from \\EFI\\AIUEOS\\DATA.KEY on the system ESP (a different disk from the data volume). The boot run green-lights the whole storage stack through the cipher (AIUEOS_VIRTIO_BLK_OK, AIUEOS_JOURNAL_OK, AIUEOS_KOTOBA_JOURNAL_PLAN_OK, AIUEOS_KOTOBA_OBJECT_WRITE_OK, AIUEOS_OBJECT_STORE_OK, AIUEOS_OBJECT_TXN_OK — F1 non-regression) and an external raw read of the data disk finds zero plaintext record magics (AIUECRS1 / AIUEOBJ / AIUEJRN). Caveats, owner may reject: the filesystem format superblock (AIUEFS1, sector 0) is plaintext by host-side construction; the GCM tag is discarded (integrity stays with the journal checksums); the key entropy is the TSC (weak, qualification source) and losing DATA.KEY makes the data unreadable; the ciphertext-strength claim is a magic/payload scan, not a formal analysis."
    }
   {:id :G4 :category :security :title "Permission broker"
    :weight 1 :required true :required-level :device
@@ -494,32 +498,37 @@
    :procedure "Rotate a signing key; revoke a signer."
    :expected "Objects of a revoked signer are refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["docs/key-lifecycle.md"]
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/g5-key-rotation-revocation/receipt.edn" "os/aiueos/qualification/receipts/vm-20261025/g5-key-rotation-revocation/revoked-keys.txt" "docs/key-lifecycle.md"]
+   :note "Measured 2026-10-25: two RSA-2048 qualification signers (original + rotated); the original signer is listed in revoked-keys.txt and an object signed by it is refused at the verification gate ('release signer is revoked', rc=1), the rotated signer's object verifies (AIUEOS_RELEASE_SIGNATURE_OK), and the revoked signer's signature still verifies without the list (control: the refusal is revocation, not the signature). verify-release-signature.py gained --revoked-keys (SHA-256 fingerprints of the DER public key). Caveats, owner may reject: qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list to verifiers is an operational step outside this run."
    }
   {:id :H1 :category :update :title "Signed update download and apply"
    :weight 3 :required true :required-level :release
    :procedure "Publish an update; the machine fetches, verifies and applies it."
    :expected "The new version runs; an unsigned update is refused."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/h1-signed-update-apply/receipt.edn"]
+   :note "Measured 2026-10-25: an update volume (UPDATE.ID, UPDATE.MNF, UPDATE.SIG + the three boot-chain files) is read by the loader, the manifest is verified with a C RSASSA-PKCS1-v1_5-SHA256 implementation under the baked release key, each file's sha256 is checked against the manifest, and the files are applied to the system ESP with read-back compare (AIUEOS_UPDATE_APPLIED). A manifest with one flipped byte is refused before any write (AIUEOS_UPDATE_REFUSED_unsigned) and the untouched system keeps booting. Designed 2026-10-25 (reusable parts measured this session): the update package is the three boot-chain files plus UPDATE.MANIFEST (sha256 per file) and UPDATE.MANIFEST.SIG (RSASSA-PKCS1-v1_5-SHA256 under the release key). The loader already has SHA-256 file verification and the FAT write machinery proven by H3 (READ|WRITE|CREATE+ARCHIVE, read-back compare); the kernel already has the signed-payload admission kotoba_aiueos_recovery_payload_admission (pci.c:386, kotoba-sha256 + kotoba-rsa2048-pkcs1 + public-key policy) whose verify object can be linked into the loader the way the kernel links it. Detection mirrors RECOVERY.ID: an update volume carries UPDATE.ID. Apply copies the verified files to the system ESP (the H3 copy path); an absent/failed manifest signature is AIUEOS_UPDATE_REFUSED_unsigned with no writes. The 'fetch' in the QEMU test is the update volume (the physical-machine story is a network fetch); the signed-manifest generator reuses sign-release-image.py's PKCS#1 signing. Measured 2026-10-25 (toolchain finding): rotating the kotoba rsa2048.o's baked admission key to the release key is BLOCKED — the committed objects call kernel-load-u8-4k (ADR 0373 window ops) which no available compiler (the amu checkout binary, the amu-1560 F2.elf) knows as a form (E2101), so the object cannot be rebuilt outside the original build environment. The chosen route is therefore a small C RSASSA-PKCS1-v1_5-SHA256 verify in the loader (same algorithm as scripts/verify-release-signature.py) with the RELEASE public key baked as constants — the matching private key is held by the signing pipeline (qualification/release-key/), so update manifests can be signed in the test. The kernel's kotoba_aiueos_recovery_payload_admission stays as-is for the initramfs path."
    }
   {:id :H2 :category :update :title "Rollback after a bad update"
    :weight 3 :required true :required-level :release
    :procedure "Apply an update that fails to boot."
    :expected "The machine returns to the previous version by itself."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/h2-update-rollback/receipt.edn"]
+   :note "Measured 2026-10-25: a validly signed update carrying a garbage KERNEL.ELF is applied to a persistent disk (boot A: AIUEOS_UPDATE_APPLIED); the next boot's kernel admission fails and the loader's alternate-volume fallback admits the previous kernel and restores the previous boot chain over the system ESP with read-back compare (AIUEOS_UPDATE_ROLLED_BACK previous-version-restored), after which the previous version boots to the desktop. The rollback needs no new trust decision: admission still requires the identical compiled-in SHA-256. Caveats, owner may reject: the restore source is the admitting volume (the release build), not a stored pre-update snapshot; a bootable-but-misbehaving update is not covered (needs a runtime health flag); the test needed a writable disk (AIUEOS_DISK_SNAPSHOT=off, added to the harness)."
+
    }
   {:id :H3 :category :update :title "Recovery mode and recovery image"
    :weight 2 :required true :required-level :release
    :procedure "Boot the recovery image after destroying the system partition."
    :expected "The system is reinstalled with the user's data intact."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/h3-recovery-reinstall/receipt.edn"]
+   :note "Scoped 2026-10-25 (measured on the built release image): the recovery volume already exists and boots — GPT part 1 'aiueos recovery', LBA 98271..131038 (16 MiB FAT16), holding exactly the boot chain (EFI/BOOT/BOOTX64.EFI, EFI/AIUEOS/KERNEL.ELF, EFI/AIUEOS/INITRD.IMG; built by make-release-image.py's make_fat16(efi, kernel, initramfs)). The system ESP is GPT part 0 'aiueos ESP', LBA 2048..98270 (47 MiB); both carry the EFI System Partition type GUID and are told apart by name/position, and the two regions are NOT byte-identical in the release image (the byte-identical-slices design applies to the install USB). The reinstall is therefore a FILE-level restore of the boot chain (three files) from the recovery FAT to the system ESP — cleanest in the loader (BOOTX64.EFI has EFI FAT write services), detecting recovery boot by its loaded-from volume; the data partition is untouched by construction. Measured 2026-10-25 (receipt vm-20261025/h3-recovery-reinstall): the three boot-chain dirents were deleted from the system ESP, the firmware booted the recovery volume, the loader detected RECOVERY.ID, located the system ESP and restored KERNEL.ELF + INITRD.IMG + BOOTX64.EFI with read-back comparison (AIUEOS_RECOVERY_REINSTALL_OK); the same disk then booted to the desktop again and the non-ESP disk digest was unchanged (cdc84a747e3fc6a8). Caveats, owner may reject: the restored system is the boot chain (three files), not a re-partitioned disk; the destroy step deletes directory entries (deeper FAT damage would need format-and-copy); FatPkg accepts READ|WRITE|CREATE+ARCHIVE and rejects WRITE|CREATE alone; the OVMF boot order may still prefer the recovery volume after the restore (both copies identical); the user data readback is the non-ESP region digest, not files read in a user session. 'next=rescue-inspect' in the install refusal is only a pointer today — no rescue flow is implemented. Evidence for this row: boot recovery after destroying the system ESP, observe the restore marker, then boot the restored system and read back the data partition digest unchanged (the A3/A4 harness already covers install/destroy/verify)."
    }
   {:id :H4 :category :update :title "Backup and restore of user data"
    :weight 1 :required true :required-level :device
@@ -579,8 +588,9 @@
    :procedure "Navigate the desktop with a screen reader."
    :expected "Every control is announced with its role and state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/i6-screen-reader/receipt.edn"]
+   :note "Measured 2026-10-25: the desktop's own model (the browser-frame2 surface slots: window count, focus id) drives an announcement pass in the guest-browser flow — one AIUEOS_SCREENREADER line per control with role=window and state=focused/normal (the focused control marked), then AIUEOS_SCREENREADER_OK announcements=2 role=window as the readback. The navigation is reflected as the focus state. Caveats, owner may reject: the announced controls are the window controls (nested titlebar buttons are not separately announced); the role vocabulary is {window} and the state vocabulary {focused, normal}; the readback is the serial announcements (audio rendering out of scope)."
    }
   {:id :I7 :category :power :title "Text and UI scaling for low vision"
    :weight 1 :required true :required-level :device

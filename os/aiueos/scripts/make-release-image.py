@@ -195,7 +195,7 @@ FAT16_DATA_START = FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS + FAT16_ROOT_
 FAT16_CLUSTERS = (ISO_BOOT_SECTORS - FAT16_DATA_START) // FAT16_CLUSTER_SECTORS
 
 
-def make_fat16(efi, kernel, initramfs):
+def make_fat16(efi, kernel, initramfs, recovery_marker=False, extra_files=None):
     if not 4085 <= FAT16_CLUSTERS <= 65524:
         raise ValueError("boot image cluster count is not FAT16")
     if (FAT16_CLUSTERS + 2) * 2 > FAT16_FAT_SECTORS * SECTOR:
@@ -241,6 +241,10 @@ def make_fat16(efi, kernel, initramfs):
     efi_file = allocate(efi_bytes)
     kernel_file = allocate(kernel_bytes)
     initramfs_file = allocate(initramfs_bytes)
+    # H3: the recovery volume carries a marker file the loader looks for on
+    # its own volume before reinstalling the boot chain to the system ESP.
+    recovery_id_bytes = b"aiueos-recovery-volume-v1\n"
+    recovery_id_file = allocate(recovery_id_bytes) if recovery_marker else 0
 
     def write_directory(cluster, payload):
         offset = (FAT16_DATA_START + (cluster - 2) * FAT16_CLUSTER_SECTORS) * SECTOR
@@ -254,6 +258,12 @@ def make_fat16(efi, kernel, initramfs):
                     dirent("KERNEL.ELF", 0x20, kernel_file, len(kernel_bytes)) +
                     dirent("INITRD.IMG", 0x20, initramfs_file, len(initramfs_bytes)))
     root = dirent("EFI", 0x10, efi_dir)
+    if recovery_marker:
+        root += dirent("RECOVERY.ID", 0x20, recovery_id_file, len(recovery_id_bytes))
+    if extra_files:
+        for extra_name, extra_bytes in extra_files.items():
+            extra_cluster = allocate(extra_bytes)
+            root += dirent(extra_name, 0x20, extra_cluster, len(extra_bytes))
     root_offset = (FAT16_RESERVED + FAT16_FATS * FAT16_FAT_SECTORS) * SECTOR
     image[root_offset:root_offset + len(root)] = root
 
@@ -471,7 +481,7 @@ def gpt_header(current, backup, entries_lba, entries_crc):
 
 def build_image(output, efi, kernel, initramfs):
     esp = make_fat32(efi, kernel, initramfs)
-    recovery = make_fat16(efi, kernel, initramfs)
+    recovery = make_fat16(efi, kernel, initramfs, recovery_marker=True)
     disk = bytearray(DISK_SECTORS * SECTOR)
     mbr = bytearray(SECTOR)
     mbr[:len(BIOS_STUB)] = BIOS_STUB

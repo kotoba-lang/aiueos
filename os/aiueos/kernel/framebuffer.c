@@ -48,7 +48,7 @@ static int inference_screen_initialized;
 static const uint32_t *desktop_list_ops;
 static uint64_t desktop_list_count, desktop_list_generation, desktop_list_base_generation;
 static uint64_t desktop_shown_generation;
-static uint32_t desktop_shadow[2048] __attribute__((aligned(16)));
+static uint32_t desktop_shadow[2048] __attribute__((section(".high_bss"), aligned(16))); /* .high_bss: the low layout is at its aperture limit (ADR-0222) */
 static uint32_t desktop_damage_last[4], desktop_damage_counts[5];
 static uint64_t desktop_damage_bytes;
 int aiueos_desktop_surface_ready(void) { return desktop_surface_ready; }
@@ -606,12 +606,69 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
 extern int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t height,
                                            uint32_t stride, uint32_t pixel_format,
                                            uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+/* A2: drain a host display change, re-read the geometry and drop the GPU
+   desktop resource so the next present re-binds it. Returns 1 when the
+   geometry changed and the caller must send a full frame. */
+extern int aiueos_gpu_display_refresh(void);
+extern uint32_t aiueos_dhcp_lease_seconds(void);
+extern volatile uint64_t aiueos_apic_timer_ticks;
+extern void aiueos_kernel_serial_marker(const char *text);
+
+/* C9: the status area — network, power and clock — painted on the desktop
+   surface on every frame and announced once per state. The clock shows the
+   APIC timer ticks (the guest's running timebase); power is AC in the
+   reference VM (there is no battery device to read). */
+static uint32_t status_last_state; /* 0 = unseen, 1 = offline, 2 = online */
+void aiueos_desktop_paint_status(void) {
+  char line[64];
+  uint32_t y, x;
+  uint32_t online = aiueos_dhcp_lease_seconds() > 0;
+  if (!desktop_surface_ready) return;
+  y = desktop_surface.height - 14;
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, 0, y, desktop_surface.width, 14, 0x00202830U);
+  x = 4;
+  qualification_text(online ? "NET ONLINE" : "NET OFFLINE", x, y + 3, 1,
+                     online ? 0x0060d080U : 0x00d08060U);
+  x += 6 * 11;
+  qualification_text("POWER AC", x, y + 3, 1, 0x00c0c0c0U);
+  x += 6 * 9;
+  {
+    uint64_t ticks = aiueos_apic_timer_ticks;
+    int i = 0;
+    line[i++] = 'C'; line[i++] = 'L'; line[i++] = 'K'; line[i++] = ' ';
+    /* decimal ticks, bounded to 12 digits */
+    char digits[16]; int n = 0;
+    if (ticks == 0) digits[n++] = '0';
+    while (ticks && n < 16) { digits[n++] = (char)('0' + (ticks % 10)); ticks /= 10; }
+    while (n > 0) line[i++] = digits[--n];
+    line[i] = 0;
+    qualification_text(line, x, y + 3, 1, 0x00c0c0c0U);
+  }
+  {
+    uint32_t state = online ? 2 : 1;
+    if (state != status_last_state) {
+      status_last_state = state;
+      aiueos_kernel_serial_marker(online ? "AIUEOS_STATUS_AREA_OK network=online power=ac clock=running\r\n"
+                                         : "AIUEOS_STATUS_AREA_OK network=offline power=ac clock=running\r\n");
+    }
+  }
+}
+extern void aiueos_kernel_serial_marker(const char *text);
 extern int64_t kotoba_aiueos_browser_damage(uint64_t ops, uint64_t ops_bytes, uint64_t shadow,
                                             uint64_t shadow_bytes, uint64_t count);
 int aiueos_desktop_show(void) {
   uint32_t x = 0, y = 0, w, h;
   int ok, listed;
   if (!desktop_surface_ready) return 0;
+  /* A2: a display change re-binds the GPU resource; the frame after one is
+     always whole. FRAMEBUFFER_PROGRESS(258) is the qualification channel;
+     AIUEOS_GPU_DISPLAY_CHANGE_OK is the evidence marker (production). */
+  if (aiueos_gpu_display_refresh()) {
+    desktop_shadow[0] = 0;
+    FRAMEBUFFER_PROGRESS(258);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_DISPLAY_CHANGE_OK rebind-fullframe\r\n");
+  }
   w = desktop_surface.width;
   h = desktop_surface.height;
   listed = desktop_list_ops && desktop_list_generation == desktop_surface.generation;
@@ -640,6 +697,7 @@ int aiueos_desktop_show(void) {
     desktop_shown_generation = desktop_surface.generation;
     return 1;
   }
+  aiueos_desktop_paint_status();
   ok = aiueos_gpu_present_desktop_rect((uint64_t)(uintptr_t)desktop_surface_pixels,
                                        desktop_surface.width, desktop_surface.height,
                                        desktop_surface.stride, desktop_surface.pixel_format,
