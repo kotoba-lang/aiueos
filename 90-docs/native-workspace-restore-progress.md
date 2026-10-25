@@ -118,3 +118,6 @@ bytes. Python does not implement guest save/restore, SHA decisions or the D2
 codec. The normal `desktop` profile and existing desktop QEMU input gate must
 also pass. Do not promote this component receipt into AWAI-90/JUN-145 completion,
 release publication, distributed recovery or physical hardware acceptance.
+
+For debugging an already running diagnostic VM without screen sharing or a
+password, use the [local QMP desktop debugger](native-desktop-headless-debug.md).
