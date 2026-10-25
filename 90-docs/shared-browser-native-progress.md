@@ -101,11 +101,29 @@ window-selection values and historical two-record backup tests do not supply
 that proof. Hardware/release acceptance and the historical scorecard remain
 separate; no product completion percentage is derived from these component jobs.
 
-For the 2026-10-25 Itonami integration audit, the required canonical broker
-source `kotoba-lang/wasm-webcomponent/src/kotoba-client-runtime.js` was absent
-from the local owner checkout. The current `itonami-agent` CLI entry imports
-Node host APIs (`node:readline`, `node:crypto`) and its KBB/JS host adapters;
-that implementation is not an AIUEOS native app artifact. The next native
-integration gate is a canonical broker plus a target app/runtime artifact with
-declared operations, followed by a real agent turn, committed state, and
-restart recovery on AIUEOS. No product-local consent implementation is used.
+The canonical broker source is present in `kotoba-lang/wasm-webcomponent`
+`origin/main` at `e00ae75e1c589f76b4f53a88a5e3256c98c9e162`:
+`src/kotoba-client-runtime.js` has SHA-256
+`7f760128c3a58098123c31ec3dd34b9c871932e3933f2c952facc4ab0e647212`.
+The earlier local checkout was detached before that merge; its missing file
+was not an owner-source blocker. The broker is JavaScript for the browser
+host. Its existence does not mean the native AIUEOS desktop imports it or
+provides trusted per-operation consent.
+
+The current `itonami-agent` CLI entry imports Node host APIs
+(`node:readline`, `node:crypto`) and its KBB/JS host adapters; that
+implementation is not an AIUEOS native app artifact. The current native
+diagnostic desktop has a RAM-only goal draft and no durable storage operation
+in that path. The next native integration gate is the complete shared
+Browser/CSSOM runtime plus an Itonami target artifact with declared operations,
+then a real agent turn, committed state and restart recovery on AIUEOS.
+No product-local consent implementation is used.
+
+The build host is a separate gate. The public Amu `bin/amu` is currently a
+static Linux x86_64 ELF, and AIUEOS `build-native-kernel.py` explicitly
+admits only matching Linux ELF compilers. `aarch64-macos` in Amu is a payload
+target, not a runnable Mac selfhost compiler. The previous Mac QEMU proof
+used a Linux container for compilation, so it proves a Linux-free guest,
+not a Linux-free build/release chain. A native Mac (or AIUEOS-hosted)
+self-rebuilding compiler and corresponding controller/runtime qualification
+must replace that host dependency before this goal's build closure passes.

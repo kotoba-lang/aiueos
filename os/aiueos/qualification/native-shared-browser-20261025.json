@@ -194,6 +194,26 @@
     "persistentStateRestore": false,
     "referenceHardware": false
   },
+  "itonamiIntegration": {
+    "canonicalBroker": {
+      "repository": "kotoba-lang/wasm-webcomponent",
+      "revision": "e00ae75e1c589f76b4f53a88a5e3256c98c9e162",
+      "source": "src/kotoba-client-runtime.js",
+      "sha256": "7f760128c3a58098123c31ec3dd34b9c871932e3933f2c952facc4ab0e647212",
+      "presentInOwnerMain": true,
+      "integratedInNativeDesktop": false
+    },
+    "nativeAgentTurn": false,
+    "durableGoalRestore": false
+  },
+  "linuxFreeBuildClosure": {
+    "publicAmuHost": "Linux x86_64 static ELF",
+    "aiueosNativeBuilderRequiresLinuxELF": true,
+    "macOSSelfhostCompilerQualified": false,
+    "aiueosSelfhostCompilerQualified": false,
+    "linuxFreeGuestObserved": true,
+    "linuxFreeBuildReleaseQualified": false
+  },
   "dependencyOrder": [
     "Amu selfhost/root/controller",
     "AIUEOS kernel/protected value ABI/native media",
