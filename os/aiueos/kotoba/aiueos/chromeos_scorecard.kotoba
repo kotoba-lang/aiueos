@@ -1,0 +1,288 @@
+;; Native schema and point ledger for the canonical ChromeOS comparison EDN.
+;; FS2 supplies scorecard.edn and referenced receipts from an isolated file root.
+;; Receipt signatures and source freshness are separate admission gates; this
+;; program cannot qualify release or physical hardware on its own.
+(ns aiueos.chromeos-scorecard
+  (:export [main])
+  (:capabilities #{:fs/app-data :io/write}))
+
+(defn- blank? [c :i64] :bool
+  (or (= c 32) (= c 9) (= c 10) (= c 13) (= c 44)))
+
+(defn- flush [out :string source :string start :i64 end :i64] :string
+  (if (= start end) out
+    (string-concat out (string-substring source start end))))
+
+(defn- normalize [source :string] :string
+  (let [n (string-byte-length source)
+        bytes (string-to-utf8 source)]
+    (loop [i 0 start 0 out "" quoted false escaped false comment false pending false]
+      (if (>= i n)
+        (if quoted "" (flush out source start i))
+        (let [c (bytes-at bytes i)]
+          (cond
+            comment
+            (if (= c 10)
+              (recur (+ i 1) (+ i 1) out false false false true)
+              (recur (+ i 1) start out false false true pending))
+
+            quoted
+            (recur (+ i 1) start out
+                   (if (and (= c 34) (not escaped)) false true)
+                   (if escaped false (= c 92)) false false)
+
+            (= c 59)
+            (recur (+ i 1) (+ i 1) (flush out source start i)
+                   false false true true)
+
+            (blank? c)
+            (recur (+ i 1) (+ i 1) (flush out source start i)
+                   false false false true)
+
+            pending
+            (recur i i (if (= out "") out (string-concat out " "))
+                   false false false false)
+
+            (= c 34)
+            (recur (+ i 1) start out true false false false)
+
+            :else
+            (recur (+ i 1) start out false false false false)))))))
+
+(defn- field [value :document key :keyword] :document
+  (option-value-of [:option :document]
+    (document-get value (document-keyword key)) (document-null)))
+
+(defn- matches? [value :document key :keyword] :bool
+  (document-equal? value (document-keyword key)))
+
+(defn- in-vector? [values :document item :document] :bool
+  (if (not= (document-kind values) :vector) false
+    (loop [i 0]
+      (if (= i (document-count values)) false
+        (if (document-equal? item
+              (option-value-of [:option :document]
+                (document-vector-at values i) (document-null)))
+          true (recur (+ i 1)))))))
+
+(defn- duplicate-id? [rows :document i :i64 item :document] :bool
+  (loop [j 0]
+    (if (= j i) false
+      (let [previous (option-value-of [:option :document]
+                       (document-vector-at rows j) (document-null))]
+        (if (document-equal? item (field previous :id)) true
+          (recur (+ j 1)))))))
+
+(defn- hex40? [value :string] :bool
+  (if (not= (string-byte-length value) 40) false
+    (let [bytes (string-to-utf8 value)]
+      (loop [i 0]
+        (if (= i 40) true
+          (let [c (bytes-at bytes i)]
+            (if (or (and (>= c 48) (<= c 57))
+                    (and (>= c 97) (<= c 102)))
+              (recur (+ i 1)) false)))))))
+
+(defn- green-verdicts? [verdicts :document] :bool
+  (if (not= (document-kind verdicts) :map) false
+    (if (= (document-count verdicts) 0) false
+      (loop [i 0]
+        (if (= i (document-count verdicts)) true
+          (let [entry (option-value-of [:option :document]
+                        (document-map-entry-at verdicts i) (document-null))
+                verdict (option-value-of [:option :document]
+                          (document-vector-at entry 1) (document-null))
+                green (document-bool-value (field verdict :green?))]
+            (if (option-value-of [:option :bool] green false)
+              (recur (+ i 1)) false)))))))
+
+(defn- receipt-valid? [path :string] :bool
+  (if (or (< (string-byte-length path) 38)
+          (not= (string-substring path 0 33)
+                "os/aiueos/qualification/receipts/")
+          (not= (string-substring path (- (string-byte-length path) 4)
+                  (string-byte-length path)) ".edn")
+          (string-contains? path "..")
+          (>= (string-find-byte path 0 0) 0))
+    false
+    (let [stat-request (string-concat "\u0000FS2\u0000F"
+                         (string-concat path "\u0000"))
+          metadata (typed-cap-call :fs/app-data :string :string stat-request)
+          request (string-concat "\u0000FS2\u0000A"
+                    (string-concat path "\u0000"))
+          present (and (> (string-byte-length metadata) 5)
+                       (= (string-substring metadata 0 5) "\u0000FS2\u0000"))]
+      (if (not present)
+        false
+        (let [reply (typed-cap-call :fs/app-data :string :string request)]
+          (if (or (<= (string-byte-length reply) 5)
+                  (not= (string-substring reply 0 5) "\u0000FS2\u0000"))
+            false
+            (let [document (document-edn-read
+                             (normalize (string-substring reply 5
+                                          (string-byte-length reply))))
+                  commit (document-string-value (field document :commit))]
+              (and (option-some?-of [:option :string] commit)
+                   (hex40? (option-value-of [:option :string] commit ""))
+                   (green-verdicts? (field document :verdicts))))))))))
+
+(defn- receipt-evidence? [entries :document] :bool
+  (if (not= (document-kind entries) :vector) false
+    (loop [i 0 found false valid true]
+      (if (= i (document-count entries)) (and found valid)
+        (let [entry (option-value-of [:option :document]
+                      (document-vector-at entries i) (document-null))
+              text (document-string-value entry)]
+          (if (and (option-some?-of [:option :string] text)
+                   (> (string-byte-length
+                        (option-value-of [:option :string] text "")) 8)
+                   (= (string-substring
+                        (option-value-of [:option :string] text "") 0 8)
+                      "receipt "))
+            (let [value (option-value-of [:option :string] text "")]
+              (recur (+ i 1) true
+                (and valid (receipt-valid?
+                             (string-substring value 8
+                               (string-byte-length value))))))
+            (recur (+ i 1) found valid)))))))
+
+(defn- valid-row? [row :document rows :document i :i64
+                    levels :document categories :document
+                    owner :bool release-ok :bool] :bool
+  (let [id (field row :id)
+        category (field row :category)
+        level (field row :required-level)
+        required (document-bool-value (field row :required))
+        weight (document-i64-value (field row :weight))
+        status (field row :status)
+        progress (field row :qemu-progress)
+        evidence (field row :evidence)
+        passing (matches? status :pass)]
+    (and (= (document-kind row) :map)
+         (= (document-kind id) :keyword)
+         (not (duplicate-id? rows i id))
+         (option-some?-of [:option :document]
+           (document-get categories category))
+         (in-vector? levels level)
+         (option-some?-of [:option :bool] required)
+         (option-some?-of [:option :i64] weight)
+         (or (matches? status :pass) (matches? status :unachieved))
+         (or (matches? progress :pass) (matches? progress :partial)
+             (matches? progress :none))
+         (= (document-kind evidence) :vector)
+         (or (not passing)
+             (and owner (receipt-evidence? evidence)
+                  (or (not (or (matches? level :release)
+                               (matches? level :user))) release-ok))))))
+
+(defn- score [card :document] :i64
+  (let [rows (field card :rows)
+        levels (field card :levels)
+        categories (field card :categories)
+        reference (field card :reference-machine)
+        owner (document-bool-value (field reference :confirmed-by-owner))
+        release-ok (document-bool-value (field reference :release-receipt-ok))]
+    (if (or (not (matches? (field card :format) :aiueos.scorecard/v1))
+            (not= (document-kind rows) :vector)
+            (not= (document-kind categories) :map)
+            (not= (document-kind levels) :vector)
+            (not= (document-count categories) 9)
+            (not= (document-count levels) 5)
+            (not (in-vector? levels (document-keyword :design)))
+            (not (in-vector? levels (document-keyword :qemu)))
+            (not (in-vector? levels (document-keyword :device)))
+            (not (in-vector? levels (document-keyword :release)))
+            (not (in-vector? levels (document-keyword :user)))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :boot))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :identity))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :shell))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :input))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :web))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :storage))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :security))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :update))))
+            (not (option-some?-of [:option :document]
+                   (document-get categories (document-keyword :power))))
+            (not (option-some?-of [:option :bool] owner))
+            (not (option-value-of [:option :bool] owner false))
+            (not (option-some?-of [:option :bool] release-ok)))
+      -1
+      (loop [i 0 required-count 0 required-weight 0 passed-weight 0 valid true]
+        (if (= i (document-count rows))
+          (if (and valid (= i 65) (= required-count 55)
+                   (= required-weight 100)) passed-weight -1)
+          (let [row (option-value-of [:option :document]
+                      (document-vector-at rows i) (document-null))
+                required (option-value-of [:option :bool]
+                           (document-bool-value (field row :required)) false)
+                weight (option-value-of [:option :i64]
+                         (document-i64-value (field row :weight)) -1)
+                passing (matches? (field row :status) :pass)
+                good (and (valid-row? row rows i levels categories
+                            (option-value-of [:option :bool] owner false)
+                            (option-value-of [:option :bool] release-ok false))
+                          (if required (> weight 0) (= weight 0)))]
+            (recur (+ i 1)
+              (if required (+ required-count 1) required-count)
+              (if required (+ required-weight weight) required-weight)
+              (if (and required passing) (+ passed-weight weight) passed-weight)
+              (and valid good))))))))
+
+(defn- category-line [rows :document category :keyword label :string] :string
+  (loop [i 0 weight 0 passed 0]
+    (if (= i (document-count rows))
+      (string-concat "AIUEOS_CATEGORY "
+        (string-concat label
+          (string-concat " weight="
+            (string-concat (string-from-i64 weight)
+              (string-concat " pass="
+                (string-concat (string-from-i64 passed)
+                  (string-concat " gap="
+                    (string-concat (string-from-i64 (- weight passed)) "\n"))))))))
+      (let [row (option-value-of [:option :document]
+                  (document-vector-at rows i) (document-null))
+            required (option-value-of [:option :bool]
+                       (document-bool-value (field row :required)) false)
+            same (document-equal? (field row :category)
+                   (document-keyword category))
+            value (option-value-of [:option :i64]
+                    (document-i64-value (field row :weight)) 0)
+            pass (matches? (field row :status) :pass)]
+        (recur (+ i 1)
+          (if (and required same) (+ weight value) weight)
+          (if (and required same pass) (+ passed value) passed))))))
+
+(defn- category-lines [rows :document] :string
+  (loop [i 0 result ""]
+    (if (= i 9) result
+      (let [category (case i
+                       0 :boot 1 :identity 2 :shell 3 :input 4 :web
+                       5 :storage 6 :security 7 :update :power)
+            label (case i
+                    0 "boot" 1 "identity" 2 "shell" 3 "input" 4 "web"
+                    5 "storage" 6 "security" 7 "update" "power")]
+        (recur (+ i 1)
+          (string-concat result (category-line rows category label)))))))
+
+(defn main [] :i64
+  (let [reply (typed-cap-call :fs/app-data :string :string
+                "\u0000FS2\u0000Ascorecard.edn\u0000")
+        text (string-substring reply 5 (string-byte-length reply))]
+    (if (not= (string-substring reply 0 5) "\u0000FS2\u0000")
+      2
+      (let [card (document-edn-read (normalize text))
+            points (score card)
+            written (typed-cap-call :io/write :string :string
+                      (string-concat "AIUEOS_SCORE "
+                (string-concat (string-from-i64 points)
+                  (string-concat "\n"
+                    (if (< points 0) "" (category-lines (field card :rows)))))))]
+        (if (< points 0) 1 0)))))
