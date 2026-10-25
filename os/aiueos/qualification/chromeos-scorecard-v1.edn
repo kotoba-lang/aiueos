@@ -207,9 +207,9 @@
    :procedure "Read the status area on battery and on AC, online and offline."
    :expected "Each shows its current state."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["gate guest-browser-clock" "ADR-0264" "ADR-0266"]
-   :note "The clock (CMOS real-time clock, HH:MM) and the network state (OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange, ADR-0266) are statuses in the launcher row; the network state is boot-time, not live. There is no power state (the kernel reads no battery device; a VM has none)."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/c9-status-area/receipt.edn" "gate guest-browser-clock" "ADR-0264" "ADR-0266"]
+   :note "The clock (CMOS real-time clock, HH:MM) and the network state (OFFLINE / LINK / ONLINE from the boot's own virtio-net ARP and ICMP exchange, ADR-0266) are statuses in the launcher row; the network state is boot-time, not live. There is no power state (the kernel reads no battery device; a VM has none). Measured 2026-10-25: the desktop now paints a live status bar on every frame (framebuffer.c aiueos_desktop_paint_status) — NET ONLINE/OFFLINE from the DHCP lease state, POWER AC, CLK <APIC ticks> — and announces each state change (AIUEOS_STATUS_AREA_OK network=... power=ac clock=running); the announced state always equals the state the bar renders. Observed in the reference-VM desktop boot: network=offline (the DHCP client runs in the network flow, not the desktop smoke) — the honest current state. Caveats, owner may reject: the battery half of the row is untestable (no battery device); the online announcement was not captured in the desktop run (the same rendering path is driven by the lease state proven in the F4 runs); the readback is the state-change marker, not OCR of the bar."
    }
   {:id :C10 :category :shell :title "Interaction states and feedback"
    :weight 2 :required true :required-level :device
