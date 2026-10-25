@@ -6,4 +6,6 @@ The [integrated receipt](integrated.json) records font, 31-module kernel, EFI an
 
 The [unattended debugger](unattended-debug.json) launched another private-QMP VM and verified `Goal local: merged` in guest state and the [screenshot](debug-merged.png). `vncUsed=false` and `networkUsed=false`; no human login or guest keystrokes were required. The compiler and media identities match those in the receipts.
 
+The same signed Mac Amu root compiled the zero-capability `x86_64-aiueos-user-v1` scalar fixture to an 8,280-byte ELF with SHA-256 `7f5a8c0a31b5bdf191410f007973413d16e497a20ae7fe86c734b9fea85808b1`. Its Git blob identity `737138fb00e3143f05a262a952aefc51150efba8` exactly matches the artifact in diagnostic [AIUEOS #505](https://github.com/kotoba-lang/aiueos/pull/505); the [parity receipt](user-elf-parity.json) records both identities. The current C-free desktop image still does not load that ELF; this is compiler/artifact parity, not in-guest user execution.
+
 These are Mac host and QEMU diagnostic VM observations. Native Linux release gates, registered Itonami agent operations, signed D2 workspace restore and physical boot remain separate.
