@@ -50,7 +50,7 @@ AIUEOS_PCI_OK bounded-scan virtio-vendor=1af4
 AIUEOS_PCI_RESULT input-rng-base=111 input-devices-seen=2 input-fail-line=0
 AIUEOS_VIRTIO_RNG_OK modern-pci caps-bounded dma=4pages completion=32
 AIUEOS_VIRTIO_RNG_MSIX_OK vector=34 irq=1 table-pba-bounded
-AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly slowest-wait=1 used=49 target=49
+AIUEOS_VIRTIO_BLK_OK capacity-bounded sector=0 bytes=512 readonly slowest-wait=3 used=2 target=2
 AIUEOS_VIRTIO_BLK_MSIX_OK vector=35 irq-completions-bounded table-pba-bounded
 AIUEOS_OBJECT_STORE_OK aiuefs-v3 objects=3 catalog=2apps
 AIUEOS_KOTOBA_APP_ADMISSION_OK catalog=rsa2048 apps=2 digest=kotoba-sha256 signature=kotoba-rsa2048-pkcs1 policy=public-key
@@ -109,7 +109,7 @@ AIUEOS_GUEST_BROWSER_LOOP_FRAME n=6 src=pointer answer=0 ops=81 text-px=875 hash
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=7 src=key answer=0 ops=83 text-px=902 hash=907e5d19
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=8 src=key answer=0 ops=83 text-px=917 hash=110408d5
 AIUEOS_GUEST_BROWSER_LOOP_FRAME n=9 src=key answer=1 ops=82 text-px=901 hash=7b0f9b05
-AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=82 text-px=901 hash=7b0f9b05 idle-min=575
+AIUEOS_GUEST_BROWSER_LOOP_OK events=9 frames=9 answers=001220001 focus=2 at=196,172 capture=0 chain=b185dff1 ops=82 text-px=901 hash=7b0f9b05 idle-min=624
 AIUEOS_GUEST_BROWSER_CARET_GO keys=5
 AIUEOS_GUEST_BROWSER_CARET_FRAME n=1 key=37 answer=0 ops=84 caret=458,214 text-px=928 hash=f17b8389
 AIUEOS_GUEST_BROWSER_CARET_FRAME n=2 key=30 answer=0 ops=84 caret=466,214 text-px=952 hash=7029fa28
@@ -171,9 +171,9 @@ AIUEOS_PROCESS_FOUNDATION_OK tss-descriptor user-wx guard-page
 AIUEOS_PROCESS_CREATE_OK descriptors=8 entry-argument-stack domain-address-space-task
 AIUEOS_KOTOBA_ELF_PROCESS_OK source=catalog apps=2 et-exec segments=rx,rw result=42 domains=4,5
 AIUEOS_PROCESS_PHASE_ENTER first=0 second=1 kotoba=2 worker=3
-AIUEOS_PROCESS_PHASE_WAIT wakes=1 timer=21 flush=2 result=1 sched=0 kotoba=42 worker=42 ipc=0 objwrite=1
-AIUEOS_PROCESS_PHASE_WAIT wakes=2 timer=22 flush=0 result=1 sched=0 kotoba=42 worker=42 ipc=0 objwrite=1
-AIUEOS_PROCESS_PHASE_REAP_WAIT wakes=0 timer=28
+AIUEOS_PROCESS_PHASE_WAIT wakes=1 timer=16 flush=2 result=1 sched=0 kotoba=42 worker=42 ipc=0 objwrite=1
+AIUEOS_PROCESS_PHASE_WAIT wakes=2 timer=17 flush=0 result=1 sched=0 kotoba=42 worker=42 ipc=0 objwrite=1
+AIUEOS_PROCESS_PHASE_REAP_WAIT wakes=0 timer=24
 AIUEOS_KOTOBA_USER_RUNTIME_OK abi=v2 transport=syscall capabilities=2,3,4,5 object=service-registry,user-store service-ipc=mailbox domains=4,5 result=42
 AIUEOS_KOTOBA_OBJECT_WRITE_OK domains=4,5 journals=44-47 objects=42,43 value=42 receipt=readback transaction=journal-first serializer=kotoba validator=kotoba decoder=kotoba materializer=kotoba fixed-stack
 AIUEOS_KOTOBA_SERVICE_IPC_OK senders=4,5 recipients=service0,service1 payload=42 sequence=1 bounded=2 persistent-services=2
@@ -191,7 +191,6 @@ AIUEOS_INPUT_RING n=228
 AIUEOS_DESKTOP_KEY code=112
 AIUEOS_INPUT_RING n=230
 AIUEOS_INPUT_RING n=231
-AIUEOS_GPU_GEOMETRY_POLL readok 1280x800
 AIUEOS_GPU_GEOMETRY_POLL readok 1280x800
 AIUEOS_GPU_GEOMETRY_POLL readok 1280x800
 AIUEOS_GPU_GEOMETRY_POLL readok 1280x800
