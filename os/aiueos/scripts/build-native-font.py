@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Stage the licensed font and observe native copying/padding; emit no font."""
-import argparse,hashlib,json,platform,shutil,struct,subprocess
+import argparse,hashlib,json,os,platform,shutil,struct,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 def pin(p):
@@ -12,7 +12,12 @@ def main(amu,compiler,expected,font,out):
  parts=[amu/'seed/00-ns-static.kotoba',amu/'seed/01-mem.kotoba',amu/'seed/02-io.kotoba',HERE.parent/'native/font-pad.kotoba']
  source=out/'font-pad.kotoba';source.write_bytes(b''.join(p.read_bytes()+b'\n' for p in parts))
  target='x86_64-linux' if platform.machine()=='x86_64' else 'aarch64-linux';tool=out/'font-pad.elf'
- env=dict(PATH='/nonexistent',KEXE_CAP_RESOURCES_35=str(out),KEXE_STACK_BYTES='8388608');calls=[]
+ # KEXE_SECCOMP opt-in passes through when the caller sets it: the hardened
+ # runtime fails closed with `kexe-runtime: resource limit setup failed` on a
+ # host whose seccomp(2) is unavailable (measured 2026-10-26 in an emulated
+ # container); a native Linux host never sets it and behaves exactly as before.
+ _kexe = {'KEXE_SECCOMP': os.environ['KEXE_SECCOMP']} if os.environ.get('KEXE_SECCOMP') else {}
+ env=dict(PATH='/nonexistent',KEXE_CAP_RESOURCES_35=str(out),KEXE_STACK_BYTES='8388608',**_kexe);calls=[]
  for name,args in [('compile',[compiler,'compile',source,'--target',target,'--output',tool,'--format','static']),('pad',[tool,out/'original.fnt',out/'aiueos-padded.fnt'])]:
   if name=='pad':tool.chmod(0o755)
   r=subprocess.run(list(map(str,args)),env=env,capture_output=True,timeout=300)
