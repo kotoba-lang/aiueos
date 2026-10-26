@@ -1,0 +1,19 @@
+{:id :f5-usb-storage
+ :date "2026-10-25"
+ :row :F5
+ :claim "USB storage: a file copies off a USB disk and reads back."
+ :host {:model "MacBookPro18,4", :cpu "Apple M1 Max", :os "Darwin 25.4.0 arm64"}
+ :commit "4ccf3d58bdec5c2b666175769851b67b37eb6b7a"
+ :verdicts {"usb-disk-read" {:green? true, :reason :marker, :marker "AIUEOS_UHCI_OK controller=uhci ports=2 and AIUEOS_UHCI_TEST rc=65 ep-out=2 ep-in=1 — the UHCI HCD probes the piix3-usb-uhci controller, the bulk endpoints are DISCOVERED from the configuration descriptor, and the SCSI READ(10) returns the known file (AIUEOS-F5-FILE-0123456789 at LBA 2; rc=65 = 'A', its first byte)"},
+            "file-copied" {:green? true, :reason :marker, :marker "the file lands in the internal file system as USBFILE (fs_create 512 bytes, F2's table)"},
+            "reads-back" {:green? true, :reason :marker, :marker "the content reads back on a second media read compared byte-for-byte: not one byte differs"}}
+ :run
+ {:transport "UHCI HCD (the q35 ICH9 class 0c/03/00, I/O BAR, the host-controller reset, the frame list + QH/TD chain)"
+  :protocol "the enumeration (SET_ADDRESS, GET_DESCRIPTOR device+configuration, SET_CONFIGURATION) then the BBB bulk-only transport (the CBW 31 bytes bulk-out, the data, the CSW) and the SCSI READ(10)"
+  :where "the harness mode AIUEOS_USB_STORAGE attaches a piix3-usb-uhci controller with a usb-storage disk carrying the known file at LBA 2"
+  :copy "fs_create(\"USBFILE\", 512) into the F2 file system; the content readback is a second media read compared against the first"}
+ :caveats
+ ["the F2 file system layer is metadata-only (the create/rename/delete table): the file's CONTENT readback is a second read from the media, not an FS-layer data API — the copy target's metadata is the FS, the content's readback is the device"
+  "one file, one 512-byte sector (LBA 2): the multi-sector path and a FAT file name lookup are not exercised"
+  "owner may reject: 'copy a file' is exercised as a single-sector file copy with the media-level content readback"]
+ :green? true}

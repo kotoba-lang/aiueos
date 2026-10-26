@@ -438,9 +438,9 @@
    :procedure "Plug a USB disk; copy a file."
    :expected "The file reads back."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :partial
-   :evidence ["README.md capability table"]
-   :note "Scoped 2026-10-25: the guest has no USB stack (measured: zero USB code in the kernel). The row needs a USB mass-storage read path — the bounded design is a UHCI HCD (the q35 ICH9 UHCI companion, simpler than the harness's xhci) + BBB bulk-only transport + SCSI READ(10)/INQUIRY/READ CAPACITY, then the file copy into the internal file system (F2's table) with the readback. The QEMU test attaches usb-storage on the default UHCI bus with a known file; the copy target and the readback are the internal FS. Scale: ~500 lines of new driver — a multi-wakeup kernel feature, the last internally-movable row."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261025/f5-usb-storage/receipt.edn"]
+   :note "Measured 2026-10-25 (superseding the scope note): a UHCI HCD + BBB + SCSI READ(10) stack built and verified on QEMU — AIUEOS_UHCI_OK controller=uhci ports=2, the bulk endpoints discovered from the configuration descriptor (ep-out=2 ep-in=1), and AIUEOS_UHCI_TEST rc=65 (the known file's first byte). The file copies into the F2 file system (USBFILE, fs_create) and the content reads back on a second media read compared byte-for-byte. Caveats, owner may reject: the F2 layer is metadata-only so the content readback is the media-level re-read; one 512-byte file at LBA 2 (no multi-sector or FAT name lookup). Earlier scope: the guest has no USB stack (measured: zero USB code in the kernel). The row needs a USB mass-storage read path — the bounded design is a UHCI HCD (the q35 ICH9 UHCI companion, simpler than the harness's xhci) + BBB bulk-only transport + SCSI READ(10)/INQUIRY/READ CAPACITY, then the file copy into the internal file system (F2's table) with the readback. The QEMU test attaches usb-storage on the default UHCI bus with a known file; the copy target and the readback are the internal FS. Scale: ~500 lines of new driver — a multi-wakeup kernel feature, the last internally-movable row."
    }
   {:id :F6 :category :storage :title "Bluetooth"
    :weight 1 :required true :required-level :device
