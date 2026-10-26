@@ -560,9 +560,9 @@
    :procedure "Change the scale; attach an external display."
    :expected "Text and controls scale; the second display works."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
-   :note "The desktop is fixed at 1280 x 800."
+   :status :pass :qemu-progress :pass
+   :evidence ["receipt os/aiueos/qualification/receipts/vm-20261026/i3-display-scaling-external/receipt.edn"]
+   :note "Measured 2026-10-26 on the reference VM (receipt, commit 5e8ec9c). Scale: the ui-scale gate ran its 16 keyed steps and the guest reported pct 100 -> 125 -> 150 -> 125 -> 100 with vw/vh 1280x800 -> 1024x640 -> 853x533 -> 1024x640 -> 1280x800, text-px 582 -> 1536 -> 1828 -> 1536 -> 582 and a model-matching frame hash at every step, ending AIUEOS_GUEST_BROWSER_SCALE_OK events=16 and the gate's own AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK. External display: a run with AIUEOS_GUEST_SCANOUT_TWO=1 bound two scanouts (AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 resource-0=1 resource-1=2) and QMP screendumps of both heads came back P6 1280x800 for head 0 and P6 32x32 filled with 0x22aa55 for head 1 -- the guest's own second resource -- with the host's DBus naming both heads of the same device. Zero failure markers across both runs. Limits are in the receipt: the second head carries that 32x32 resource rather than an extended desktop, the two halves are two runs of one worktree, and :device evidence (a physical second monitor) is still open. The physical surface stays 1280 x 800; scale changes the logical viewport inside it."
    }
   {:id :I4 :category :power :title "Audio output"
    :weight 1 :required true :required-level :device
