@@ -1,0 +1,94 @@
+{
+  "schema": "aiueos.distribution-profile-integration.v1",
+  "status": "PASS_NATIVE_2_BY_2_MATRIX",
+  "sourceCommit": "5729ce55e9102a4c3122c075c889a2d79abdedbe",
+  "mergedMain": "45e3ae8d32f92c04f7a356b051bf9a2346b0d255",
+  "profiles": {
+    "desktop": {
+      "font/aiueos-padded.fnt": {
+        "bytes": 524288,
+        "sha256": "2dec7f39b3e2daea96d595805adaa9ed45b96eca912c955b515067e30a435b5f"
+      },
+      "kernel/KERNEL.ELF": {
+        "bytes": 3350808,
+        "sha256": "287c7018f12b359247ff2c775a2ae84da9dca95299fbfc25dfe1745e5d3ebf07"
+      },
+      "kernel/BOOTX64.EFI": {
+        "bytes": 3903488,
+        "sha256": "001fa9700899956215825a5f7f154c89e674f63e26d8e8b7701817acb5a79d3c"
+      },
+      "media/awai-native.img": {
+        "bytes": 8388608,
+        "sha256": "739eaa6991b296cb5a480cac9cf632b00a088a312515ce6495e140accffa7acc"
+      }
+    },
+    "local-draft": {
+      "font/aiueos-padded.fnt": {
+        "bytes": 524288,
+        "sha256": "2dec7f39b3e2daea96d595805adaa9ed45b96eca912c955b515067e30a435b5f"
+      },
+      "kernel/KERNEL.ELF": {
+        "bytes": 3350808,
+        "sha256": "180103a87c945ba150fbab21b9e74556b8c057f3bb0851a594d446c64fdae3b1"
+      },
+      "kernel/BOOTX64.EFI": {
+        "bytes": 3903488,
+        "sha256": "327156bd4399c08220b8a78f791afc94a9a430f8c98094f62a42622f6da8f49c"
+      },
+      "media/awai-native.img": {
+        "bytes": 8388608,
+        "sha256": "1d7b92b4f8e19767b29d6df0ef5a00bd8f67e80c67608e3f722fa42e738f304b"
+      }
+    }
+  },
+  "sourceModuleCount": 31,
+  "sources": {
+    "os/aiueos/scripts/build-native-desktop.py": {
+      "bytes": 3830,
+      "sha256": "a8ba6566f2a7d8ae8595c29fa8fadc05a7655b2568c60ac8e13fd9504305952e"
+    },
+    "os/aiueos/scripts/check-native-desktop-qemu.py": {
+      "bytes": 9548,
+      "sha256": "b5541ee1143b069795976db63bbfc30aee26fa3724d9fd2dc661a49a53eb4703"
+    },
+    "os/aiueos/scripts/check-native-draft-restart-qemu.py": {
+      "bytes": 13464,
+      "sha256": "b0a7b4f86319c24c411d66aeb02fa53229c5ed08da029914383380522177237c"
+    },
+    "os/aiueos/native/desktop.kotoba": {
+      "bytes": 21160,
+      "sha256": "f75d506cbab36ddda1afecb6cb5a5ceb29051a920088f300c06b2d4411eabec1"
+    },
+    "os/aiueos/native/draft_store.kotoba": {
+      "bytes": 8466,
+      "sha256": "749e1299fa2543a1b6daa8977cdc8422f748c5d11d8204fc3e549cb8e5cfdea2"
+    },
+    "os/aiueos/native/workspace-entry.kotoba": {
+      "bytes": 2775,
+      "sha256": "b84f952c8d5cbfb80a799c3a25cd8cbd0d866db3562061b1871dd496ee8efcc2"
+    },
+    "distributions/aiueos/distribution.json": {
+      "bytes": 441,
+      "sha256": "e6f28efafd2539f624c2341861a48e9091fdecf64cf4e2f2ff54ff727b7e0cd7"
+    },
+    "distributions/awai/distribution.json": {
+      "bytes": 493,
+      "sha256": "91c0a557a56f8a977175bd46a6b29ea9daa90882357b7469e1af3f79dd38cfe4"
+    }
+  },
+  "descriptorsDigestBound": true,
+  "sameCoreWithinEachProfile": true,
+  "differentNativeRootsAcrossProfiles": true,
+  "unknownCLIAndDirectCallsRefusedBeforeOutput": true,
+  "buildContainer": "81c0aac584c3e136c75a8da272f5d08e45e1f2ae00701fbce768f490dd22164b",
+  "compiler": {
+    "bytes": 3559936,
+    "sha256": "285c54f826d5f7f77db6827bc21c622c2c777cea252a1ba4816d8b01351807e1"
+  },
+  "JVMNodeOrGraalFallback": false,
+  "cCompilerOrLoader": false,
+  "installedPresetComponents": false,
+  "D2WorkspaceCodec": false,
+  "signedHeadAuthority": false,
+  "physicalHardware": false
+}

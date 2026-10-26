@@ -94,6 +94,11 @@ native root. Both default to `aiueos` / `desktop`. Unknown values refuse
 before creating output, including direct builder calls. AWAI metadata alone
 does not enable persistence or install/admit any app.
 
+The [combined matrix and guest receipts](evidence/distribution-draft-integration-20261026/README.md)
+pass all four native builds, same-core comparison within each profile, the
+normal desktop input/F5-disabled gate and local draft cold restore with seven
+refusal controls. This remains a diagnostic component result.
+
 The user-target status was read back on 2026-10-26: Amu #1574 merged head
 `e3144da1aa48f160cea8fb6d453befd2b1df52b1`, merge commit
 `4dc300b30402222a1881a76253a6e5e0c2db73f0`; AIUEOS #505 is still draft at
