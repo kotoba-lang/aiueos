@@ -49,16 +49,16 @@ SIGNED_RELEASE_JSON = SIGNED_RELEASE_RECEIPT.with_name(
 SIGNED_RELEASE_SIGNATURE = SIGNED_RELEASE_RECEIPT.with_name(
     'aiueos-x86_64-build-receipt.sig')
 EXPECTED_LEDGER = (
-    b'AIUEOS_SCORE 48\n'
-    b'AIUEOS_CATEGORY boot weight=10 pass=6 gap=4\n'
+    b'AIUEOS_SCORE 71\n'
+    b'AIUEOS_CATEGORY boot weight=10 pass=10 gap=0\n'
     b'AIUEOS_CATEGORY identity weight=6 pass=6 gap=0\n'
-    b'AIUEOS_CATEGORY shell weight=15 pass=14 gap=1\n'
+    b'AIUEOS_CATEGORY shell weight=15 pass=15 gap=0\n'
     b'AIUEOS_CATEGORY input weight=12 pass=9 gap=3\n'
     b'AIUEOS_CATEGORY web weight=20 pass=0 gap=20\n'
-    b'AIUEOS_CATEGORY storage weight=9 pass=3 gap=6\n'
-    b'AIUEOS_CATEGORY security weight=9 pass=3 gap=6\n'
-    b'AIUEOS_CATEGORY update weight=9 pass=1 gap=8\n'
-    b'AIUEOS_CATEGORY power weight=10 pass=6 gap=4\n'
+    b'AIUEOS_CATEGORY storage weight=9 pass=4 gap=5\n'
+    b'AIUEOS_CATEGORY security weight=9 pass=9 gap=0\n'
+    b'AIUEOS_CATEGORY update weight=9 pass=9 gap=0\n'
+    b'AIUEOS_CATEGORY power weight=10 pass=9 gap=1\n'
 )
 
 

@@ -56,8 +56,11 @@ the receipt declares one. The `settings` secondary is
 `boot4-serial.log` and `install-serial.log`. Missing or modified logs fail the
 ledger admission. This verifies the declared log bytes, not the truth of every
 feature claim or screenshot digest in a receipt.
-The probe prints the recorded score of 48 and category weights, passes and
-gaps. Eighteen negative controls cover malformed schema, missing or red
+The earlier source-bound probe printed the then-recorded score of 48 and
+category weights, passes and gaps. The current canonical EDN declares 42
+passing rows of weight 71; the runner now expects those category totals only
+after the native verifier admits their evidence. Eighteen negative controls
+cover malformed schema, missing or red
 receipts, missing signed-release reference, malformed digest fields, missing
 named verdicts, one-byte artifact changes, a modified signature with an
 updated matching digest, a different public modulus, and missing or changed
@@ -67,15 +70,48 @@ expected output is checked exactly.
 This is a **core schema and qualification-release signature probe**. Other
 receipt marker text and non-serial artifact digests are not yet checked against
 the underlying log/image, and the production release signature is not qualified.
-Receipt commit age and relevant-source freshness remain unqualified. The 48
-points describe the existing reference VM ledger; they do not qualify physical hardware or
-a release. The runner and receipt name keep `EVIDENCE_PENDING` until those
+Receipt commit age and relevant-source freshness remain unqualified. The
+recorded VM ledger does not qualify physical hardware or a release. The
+runner and receipt name keep `EVIDENCE_PENDING` until those
 gates pass. The legacy checker stays historical and must not be used for
 current native qualification.
 
-## Evidence audit of the recorded VM score (2026-10-26)
+## Current ledger admission after rebasing on main (2026-10-26)
 
-A read-only host diagnostic inspected the canonical ledger's 31 receipt
+The scorecard branch incorporated main at `90cda6e6142589239a5da43867333f60fea4a343`.
+The signed Mac native probe compiled and ran the same Kotoba checker against
+the current canonical EDN (SHA-256
+`a1bd8a8dece8ed705e652a776890742ea4de696bd3930fbf05eb7db08004462b`).
+It refused the positive case with `AIUEOS_SCORE -1`. This is a failure of
+current evidence admission, not a 71-point native verdict.
+
+Thirteen rows changed from `:unachieved` to `:pass` since the 48-point
+ledger. Twelve cite receipts without a `:serial-sha256` field: A2, A5,
+C9, F2, G1, G3, G5, H1, H2, H3, I3 and I6. A4 instead lacked the
+signed-release receipt reference required for its `:release` level. A2's
+serial log is checked in, so this branch adds its observed digest to that
+receipt; A4 now cites the existing signed-release receipt. With only these
+two new rows left at `:pass` in a scratch copy of the current card, the
+native executable accepts 51 points (the previous 48 plus A2's 2 and A4's
+1). A one-byte A2 serial-log change and removal of A4's signed-release
+reference each make that same native executable refuse with `AIUEOS_SCORE -1`.
+The canonical 71-point card still refuses admission. These isolated runs
+are in the private scratch directory
+`github/workspaces/codex/aiueos-scorecard-rebased-probe-20261026`;
+they are diagnostic, not a release receipt.
+
+I3 has two checked-in logs with names outside the verifier's current fixed
+path; its receipt also describes two separate runs and keeps a scope caveat.
+The other ten receipt directories have no serial log in the repository. A
+read-only scan of the current local workspaces found no copies under those
+receipt-specific names. The next work is to recover or rerun the actual
+evidence and bind it to the current source, then extend the native verifier
+only for evidence formats that can be independently checked. The declared
+71 points remain separate from native qualification and release acceptance.
+
+## Historical 48-point ledger audit before the main rebase (2026-10-26)
+
+A read-only host diagnostic inspected that earlier ledger's 31 receipt
 references (14 distinct files). The 17 checked digest fields for adjacent
 serial logs, WAV files, the qualification signature, and the signed JSON
 receipt matched their files. The qualification release signature also passed
