@@ -929,7 +929,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_catalog_valid_
   fb2421c25351d62061b62266f12b63fdd1bf16cd917da2dd852018ad29ac6777 \
   kotoba_aiueos_app_catalog_valid
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_app_lookup_object" \
-  885c18df51b4eb0ad699ffc9647e777c8f50d6467785b8c4defda0b9a4493028 \
+  ec822fe970c315e15c997372f30cb4c016c482c0192e550117c4c1a69000b771 \
   kotoba_aiueos_app_lookup_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_elf_valid_object" \
   "$kotoba_user_elf_valid_sha" \
