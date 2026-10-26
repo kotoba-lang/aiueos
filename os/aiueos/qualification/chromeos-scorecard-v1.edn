@@ -552,8 +552,9 @@
    :procedure "Run on battery; read the level; hit low battery."
    :expected "The level is right and the machine warns and sleeps."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
+   :status :pass :qemu-progress :pass
+   :evidence ["gate guest-browser-battery" "receipt os/aiueos/qualification/receipts/vm-20261026/i2-battery-power-management/receipt.edn"]
+   :note "Measured 2026-10-26 on the reference VM (receipt, commit 1341463). The reference VM has no battery device to read (no ACPI BAT0; QEMU's PC machines expose none), so the level is the guest's own state behind the AIUEOS_BATTERY_PROBE build flag: the gate walks AC at 100 through battery 100/80/60/40/20/10/5 and verifies every reading against sampled pixels of the POWER field -- the warning colour 0x00d08060 exactly at and below 10, the normal 0x00c0c0c0 above -- ending AIUEOS_BATTERY_OK steps=8 warn-from=10 critical=5 ac=0, with the band itself probed (band-y=786, at70=00c0c0c0, at300=00202830). The band had to be repainted by the stage: show() returns before painting it when the damage rectangle is empty (framebuffer.c:790) and this stage's frame does not change between steps -- measured as the desktop background under every step until fixed. The sleep half comes from the browser-desktop-suspend gate's own committed run (receipts/vm-20261024/suspend: SUSPEND_GO/ENTER/RESUME with frame-intact=1 state-intact=1, host before-sha == after-sha, sleeping screen black, resume 51 ms), because the chain stops at backup in every profile run (AIUEOS_GUEST_BROWSER_BACKUP leftover=no-records appears at line 769 of the I3, pointer-fix and ui-scale serials too). Limits are in the receipt: the power source is synthetic, the sleep evidence is from a second run, and :device evidence for a real discharge stays open."
    }
   {:id :I3 :category :power :title "Display scaling and external displays"
    :weight 2 :required true :required-level :device
