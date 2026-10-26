@@ -26,13 +26,13 @@ Evidence levels, in order: `:design` < `:qemu` < `:device` < `:release` < `:user
 
 ## Where AIUEOS stands (ledger reconciled 2026-10-25)
 
-**SCORE 67%.** Forty rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A3, A4, A5, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C9, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I6, I7 and I8
-(weight 67 of 100), verified by `kbb --backend sci scripts/chromeos-scorecard.cljk` on the merged tree (`AIUEOS_CHROMEOS_SCORECARD_OK`, QEMU-progress 75%). Fifteen required rows remain `:unachieved` and weigh 33: A2, D3, D8, E1, E2, E3, E4, E5, E6, E7, F3, F5, F6, I2 and I3 -- the whole web category (20) is still `:pass` nowhere. The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed reference, or at `:release` level on a VM receipt alone; the `:release` rows A3--A5 pass on the signed-release receipt and its install/refusal readbacks, which is the receipt the reference VM produced, not a physical machine. P5 real-hardware qualification remains `:spec`, and the checker has not yet been ported to the native Amu/Kotoba route (JUN-409), so this score is the hosted checker's verdict over reference-VM receipts, not a native-qualification percentage.
+**SCORE 69%.** Forty-one rows are `:pass`, each by a receipt of a run in the reference VM (below): A1, A2, A3, A4, A5, B1, B2, B3, C1, C2, C3, C4, C5, C7, C8, C9, C10, D1, D2, D4, D5, D6, D7, F1, F2, F4, G1, G2, G3, G4, G5, H1, H2, H3, H4, I1, I4, I5, I6, I7 and I8
+(weight 69 of 100), verified by `kbb --backend sci scripts/chromeos-scorecard.cljk` on the merged tree (`AIUEOS_CHROMEOS_SCORECARD_OK`, QEMU-progress 77%). Fourteen required rows remain `:unachieved` and weigh 31: D3, D8, E1, E2, E3, E4, E5, E6, E7, F3, F5, F6, I2 and I3 -- the whole web category (20) is still `:pass` nowhere. The checker refuses a `:pass` without a receipt that reads back, with a red verdict, with an unconfirmed reference, or at `:release` level on a VM receipt alone; the `:release` rows A3--A5 pass on the signed-release receipt and its install/refusal readbacks, which is the receipt the reference VM produced, not a physical machine. P5 real-hardware qualification remains `:spec`, and the checker has not yet been ported to the native Amu/Kotoba route (JUN-409), so this score is the hosted checker's verdict over reference-VM receipts, not a native-qualification percentage.
 
 **Historical UI receipt.** `os/aiueos/qualification/receipts/vm-20261024/ui-current` is one boot after the size-optimized guest-browser build (ADR-0270) and the backup stage (ADR-0271), with 33 profiles green: the 28 of the first `ui` receipt (vm-20261023) plus clock, layout, notify, passkey and backup. The rows' own receipts stay the ones they cite. This receipt predates the current tree and does not qualify later native Browser/Itonami integration.
 
-Beside the score, and never added to it, the **QEMU-level progress** is 75% of the required weight (it counts the rows above too) (a row whose behaviour is gated
-on QEMU counts 1, a row with some of it 1/2, none 0). By category, as the checker prints it: identity 6 of 6, security 9 of 9, boot 8 of 10,
+Beside the score, and never added to it, the **QEMU-level progress** is 77% of the required weight (it counts the rows above too) (a row whose behaviour is gated
+on QEMU counts 1, a row with some of it 1/2, none 0). By category, as the checker prints it: identity 6 of 6, security 9 of 9, boot 10 of 10,
 update and recovery 9 of 9, power/accessibility 7 of 10, storage and network 6 of 9, input 9 of 12, shell 15 of 15, web 6 of 20.
 
 **Against the earlier "about 10%".** That figure was a provisional estimate of product readiness (JUN-89) with no scale behind it;
@@ -48,6 +48,7 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 
 | Row | Weight | What the pass is | What it is not |
 |---|---|---|---|
+| A2 Display change | 2 | two host resizes (1280x800 -> 1200x1920 and back) seen and answered from the IDLE desktop loop, each with AIUEOS_GPU_DISPLAY_CHANGE_OK rebind-fullframe, geometry stable on every poll afterwards, zero EVIDENCE_STOP / VIRTIO_GPU_FAIL, QMP screendumps before and after (P6 1280x800, no black sample) | the desktop presents its OWN size and the host scales that image -- this is not a re-layout at the new size; the second geometry came from this host's fullscreen mode, because cocoa's window is not resizable unless zoom-to-fit is on (and zoom-to-fit shrinks it on a QEMU-side feedback loop, measured 1280 -> 856 -> 361); the readback is the guest console screendump, not a host window screenshot |
 | I1 Suspend and resume | 2 | the sleep key blanks the screen and idles the machine in HLT; the wake key redraws; host screendumps, a surface fingerprint, 51 ms | not ACPI S3: RAM stays powered, no device powered down; the lid is a key |
 | B1 Device-bound passkey | 3 | a P-256 key from the virtio-rng, kept in sector 1035; a WebAuthn-shaped ceremony; another device's key refused | the private key is in the clear on the volume (no secure element, G3 unmet); the other device is a test key |
 | H4 Backup and restore | 1 | the settings and passkey records copied, wiped, restored byte for byte | two records, not files; the backup is on the same volume; no UI |
@@ -70,7 +71,7 @@ weakest first, so that a rejection is one edit of the row to `:unachieved`:
 | G5 Key lifecycle and revocation | 1 | two RSA-2048 qualification signers; the original is revoked and its object is refused ('release signer is revoked'), the rotated signer verifies, and the revoked signature verifies without the list (control) | qualification keys only — the production key stays offline (CUSTODY.md) and was not rotated here; revocation is enforced at the verification gate, not in firmware or at runtime; distributing the revocation list is an operational step outside the run |
 | A1 Firmware to desktop | 3 | a production release image reaches the guest desktop with a QMP-injected key event; the desktop marker appears within the 60 s timeout (boot log 62 s) and no evidence stage stops | the display is read back from serial markers, not a screenshot; QEMU is stopped at 60 s while the desktop persists; not a physical machine |
 
-The twenty-one weigh 36 points: rejecting all of them would take the score from 67% to 31%. The 31% is the stricter figure; the 67% is what the checker prints. This is a sensitivity check, not a second qualification score.
+The twenty-two weigh 38 points: rejecting all of them would take the score from 69% to 31%. The 31% is the stricter figure; the 69% is what the checker prints. This is a sensitivity check, not a second qualification score.
 
 ## ChromeOS comparison boundary
 
@@ -79,11 +80,11 @@ The required rows compare user-visible outcomes. The Google/Chromium sources beh
 | Axis | Current AIUEOS evidence | Remaining product gate |
 |---|---|---|
 | Kotoba/Amu selfhost | Native compiler and diagnostic media receipts are recorded separately in `90-docs/native-selfhost-integration.md`. | Whole source and runtime closure, including shared Browser/CSSOM and Itonami, needs native self-rebuild and runtime receipts. |
-| Boot and install | QEMU/OVMF desktop, the signed-image identity for A3, the A4 second-install refusal and the A5 first-run setup have VM receipts. | Physical device boot/install, A2 display-change handling and the remaining input rows stay open. |
+| Boot and install | QEMU/OVMF desktop, the signed-image identity for A3, the A4 second-install refusal, the A5 first-run setup and the A2 display change (both directions, with screendumps) have VM receipts. | Physical device boot/install and the remaining input rows stay open. |
 | Security and update | Verified-boot gate, at-rest encryption, key revocation, signed update, rollback and recovery reinstall have VM receipts (G1, G3, G5, H1, H2, H3). | Hardware-rooted verified boot (firmware signing), Wi-Fi credential sealing and long-running use stay open. |
 | Daily use | Shell 15/15, input 9/12 and the screen reader (I6) have VM receipts. | Shared Browser/CSSOM (E1--E7, the whole web category), touchpad gestures, display scaling and external displays stay open. |
 
-The 67% figure applies only to the owner-selected **QEMU/OVMF VM reference** and this scorecard's accepted receipts. It is not a ChromeOS feature-completeness claim, a native selfhost percentage, or a physical-hardware readiness figure.
+The 69% figure applies only to the owner-selected **QEMU/OVMF VM reference** and this scorecard's accepted receipts. It is not a ChromeOS feature-completeness claim, a native selfhost percentage, or a physical-hardware readiness figure.
 
 ## Reference scope and open comparison
 
