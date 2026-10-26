@@ -633,12 +633,44 @@ extern void aiueos_kernel_serial_marker(const char *text);
    APIC timer ticks (the guest's running timebase); power is AC in the
    reference VM (there is no battery device to read). */
 static uint32_t status_last_state; /* 0 = unseen, 1 = offline, 2 = online */
+/* The pointer rectangle the stages last drew (ADR-0236), reported by
+   aiueos_desktop_set_pointer. The bar paints AFTER the frame, so without this
+   it covered the arrow: measured 2026-10-26, the cursor stage's corner point
+   (1276,796) sampled 0x00202830 -- the bar's own colour -- instead of the
+   tip's 0x333333, one frame failed, and the stage chain behind it (FOCUS ..
+   SCALE .. SUSPEND) never ran. list -> status bar -> pointer is the order a
+   desktop keeps: the bar draws, then the pointer's pixels go back on top. */
+static uint32_t pointer_x = 0xffffffffU, pointer_y; /* x sentinel = none */
+void aiueos_desktop_set_pointer(uint32_t x, uint32_t y) { pointer_x = x; pointer_y = y; }
+/* .high_bss: the low layout is at its budget (qualification/low-region-budget.edn).
+   Bounded by construction: only the 14 band rows and 16 pointer columns. */
+static uint32_t saved_pointer[14 * 16] __attribute__((section(".high_bss")));
 void aiueos_desktop_paint_status(void) {
   char line[64];
   uint32_t y, x;
   uint32_t online = aiueos_dhcp_lease_seconds() > 0;
+  uint32_t save_r0 = 0, save_rows = 0, save_c0 = 0, save_cols = 0;
   if (!desktop_surface_ready) return;
   y = desktop_surface.height - 14;
+  /* 1. lift the pointer pixels that live inside the band */
+  if (pointer_x != 0xffffffffU) {
+    uint32_t r0 = (pointer_y > 1U) ? pointer_y - 1U : 0U;
+    uint32_t r1 = pointer_y + 17U;
+    uint32_t c0 = (pointer_x > 1U) ? pointer_x - 1U : 0U;
+    uint32_t c1 = pointer_x + 14U;
+    if (r1 > y && r0 < y + 14U) {
+      save_r0 = (r0 < y) ? y : r0;
+      save_rows = ((r1 > y + 14U) ? y + 14U : r1) - save_r0;
+      save_c0 = c0;
+      save_cols = (c1 > desktop_surface.width ? desktop_surface.width : c1) - c0;
+      if (save_cols > 16U) save_cols = 16U;
+      for (uint32_t r = 0; r < save_rows; r++)
+        for (uint32_t c = 0; c < save_cols; c++)
+          saved_pointer[r * 16U + c] =
+            desktop_surface_pixels[(save_r0 + r) * desktop_surface.stride + save_c0 + c];
+    }
+  }
+  /* 2. the bar and its text */
   rectangle(desktop_surface_pixels, desktop_surface.stride,
             desktop_surface.pixel_format, 0, y, desktop_surface.width, 14, 0x00202830U);
   x = 4;
@@ -667,6 +699,12 @@ void aiueos_desktop_paint_status(void) {
                                          : "AIUEOS_STATUS_AREA_OK network=offline power=ac clock=running\r\n");
     }
   }
+  /* 3. the pointer goes back on top of the bar (see the note above
+     aiueos_desktop_set_pointer). */
+  for (uint32_t r = 0; r < save_rows; r++)
+    for (uint32_t c = 0; c < save_cols; c++)
+      desktop_surface_pixels[(save_r0 + r) * desktop_surface.stride + save_c0 + c] =
+        saved_pointer[r * 16U + c];
 }
 extern void aiueos_kernel_serial_marker(const char *text);
 extern int64_t kotoba_aiueos_browser_damage(uint64_t ops, uint64_t ops_bytes, uint64_t shadow,

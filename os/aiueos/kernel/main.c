@@ -700,6 +700,8 @@ extern int aiueos_qualification_finalize(uint16_t, uint32_t);
 extern int aiueos_qualification_reboot(void);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
+/* C9/status bar keeps the pointer on top; see the note in framebuffer.c. */
+extern void aiueos_desktop_set_pointer(uint32_t x, uint32_t y);
 extern int aiueos_desktop_wm_rects_fit(void);
 extern int aiueos_desktop_wm_paint(uint64_t front);
 extern uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id);
@@ -1199,6 +1201,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
     uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
     surface[2046] = px + 1U;
     surface[2047] = py;
+    aiueos_desktop_set_pointer(px, py);
     r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     if (surface[2043] > smax) smax = surface[2043];
     sfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
@@ -1322,6 +1325,7 @@ static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint6
       uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
       surface[2046] = px + 1U;
       surface[2047] = py;
+      aiueos_desktop_set_pointer(px, py);
       r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     } else {
       key = aiueos_keyboard_next_key(1024U);
@@ -1619,6 +1623,7 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
       uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
       surface[2046] = px + 1U;
       surface[2047] = py;
+      aiueos_desktop_set_pointer(px, py);
       r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     } else {
       key = aiueos_keyboard_next_key(1024U);
@@ -6763,6 +6768,7 @@ qwen_runtime_boot_complete:
                                         py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
                                         surface[2046] = px + 1U;
                                         surface[2047] = py;
+                                        aiueos_desktop_set_pointer(px, py);
                                         r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
                                         cfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                                                 (uint64_t)(uintptr_t)font, font_length);
@@ -6872,6 +6878,7 @@ qwen_runtime_boot_complete:
                                               uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
                                               surface[2046] = px + 1U;
                                               surface[2047] = py;
+                                              aiueos_desktop_set_pointer(px, py);
                                               r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
                                             } else {
                                               key = aiueos_keyboard_next_key(1024U);
