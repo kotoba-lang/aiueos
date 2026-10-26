@@ -355,7 +355,7 @@
     (if (= down 1)
       (if (> (+ (sc-at st sb id) 20) 65535) -12
         (do (sc-put st sb id (+ (sc-at st sb id) 20)) id))
-      (do (sc-put st sb id (if (< (sc-at st sb id) 20) 0 (- (sc-at st sb id) 20))) id)))
+      (do (if (< (sc-at st sb id) 20) (sc-put st sb id 0) (sc-put st sb id (- (sc-at st sb id) 20))) id)))
 
 ;; browser.input :pointer/wheel: the window under the pointer (k1 = stack
 ;; index + 1, 0 = a miss) scrolls; nothing is focused, raised or captured.
