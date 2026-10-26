@@ -58,9 +58,14 @@ ledger admission. This verifies the declared log bytes, not the truth of every
 feature claim or screenshot digest in a receipt.
 The earlier source-bound probe printed the then-recorded score of 48 and
 category weights, passes and gaps. The current canonical EDN declares 42
-passing rows of weight 71; the runner now expects those category totals only
-after the native verifier admits their evidence. Eighteen negative controls
-cover malformed schema, missing or red
+passing rows of weight 71. The runner first verifies that the native checker
+refuses this current input, then constructs a diagnostic 51-point subset by
+demoting exactly the eleven newly passing rows whose receipts still lack
+native-checkable logs. The checker admits that subset. All eighteen negative
+controls run from the admitted subset (seventeen alter input files; one uses
+a different public modulus), so each refusal demonstrates a working check
+rather than repeating the canonical input's baseline refusal. They cover
+malformed schema, missing or red
 receipts, missing signed-release reference, malformed digest fields, missing
 named verdicts, one-byte artifact changes, a modified signature with an
 updated matching digest, a different public modulus, and missing or changed
@@ -95,10 +100,14 @@ two new rows left at `:pass` in a scratch copy of the current card, the
 native executable accepts 51 points (the previous 48 plus A2's 2 and A4's
 1). A one-byte A2 serial-log change and removal of A4's signed-release
 reference each make that same native executable refuse with `AIUEOS_SCORE -1`.
-The canonical 71-point card still refuses admission. These isolated runs
-are in the private scratch directory
-`github/workspaces/codex/aiueos-scorecard-rebased-probe-20261026`;
-they are diagnostic, not a release receipt.
+The canonical 71-point card still refuses admission. The initial isolated
+runs are in the private scratch directory
+`github/workspaces/codex/aiueos-scorecard-rebased-probe-20261026`. The
+repaired full probe passed its 51-point diagnostic input, canonical refusal,
+eighteen mutated negative controls, and wrong-key refusal with the pinned
+signed Mac native compiler and packager. Its report is
+`github/workspaces/codex/aiueos-scorecard-probe-subset-v2-20261026/native-scorecard-core.json`.
+All of these runs are diagnostics, not a release receipt.
 
 I3 has two checked-in logs with names outside the verifier's current fixed
 path; its receipt also describes two separate runs and keeps a scope caveat.

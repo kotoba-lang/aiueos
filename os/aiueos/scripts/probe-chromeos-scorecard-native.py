@@ -48,18 +48,32 @@ SIGNED_RELEASE_JSON = SIGNED_RELEASE_RECEIPT.with_name(
     'aiueos-x86_64-build-receipt.json')
 SIGNED_RELEASE_SIGNATURE = SIGNED_RELEASE_RECEIPT.with_name(
     'aiueos-x86_64-build-receipt.sig')
+UNVERIFIED_ROWS = ('A5', 'C9', 'F2', 'G1', 'G3', 'G5', 'H1', 'H2',
+                   'H3', 'I3', 'I6')
 EXPECTED_LEDGER = (
-    b'AIUEOS_SCORE 71\n'
-    b'AIUEOS_CATEGORY boot weight=10 pass=10 gap=0\n'
+    b'AIUEOS_SCORE 51\n'
+    b'AIUEOS_CATEGORY boot weight=10 pass=9 gap=1\n'
     b'AIUEOS_CATEGORY identity weight=6 pass=6 gap=0\n'
-    b'AIUEOS_CATEGORY shell weight=15 pass=15 gap=0\n'
+    b'AIUEOS_CATEGORY shell weight=15 pass=14 gap=1\n'
     b'AIUEOS_CATEGORY input weight=12 pass=9 gap=3\n'
     b'AIUEOS_CATEGORY web weight=20 pass=0 gap=20\n'
-    b'AIUEOS_CATEGORY storage weight=9 pass=4 gap=5\n'
-    b'AIUEOS_CATEGORY security weight=9 pass=9 gap=0\n'
-    b'AIUEOS_CATEGORY update weight=9 pass=9 gap=0\n'
-    b'AIUEOS_CATEGORY power weight=10 pass=9 gap=1\n'
+    b'AIUEOS_CATEGORY storage weight=9 pass=3 gap=6\n'
+    b'AIUEOS_CATEGORY security weight=9 pass=3 gap=6\n'
+    b'AIUEOS_CATEGORY update weight=9 pass=1 gap=8\n'
+    b'AIUEOS_CATEGORY power weight=10 pass=6 gap=4\n'
 )
+
+
+def admitted_subset(card):
+    """Demote only rows whose new pass receipts lack native-checkable logs."""
+    for row_id in UNVERIFIED_ROWS:
+        pattern = (rb'(\{:id :' + row_id.encode() +
+                   rb'\s(?:(?!\n  \{:id).)*?:status ):pass(?=\s+:qemu-progress)')
+        card, count = re.subn(pattern, rb'\1:unachieved', card,
+                              count=1, flags=re.S)
+        if count != 1:
+            raise ValueError(f'unverified row anchor changed: {row_id}')
+    return card
 
 
 def digest(path):
@@ -137,8 +151,9 @@ def main():
     source = output / 'scorecard.kotoba'
     shutil.copyfile(SOURCE, source)
     source_sha = digest(source)
-    card_bytes = CARD.read_bytes()
-    original_sha = hashlib.sha256(card_bytes).hexdigest()
+    canonical_card = CARD.read_bytes()
+    original_sha = hashlib.sha256(canonical_card).hexdigest()
+    card_bytes = admitted_subset(canonical_card)
     commit, source_at_commit = committed_identity(SOURCE)
     _, card_at_commit = committed_identity(CARD)
 
@@ -167,7 +182,8 @@ def main():
         raise ValueError('native output has an undeclared dylib dependency')
 
     observations = {}
-    for name in ('positive', *NEGATIVES, *RECEIPT_NEGATIVES):
+    for name in ('positive', 'canonical-refusal', *NEGATIVES,
+                 *RECEIPT_NEGATIVES):
         directory = output / name
         directory.mkdir(mode=0o700)
         target_receipts = directory/'os/aiueos/qualification/receipts'
@@ -176,6 +192,9 @@ def main():
         if name == 'positive':
             data = card_bytes
             expected_exit, expected_stdout = 0, EXPECTED_LEDGER
+        elif name == 'canonical-refusal':
+            data = canonical_card
+            expected_exit, expected_stdout = 1, b'AIUEOS_SCORE -1\n'
         elif name in NEGATIVES:
             before, after = NEGATIVES[name]
             if before not in card_bytes:
@@ -294,6 +313,9 @@ def main():
               'sourceCommit': commit, 'sourceAtCommit': source_at_commit,
               'scorecardAtCommit': card_at_commit,
               'sourceSha256': source_sha, 'scorecardSha256': original_sha,
+              'admittedSubsetSha256': hashlib.sha256(card_bytes).hexdigest(),
+              'diagnosticDemotedRows': UNVERIFIED_ROWS,
+              'canonicalAdmitted': False,
               'compilerSha256': digest(compiler), 'packagerSha256': digest(packager),
               'executableSha256': digest(executable),
               'observations': observations,
