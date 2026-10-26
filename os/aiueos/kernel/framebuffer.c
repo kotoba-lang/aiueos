@@ -67,8 +67,21 @@ int aiueos_desktop_surface_copy(uint64_t generation, uint32_t x, uint32_t y,
         desktop_surface_pixels[(uint64_t)(y + row) * desktop_surface.stride + x + column];
   return 1;
 }
+/* A2 (JUN-142 / scorecard row A2): the desktop presents at ITS OWN size --
+   the boot GOP framebuffer -- and the host frontend scales that image into
+   whatever window the user gives it, so a host resize is no longer a bind
+   failure. What this check still requires is that GET_DISPLAY_INFO answered
+   at all: "the display exists and reports a size" is the condition it was
+   written for, and the exact-equality form was over-reading it.
+
+   Measured 2026-10-26 with `-display cocoa,zoom-to-fit=on`: the window
+   shrank to 361x389 before this point, GET_DISPLAY_INFO reported 577x361
+   against a 1280x800 surface, and the equality form stopped the boot with
+   AIUEOS_VIRTIO_GPU_FAIL surface-binding-scanout-w=577 scanout-h=361 ->
+   AIUEOS_EVIDENCE_STOP -- a display change the machine was supposed to
+   survive. */
 int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height) {
-  return desktop_surface_ready && desktop_surface.width == width && desktop_surface.height == height;
+  return desktop_surface_ready && width && height;
 }
 
 static uint32_t pixel(uint32_t rgb, uint32_t format);
@@ -610,6 +623,7 @@ extern int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uin
    desktop resource so the next present re-binds it. Returns 1 when the
    geometry changed and the caller must send a full frame. */
 extern int aiueos_gpu_display_refresh(void);
+extern int aiueos_gpu_geometry_changed_take(void);
 extern uint32_t aiueos_dhcp_lease_seconds(void);
 extern volatile uint64_t aiueos_apic_timer_ticks;
 extern void aiueos_kernel_serial_marker(const char *text);
@@ -664,7 +678,10 @@ int aiueos_desktop_show(void) {
   /* A2: a display change re-binds the GPU resource; the frame after one is
      always whole. FRAMEBUFFER_PROGRESS(258) is the qualification channel;
      AIUEOS_GPU_DISPLAY_CHANGE_OK is the evidence marker (production). */
-  if (aiueos_gpu_display_refresh()) {
+  /* refresh() first (it throttles its own device read), then the latch: the
+     idle loop may have polled the same change already, and the marker must
+     still fire -- once. */
+  if (aiueos_gpu_display_refresh() | aiueos_gpu_geometry_changed_take()) {
     desktop_shadow[0] = 0;
     FRAMEBUFFER_PROGRESS(258);
     aiueos_kernel_serial_marker("AIUEOS_GPU_DISPLAY_CHANGE_OK rebind-fullframe\r\n");

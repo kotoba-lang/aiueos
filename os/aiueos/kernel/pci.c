@@ -2329,6 +2329,16 @@ static struct virtio_gpu_event gpu_event_buf;
 static uint16_t gpu_avail_next;     /* free-running avail index: commands and event re-posts */
 static uint16_t gpu_used_consumed;  /* free-running used index this driver has drained */
 static uint32_t gpu_display_events; /* accumulated VIRTIO_GPU_EVENT_* bits */
+/* A2: set when a host display change was seen, taken by whoever presents the
+   next frame. The idle desktop loop polls refresh() itself, so without this
+   the change would be consumed there and aiueos_desktop_show -- which owns
+   the AIUEOS_GPU_DISPLAY_CHANGE_OK marker -- would never report it. */
+static int gpu_geometry_changed;
+int aiueos_gpu_geometry_changed_take(void) {
+  int changed = gpu_geometry_changed;
+  gpu_geometry_changed = 0;
+  return changed;
+}
 uint32_t aiueos_gpu_display_events(void) { return gpu_display_events; }
 
 /* Drain used entries without waiting: events (id 2) are recorded and the
@@ -2587,11 +2597,19 @@ int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t h
                                     uint32_t rx, uint32_t ry, uint32_t rw, uint32_t rh) {
   struct virtio_gpu_ctrl_header *resp;
   struct virtio_gpu_rect all;
-  /* A2: a surface that FITS the scanout is presented (letterboxed when the
-     host shrank the display); only one that does not fit is refused. Before
-     a display change this accepted exactly the boot geometry. */
-  if (!gpu_ctrlq_ready || !address || stride != width ||
-      width > gpu_scanout_width || height > gpu_scanout_height) return 0;
+  /* A2: the resource and the SET_SCANOUT rect are the DESKTOP's own size,
+     never the host window's. QEMU bounds the rect against the RESOURCE, not
+     against the UI (hw/display/virtio-gpu.c virtio_gpu_do_set_scanout), and
+     cocoa's zoom-to-fit scales that image into the user's window -- so a
+     host resize cannot make the present fail, at either size. The reported
+     change is what aiueos_gpu_display_refresh turns into
+     AIUEOS_GPU_DISPLAY_CHANGE_OK and a whole-frame re-send.
+
+     Before this the fit check refused every frame once the window got
+     smaller than the surface (measured 2026-10-26: host 577x361, surface
+     1280x800, FRAMEBUFFER_PROGRESS(249) on the first show and a desktop
+     that never reached the GPU again). */
+  if (!gpu_ctrlq_ready || !address || stride != width) return 0;
   if (!rw || !rh || rx >= width || ry >= height || rw > width - rx || rh > height - ry) return 0;
   resp = (void *)(gpu_ctrlq_messages + 2048);
   all = (struct virtio_gpu_rect){0, 0, width, height};
@@ -2691,7 +2709,12 @@ int aiueos_gpu_display_refresh(void) {
   }
   {
     extern void aiueos_kernel_serial_marker(const char *text);
-    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readok\r\n");
+    extern void aiueos_kernel_serial_u32(uint32_t value);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readok ");
+    aiueos_kernel_serial_u32(response.modes[0].rect.width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(response.modes[0].rect.height);
+    aiueos_kernel_serial_marker("\r\n");
   }
   for (uint32_t i = 0; i < 16; i++) if (response.modes[i].enabled) {
     uint32_t width = response.modes[i].rect.width, height = response.modes[i].rect.height;
@@ -2705,9 +2728,27 @@ int aiueos_gpu_display_refresh(void) {
   if (scanouts == 0) return 0;
   if (new_width == gpu_scanout_width && new_height == gpu_scanout_height &&
       scanouts == gpu_enabled_scanouts) return 0;
+  /* The sizes are the evidence for the scorecard's A2 row: which geometry the
+     host moved FROM and TO, read back from the serial line of the same run. */
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    extern void aiueos_kernel_serial_u32(uint32_t value);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY from=");
+    aiueos_kernel_serial_u32(gpu_scanout_width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(gpu_scanout_height);
+    aiueos_kernel_serial_marker(" to=");
+    aiueos_kernel_serial_u32(new_width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(new_height);
+    aiueos_kernel_serial_marker(" scanouts=");
+    aiueos_kernel_serial_u32(scanouts);
+    aiueos_kernel_serial_marker("\r\n");
+  }
   gpu_scanout_width = new_width; gpu_scanout_height = new_height;
   gpu_enabled_scanouts = scanouts;
   gpu_desktop_resource_ready = 0; /* re-bind on the next present */
+  gpu_geometry_changed = 1;
   return 1;
 }
 
