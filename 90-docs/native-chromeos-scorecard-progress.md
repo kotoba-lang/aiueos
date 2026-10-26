@@ -53,16 +53,18 @@ not a production release key. The native probe also hashes the saved primary
 serial log for every referenced passing VM receipt and the secondary log where
 the receipt declares one. The `settings` secondary is
 `kernel-serial.log.boot1`; the install-refusal receipt uses
-`boot4-serial.log` and `install-serial.log`. Missing or modified logs fail the
+`boot4-serial.log` and `install-serial.log`. The exact I3 receipt uses
+`scale-run-serial.log` and `scanout-two-run-serial.log`; both digests are
+mandatory. Missing or modified logs fail the
 ledger admission. This verifies the declared log bytes, not the truth of every
 feature claim or screenshot digest in a receipt.
 The earlier source-bound probe printed the then-recorded score of 48 and
 category weights, passes and gaps. The current canonical EDN declares 42
 passing rows of weight 71. The runner first verifies that the native checker
-refuses this current input, then constructs a diagnostic 51-point subset by
-demoting exactly the eleven newly passing rows whose receipts still lack
-native-checkable logs. The checker admits that subset. All eighteen negative
-controls run from the admitted subset (seventeen alter input files; one uses
+refuses this current input, then constructs a diagnostic 53-point subset by
+demoting exactly the ten newly passing rows whose receipts still lack
+native-checkable logs. The checker admits that subset. All twenty-two negative
+controls run from the admitted subset (twenty-one alter input files; one uses
 a different public modulus), so each refusal demonstrates a working check
 rather than repeating the canonical input's baseline refusal. They cover
 malformed schema, missing or red
@@ -104,14 +106,22 @@ The canonical 71-point card still refuses admission. The initial isolated
 runs are in the private scratch directory
 `github/workspaces/codex/aiueos-scorecard-rebased-probe-20261026`. The
 repaired full probe passed its 51-point diagnostic input, canonical refusal,
-eighteen mutated negative controls, and wrong-key refusal with the pinned
+seventeen input mutations and a wrong-key refusal with the pinned
 signed Mac native compiler and packager. Its report is
 `github/workspaces/codex/aiueos-scorecard-probe-subset-v2-20261026/native-scorecard-core.json`.
 All of these runs are diagnostics, not a release receipt.
 
-I3 has two checked-in logs with names outside the verifier's current fixed
-path; its receipt also describes two separate runs and keeps a scope caveat.
-The other ten receipt directories have no serial log in the repository. A
+The next native slice binds both I3 logs to exact SHA-256 fields and admits
+their names only for that exact receipt path. The signed native probe accepts
+53 points in its temporary input (the earlier 51 plus I3's 2), refuses the
+canonical 71-point input, and rejects missing or one-byte-modified versions
+of each I3 log. Its 22 negative controls all start from the admitted input;
+see `github/workspaces/codex/aiueos-scorecard-i3-probe-20261026/native-scorecard-core.json`.
+I3's receipt still describes two separate runs and a 32x32 second resource,
+not an extended desktop or physical monitor. Native digest admission does not
+settle whether the recorded behavior satisfies the row's user expectation.
+
+The remaining ten newly passing receipt directories have no serial log in the repository. A
 read-only scan of the current local workspaces found no copies under those
 receipt-specific names. The next work is to recover or rerun the actual
 evidence and bind it to the current source, then extend the native verifier

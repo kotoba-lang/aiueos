@@ -38,7 +38,9 @@ RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict',
                      'tampered-release-json', 'tampered-release-signature',
                      'rehashed-invalid-signature', 'tampered-serial-log',
                      'missing-serial-log', 'tampered-secondary-serial-log',
-                     'missing-secondary-serial-log')
+                     'missing-secondary-serial-log', 'tampered-i3-scale-log',
+                     'missing-i3-scale-log', 'tampered-i3-scanout-log',
+                     'missing-i3-scanout-log')
 A1_RECEIPT = Path('os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn')
 SETTINGS_RECEIPT = Path(
     'os/aiueos/qualification/receipts/vm-20261024/settings/receipt.edn')
@@ -48,10 +50,12 @@ SIGNED_RELEASE_JSON = SIGNED_RELEASE_RECEIPT.with_name(
     'aiueos-x86_64-build-receipt.json')
 SIGNED_RELEASE_SIGNATURE = SIGNED_RELEASE_RECEIPT.with_name(
     'aiueos-x86_64-build-receipt.sig')
+I3_RECEIPT = Path(
+    'os/aiueos/qualification/receipts/vm-20261026/i3-display-scaling-external/receipt.edn')
 UNVERIFIED_ROWS = ('A5', 'C9', 'F2', 'G1', 'G3', 'G5', 'H1', 'H2',
-                   'H3', 'I3', 'I6')
+                   'H3', 'I6')
 EXPECTED_LEDGER = (
-    b'AIUEOS_SCORE 51\n'
+    b'AIUEOS_SCORE 53\n'
     b'AIUEOS_CATEGORY boot weight=10 pass=9 gap=1\n'
     b'AIUEOS_CATEGORY identity weight=6 pass=6 gap=0\n'
     b'AIUEOS_CATEGORY shell weight=15 pass=14 gap=1\n'
@@ -60,7 +64,7 @@ EXPECTED_LEDGER = (
     b'AIUEOS_CATEGORY storage weight=9 pass=3 gap=6\n'
     b'AIUEOS_CATEGORY security weight=9 pass=3 gap=6\n'
     b'AIUEOS_CATEGORY update weight=9 pass=1 gap=8\n'
-    b'AIUEOS_CATEGORY power weight=10 pass=6 gap=4\n'
+    b'AIUEOS_CATEGORY power weight=10 pass=8 gap=2\n'
 )
 
 
@@ -214,9 +218,14 @@ def main():
                 ('tampered-serial-log', 'missing-serial-log')
                 else SETTINGS_RECEIPT.with_name('kernel-serial.log.boot1') if name in
                 ('tampered-secondary-serial-log', 'missing-secondary-serial-log')
+                else I3_RECEIPT.with_name('scale-run-serial.log') if name in
+                ('tampered-i3-scale-log', 'missing-i3-scale-log')
+                else I3_RECEIPT.with_name('scanout-two-run-serial.log') if name in
+                ('tampered-i3-scanout-log', 'missing-i3-scanout-log')
                 else A1_RECEIPT)
             if name in ('missing-receipt-file', 'missing-serial-log',
-                        'missing-secondary-serial-log'):
+                        'missing-secondary-serial-log', 'missing-i3-scale-log',
+                        'missing-i3-scanout-log'):
                 target.unlink()
             elif name == 'bad-release-signature-field':
                 receipt_bytes = target.read_bytes()
@@ -234,7 +243,8 @@ def main():
                 target.write_bytes(receipt_bytes.replace(
                     before, b'"image-unbound"', 1))
             elif name in ('tampered-release-json', 'tampered-release-signature',
-                          'tampered-serial-log', 'tampered-secondary-serial-log'):
+                          'tampered-serial-log', 'tampered-secondary-serial-log',
+                          'tampered-i3-scale-log', 'tampered-i3-scanout-log'):
                 artifact_bytes = target.read_bytes()
                 if not artifact_bytes:
                     raise ValueError('release artifact empty')

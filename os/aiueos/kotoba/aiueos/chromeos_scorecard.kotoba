@@ -8,6 +8,8 @@
 
 (def SIGNED-RELEASE-RECEIPT
   "os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn")
+(def I3-RECEIPT
+  "os/aiueos/qualification/receipts/vm-20261026/i3-display-scaling-external/receipt.edn")
 
 ;; Pure Kotoba SHA-256, copied from Amu seed/03-source-sha256.kotoba.
 ;; Kept in this single-file native entry until Mac project compilation is qualified.
@@ -394,12 +396,16 @@
         second (document-string-value (field receipt :serial1-sha256))
         parent (string-substring path 0 (- (string-byte-length path) 11))
         refused (string-contains? path "install-refused-qemu/")
-        first-name (if refused "boot4-serial.log" "kernel-serial.log")
-        second-name (if refused "install-serial.log" "kernel-serial.log.boot1")]
+        i3 (string=? path I3-RECEIPT)
+        first-name (if i3 "scale-run-serial.log"
+                     (if refused "boot4-serial.log" "kernel-serial.log"))
+        second-name (if i3 "scanout-two-run-serial.log"
+                      (if refused "install-serial.log" "kernel-serial.log.boot1"))]
     (and (option-some?-of [:option :string] expected)
          (hex64? (option-value-of [:option :string] expected ""))
          (serial-file-digest? (string-concat parent first-name)
            (option-value-of [:option :string] expected ""))
+         (or (not i3) (option-some?-of [:option :string] second))
          (or (not (option-some?-of [:option :string] second))
              (and (hex64? (option-value-of [:option :string] second ""))
                   (serial-file-digest? (string-concat parent second-name)
