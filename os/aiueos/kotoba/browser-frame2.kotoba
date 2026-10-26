@@ -274,14 +274,14 @@
 
 ;; --- font -------------------------------------------------------------------
 
-(defn bsearch [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [lo (u3a p0) hi (u3b p0) cp (u3c p0)]
+(defn bsearch [s sb f fb p0] (loop [p0 p0] (let [lo (u3a p0) hi (u3b p0) cp (u3c p0)]
   (if (> lo hi) -1
     (let [mid (quot (+ lo hi) 2)
           e (bit-and (fw s sb f fb (+ 4 mid)) 16777215)]
       (if (= e cp) mid
         (if (< e cp)
-          (recur s sb f fb (pk3 (+ mid 1) hi cp))
-          (recur s sb f fb (pk3 lo (- mid 1) cp)))))))))
+          (recur (pk3 (+ mid 1) hi cp))
+          (recur (pk3 lo (- mid 1) cp)))))))))
 
 (defn glyph-of [s sb f fb cp]
   (let [i (bsearch s sb f fb (pk3 0 (- (sw s sb 424) 1) cp))]
@@ -326,19 +326,19 @@
       (sput s sb 417 (+ (sw s sb 417) gw))
       0)))
 
-(defn lay [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [base (lo16 p0) i (hi16 p0)]
+(defn lay [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0)]
   (if (>= i (sw s sb 428)) 0
     
       (if (= (sw s sb (+ base i)) 0) 0
         (if (= (sw s sb (+ base i)) 10)
-          (do (newline s sb) (recur s sb f fb (+ (* base 65536) (+ i 1))))
+          (do (newline s sb) (recur (+ (* base 65536) (+ i 1))))
           (let [gi (glyph-of s sb f fb (sw s sb (+ base i)))
                 gw (glyph-width s sb f fb gi)]
             (if (> (+ (sw s sb 417) gw) (sw s sb 420))
               (if (= (sw s sb 426) 1)
-                (do (newline s sb) (place s sb f fb (+ (* gi 65536) gw)) (recur s sb f fb (+ (* base 65536) (+ i 1))))
+                (do (newline s sb) (place s sb f fb (+ (* gi 65536) gw)) (recur (+ (* base 65536) (+ i 1))))
                 0)
-              (do (place s sb f fb (+ (* gi 65536) gw)) (recur s sb f fb (+ (* base 65536) (+ i 1))))))))))))
+              (do (place s sb f fb (+ (* gi 65536) gw)) (recur (+ (* base 65536) (+ i 1))))))))))))
 
 (defn comp-cp [s sb i]
   ;; The i-th code point of the composition: preedit, then romaji bytes.
@@ -401,36 +401,36 @@
 (defn adv [s sb f fb cp] (glyph-width s sb f fb (glyph-of s sb f fb cp)))
 
 (defn has-nl [s sb base i]
-  (let [c (at s sb base i)]
-    (if (= c 0) 0 (if (= c 10) 1 (has-nl s sb base (+ i 1))))))
+  
+    (if (= (at s sb base i) 0) 0 (if (= (at s sb base i) 10) 1 (has-nl s sb base (+ i 1)))))
 
 (defn inked [s sb base i]
-  (let [c (at s sb base i)]
-    (if (= c 0) 0 (if (= (ws c) 1) (inked s sb base (+ i 1)) 1))))
+  
+    (if (= (at s sb base i) 0) 0 (if (= (ws (at s sb base i)) 1) (inked s sb base (+ i 1)) 1)))
 
-(defn cwidth [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
-  (let [c (at s sb base i)]
-    (if (= c 0) acc
-      (if (= (ws c) 1)
-        (recur s sb f fb (pk3 base (+ i 1) 1) (+ acc (if (= pws 1) 0 (adv s sb f fb 32))))
-        (recur s sb f fb (pk3 base (+ i 1) 0) (+ acc (adv s sb f fb c)))))))))
+(defn cwidth [s sb f fb p0] (loop [p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
+  
+    (if (= (at s sb base i) 0) acc
+      (if (= (ws (at s sb base i)) 1)
+        (recur (pk3 base (+ i 1) 1) (+ acc (if (= pws 1) 0 (adv s sb f fb 32))))
+        (recur (pk3 base (+ i 1) 0) (+ acc (adv s sb f fb (at s sb base i)))))))))
 
-(defn verbatim [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
-  (let [c (at s sb base i)]
-    (if (= c 0) 0
-      (if (= (ws c) 1)
+(defn verbatim [s sb f fb p0] (loop [p0 p0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
+  
+    (if (= (at s sb base i) 0) 0
+      (if (= (ws (at s sb base i)) 1)
         (do (if (= pws 1) 0 (place-body s sb f fb (+ (* 32 65536) i)))
-            (recur s sb f fb (pk3 base (+ i 1) 1)))
-        (do (place-body s sb f fb (+ (* c 65536) i))
-            (recur s sb f fb (pk3 base (+ i 1) 0)))))))))
+            (recur (pk3 base (+ i 1) 1)))
+        (do (place-body s sb f fb (+ (* (at s sb base i) 65536) i))
+            (recur (pk3 base (+ i 1) 0))))))))
 
 (defn word-end [s sb base i]
   (loop [j i]
-    (let [c (at s sb base j)]
-      (if (= c 0) j (if (= c 10) j (if (= (ws c) 1) j (recur (+ j 1))))))))
+    
+      (if (= (at s sb base j) 0) j (if (= (at s sb base j) 10) j (if (= (ws (at s sb base j)) 1) j (recur (+ j 1)))))))
 
-(defn word-width [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
-  (if (>= i e) acc (recur s sb f fb (pk3 base (+ i 1) e) (+ acc (adv s sb f fb (at s sb base i))))))))
+(defn word-width [s sb f fb p0] (loop [p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
+  (if (>= i e) acc (recur (pk3 base (+ i 1) e) (+ acc (adv s sb f fb (at s sb base i))))))))
 
 (defn place-body [s sb f fb p0] (let [cp (lo16 p0) j (hi16 p0)]
   ;; the glyph for body code point j at the cursor unless it passes the
@@ -470,10 +470,10 @@
       (put-rect s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* gw 65536) 16))
       (sput s sb 422 (ink s sb))))
 
-(defn emit-run [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
+(defn emit-run [s sb f fb p0] (loop [p0 p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
   (if (>= i e) 0
     (do (place-body s sb f fb (+ (* (at s sb base i) 65536) i))
-        (recur s sb f fb (pk3 base (+ i 1) e)))))))
+        (recur (pk3 base (+ i 1) e)))))))
 
 (defn put-word [s sb f fb p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
   ;; the first word of a line goes whatever its width; a next one joins after
@@ -485,16 +485,16 @@
           (newline s sb)))
       (emit-run s sb f fb (pk3 base i e)))))
 
-(defn pack [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [base (lo16 p0) i (hi16 p0)]
-  (let [c (at s sb base i)]
-    (if (= c 0) 0
-      (if (= c 10)
-        (do (cap s sb i) (newline s sb) (recur s sb f fb (+ (* base 65536) (+ i 1))))
-        (if (= (ws c) 1)
-          (recur s sb f fb (+ (* base 65536) (+ i 1)))
+(defn pack [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0)]
+  
+    (if (= (at s sb base i) 0) 0
+      (if (= (at s sb base i) 10)
+        (do (cap s sb i) (newline s sb) (recur (+ (* base 65536) (+ i 1))))
+        (if (= (ws (at s sb base i)) 1)
+          (recur (+ (* base 65536) (+ i 1)))
           (let [e (word-end s sb base i)]
             (do (put-word s sb f fb (pk3 base i e))
-                (recur s sb f fb (+ (* base 65536) e)))))))))))
+                (recur (+ (* base 65536) e))))))))))
 
 (defn fits [s sb f fb base]
   ;; cssom: the collapsed text fits when its width is at most max(0, W)
@@ -518,16 +518,16 @@
 
 (defn f-caret [s sb id base]
   ;; ADR-0263: window id's caret index; the end when the caret is another window's or none
-  (let [n (blen s sb base 0) v (sw s sb 2004)]
+  (let [ v (sw s sb 2004)]
     (if (= (quot v 128) id)
-      (let [c (- (bit-and v 127) 1)] (if (> c n) n c))
-      n)))
+      (let [c (- (bit-and v 127) 1)] (if (> c (blen s sb base 0)) (blen s sb base 0) c))
+      (blen s sb base 0))))
 
 (defn f-anchor [s sb id base]
   ;; the selection's anchor index, -1 for none or another window's
   (if (= (sw s sb 2036) id)
-    (let [n (blen s sb base 0)]
-      (if (= (sw s sb 2005) 0) -1 (if (> (- (sw s sb 2005) 1) n) n (- (sw s sb 2005) 1))))
+    
+      (if (= (sw s sb 2005) 0) -1 (if (> (- (sw s sb 2005) 1) (blen s sb base 0)) (blen s sb base 0) (- (sw s sb 2005) 1)))
     -1))
 
 (defn sel-pack [s sb id base]
@@ -787,17 +787,17 @@
 ;; the pointer is a resize cursor: a 2 x 2 diagonal from (x - 5, y - 5) to (x + 4,
 ;; y + 4) with an L at each end, in the ink, instead of the arrow. It needs 6 px of
 ;; room on every side; the arrow is kept where there is none.
-(defn top-at [s sb k px py] (loop [s s sb sb k k px px py py]
+(defn top-at [s sb k px py] (loop [k k px px py py]
   (if (< k 0) -1
     (let [b (+ 5 (* k 5))
           x (sw s sb (+ b 1))
           y (sw s sb (+ b 2))
           w (sw s sb (+ b 3))
           h (sw s sb (+ b 4))]
-      (if (< px x) (recur s sb (- k 1) px py)
-        (if (> px (+ x w)) (recur s sb (- k 1) px py)
-          (if (< py y) (recur s sb (- k 1) px py)
-            (if (> py (+ y h)) (recur s sb (- k 1) px py) k))))))))
+      (if (< px x) (recur (- k 1) px py)
+        (if (> px (+ x w)) (recur (- k 1) px py)
+          (if (< py y) (recur (- k 1) px py)
+            (if (> py (+ y h)) (recur (- k 1) px py) k))))))))
 
 (defn on-handle [s sb px py]
   (let [k (top-at s sb (- (sw s sb 1) 1) px py)]
@@ -1027,27 +1027,27 @@
       (sput s sb 422 (ink s sb))
       (do (sput s sb 436 (- vw 208)) (sput s sb 437 (+ 41 (* 30 slot))) (note-text s sb f fb (+ (* base 65536) 0))))))
 
-(defn toasts [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [vw (u3a p0) k (u3b p0) slot (u3c p0)]
+(defn toasts [s sb f fb p0] (loop [p0 p0] (let [vw (u3a p0) k (u3b p0) slot (u3c p0)]
   (if (>= k 4) 0
     (let [base (+ 1971 (* 8 k))]
       (if (= (sw s sb base) 1)
         (do (toast s sb f fb (pk3 vw slot base))
-            (recur s sb f fb (pk3 vw (+ k 1) (+ slot 1))))
-        (recur s sb f fb (pk3 vw (+ k 1) slot))))))))
+            (recur (pk3 vw (+ k 1) (+ slot 1))))
+        (recur (pk3 vw (+ k 1) slot))))))))
 
 (defn panel-count [s sb k]
   (if (>= k 4) 0
     (+ (if (= (sw s sb (+ 1971 (* 8 k))) 0) 0 1) (panel-count s sb (+ k 1)))))
 
-(defn panel-rows [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [vw (u3a p0) k (u3b p0) row (u3c p0)]
+(defn panel-rows [s sb f fb p0] (loop [p0 p0] (let [vw (u3a p0) k (u3b p0) row (u3c p0)]
   (if (>= k 4) 0
     (let [base (+ 1971 (* 8 k))
           st (sw s sb base)]
-      (if (= st 0) (recur s sb f fb (pk3 vw (+ k 1) row))
+      (if (= st 0) (recur (pk3 vw (+ k 1) row))
         (let [y (+ 42 (* 22 row))]
           (do (if (= st 1) (note-glyph s sb f fb (pk3 42 (- vw 208) y)) 0)
               (do (sput s sb 436 (- vw 198)) (sput s sb 437 y) (note-text s sb f fb (+ (* base 65536) 0)))
-              (recur s sb f fb (pk3 vw (+ k 1) (+ row 1)))))))))))
+              (recur (pk3 vw (+ k 1) (+ row 1)))))))))))
 
 (defn notify-layer [s sb f fb vw]
   (if (= (sw s sb 2003) 1)
