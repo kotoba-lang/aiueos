@@ -161,16 +161,19 @@
 (defn is-min [st sb id]
   (if (= (bit-and (w-at st sb 31) (min-bit id)) 0) 0 1))
 
+;; Self-recursion exhausts the rooted walk's depth budget (measured E7106);
+;; the iteration is a loop/recur, whose recur is not a call.
 (defn vis-count [st sb n k]
-  (if (>= k n) 0
-    (+ (if (= (is-min st sb (w-at st sb (+ 5 (* k 5)))) 1) 0 1)
-       (vis-count st sb n (+ k 1)))))
+  (loop [j k acc 0]
+    (if (>= j n) acc
+      (recur (+ j 1) (+ acc (if (= (is-min st sb (w-at st sb (+ 5 (* j 5)))) 1) 0 1))))))
 
 ;; The id of the topmost window that is not minimized at or below stack index k, or 0.
 (defn top-visible [st sb k]
-  (if (< k 0) 0
-    (let [id (w-at st sb (+ 5 (* k 5)))]
-      (if (= (is-min st sb id) 1) (top-visible st sb (- k 1)) id))))
+  (loop [j k]
+    (if (< j 0) 0
+      (let [id (w-at st sb (+ 5 (* j 5)))]
+        (if (= (is-min st sb id) 1) (recur (- j 1)) id)))))
 
 (defn inside [st sb k px py]
   (let [b (+ 5 (* k 5))
@@ -523,30 +526,30 @@
 ;; The dock icon of a minimized app under (px, py), or 0: x (vw - 184) / 2 + 8 + 44 (k - 1) ..
 ;; + 36, y vh - 46 .. + 36, inclusive.
 (defn dock-at [st sb k px py]
-  (if (> k 4) 0
-    (let [x (+ (quot (- (w-at st sb 3) 184) 2) 8 (* 44 (- k 1)))
-          y (- (w-at st sb 4) 46)]
-      (if (= (bit-and (w-at st sb 31) (app-bit k)) 0) (dock-at st sb (+ k 1) px py)
-        (if (= (is-min st sb k) 0) (dock-at st sb (+ k 1) px py)
-          (if (< px x) (dock-at st sb (+ k 1) px py)
-            (if (> px (+ x 36)) (dock-at st sb (+ k 1) px py)
-              (if (< py y) (dock-at st sb (+ k 1) px py)
-                (if (> py (+ y 36)) (dock-at st sb (+ k 1) px py) k)))))))))
+  (loop [m k]
+    (if (> m 4) 0
+      (let [x (+ (quot (- (w-at st sb 3) 184) 2) 8 (* 44 (- m 1)))
+            y (- (w-at st sb 4) 46)]
+        (if (= (bit-and (w-at st sb 31) (app-bit m)) 0) (recur (+ m 1))
+          (if (= (is-min st sb m) 0) (recur (+ m 1))
+            (if (< px x) (recur (+ m 1))
+              (if (> px (+ x 36)) (recur (+ m 1))
+                (if (< py y) (recur (+ m 1))
+                  (if (> py (+ y 36)) (recur (+ m 1)) m))))))))))
 
-;; ADR-0255: the tray of minimized windows, bottom left: item i (0 first) is the i-th minimized
-;; window by id, 120 x 24 at (6 + 126 i, vh - 30), inclusive. The id under (px, py) from id k on, or 0.
 (defn px-of [point] (quot point 65536))
 (defn py-of [point] (- point (* (px-of point) 65536)))
 
 (defn tray-at [st sb k i point]
-  (if (> k 4) 0
-    (if (= (is-min st sb k) 0) (tray-at st sb (+ k 1) i point)
-      (let [x (+ 6 (* 126 i))
-            y (- (w-at st sb 4) 30)]
-        (if (< (px-of point) x) (tray-at st sb (+ k 1) (+ i 1) point)
-          (if (> (px-of point) (+ x 120)) (tray-at st sb (+ k 1) (+ i 1) point)
-            (if (< (py-of point) y) (tray-at st sb (+ k 1) (+ i 1) point)
-              (if (> (py-of point) (+ y 24)) (tray-at st sb (+ k 1) (+ i 1) point) k))))))))
+  (loop [m k j i]
+    (if (> m 4) 0
+      (if (= (is-min st sb m) 0) (recur (+ m 1) j)
+        (let [x (+ 6 (* 126 j))
+              y (- (w-at st sb 4) 30)]
+          (if (< (px-of point) x) (recur (+ m 1) (+ j 1))
+            (if (> (px-of point) (+ x 120)) (recur (+ m 1) (+ j 1))
+              (if (< (py-of point) y) (recur (+ m 1) (+ j 1))
+                (if (> (py-of point) (+ y 24)) (recur (+ m 1) (+ j 1)) m)))))))))
 
 (defn restore [st sb n id]
   (do (release-all st sb)
