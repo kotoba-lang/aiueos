@@ -11,8 +11,9 @@
 ;;   24 max output tokens, 28 temperature milli,
 ;;   32 total payload bytes, 36 result text capacity,
 ;;   40..63 canonical zero.
-;; The payload is model || system || prompt in a separate checked region.
-;; The result is a separate checked region; neither pointer comes from here.
+;; The payload count is model + system + prompt. The three values occupy
+;; separate checked regions, each at most 64 KiB; the result has another
+;; checked region. No pointer or grant comes from this header.
 
 (defn aiueos-llm-v1-header-valid [header :i64 header-bytes :i64] :i64
   (if (not= header-bytes 64) 0

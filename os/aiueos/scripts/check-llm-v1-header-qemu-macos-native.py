@@ -63,8 +63,10 @@ def main():
         assert state["kernelEntry"].endswith("/" + entry)
         graph = set(state["sourceGraph"])
         validator = "/os/aiueos/native/llm_v1_header.kotoba"
+        request_shape = "/os/aiueos/native/llm_v1_request_shape.kotoba"
         assert (validator in graph) == expected
-        assert state["sourceModuleCount"] == (17 if expected else 16)
+        assert (request_shape in graph) == expected
+        assert state["sourceModuleCount"] == (18 if expected else 16)
         guest = output / (name + "-qemu")
         result = run([sys.executable, "-I", observer,
                       "--kernel", build / "KERNEL.ELF",
@@ -78,11 +80,12 @@ def main():
             report = json.loads(receipt.read_text())
             assert report["result"] == 42
             assert report["llmHeader"]["checks"] == [1] * 12
+            assert report["llmRequest"]["checks"] == [1] * 5
             assert report["llmHeader"]["providerDispatch"] is False
             assert report["llmHeader"]["modelExecution"] is False
         else:
             assert result.returncode != 0 and not receipt.exists()
-            assert b"assert checks == (1,)*12" in result.stderr, result.stderr.decode(errors="replace")[-2000:]
+            assert b"assert checks[:12] == (1,)*12" in result.stderr, result.stderr.decode(errors="replace")[-2000:]
         calls.append({"case": name, "entry": entry, "build": state["state"],
                       "guestExit": result.returncode,
                       "kernel": pin(build / "KERNEL.ELF"),
@@ -91,11 +94,13 @@ def main():
              "status": "PASS_MAC_NATIVE_LLM_HEADER_GUEST_AND_NEGATIVE",
              "compiler": pin(a.compiler_image), "observer": pin(observer),
              "validator": pin(NATIVE / "llm_v1_header.kotoba"),
+             "requestShape": pin(NATIVE / "llm_v1_request_shape.kotoba"),
              "probe": pin(NATIVE / cases[0][1]), "runner": pin(Path(__file__)),
              "qemu": subprocess.check_output([str(a.qemu), "--version"]).decode().splitlines()[0],
              "firmware": pin(a.firmware), "calls": calls,
              "guestEmulation": "QEMU TCG", "wire11Dispatch": False,
              "modelExecution": False, "humanConsent": False,
+             "utf8Qualified": False, "aliasingQualified": False,
              "desktop": False, "physicalHardware": False}
     (output / "llm-header-qemu.json").write_text(json.dumps(proof, indent=2) + "\n")
     print(proof["status"])

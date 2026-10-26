@@ -1,10 +1,11 @@
 (ns aiueos.native.llm-v1-header-probe
   (:require [aiueos.native.kernel :as kernel]
-            [aiueos.native.llm-v1-header :as llm])
+            [aiueos.native.llm-v1-header :as llm]
+            [aiueos.native.llm-v1-request-shape :as request])
   (:export [main aiueos-isr-6]))
 
 ;; Runs the real header validator in a C-free AIUEOS kernel image. Page 0 is
-;; the host-owned test header and page 1 is a 12-word guest receipt. This
+;; the host-owned test header and page 1 is a 17-word guest receipt. This
 ;; neither dispatches wire 11 nor executes a model.
 (defn- retain-kernel [] :i64 (kernel/main))
 (defn aiueos-isr-6 [vector :i64 error :i64 rip :i64 rsp :i64] :i64
@@ -18,6 +19,21 @@
   (if (= offset end) true
     (and (put-word page offset 0)
          (clear-words page (+ offset 4) end))))
+
+(defn- put-byte [page :i64 offset :i64 value :i64] :bool
+  (let [written (kernel-store-u8-4k page 4096 offset value)]
+    (= (+ (kernel-load-u8-4k page 4096 offset) (* 0 written)) value)))
+
+(defn- initialize-model [model :i64 selected :i64 prompt :i64] :bool
+  (and (put-byte model 0 108) (put-byte model 1 111)
+       (put-byte model 2 99) (put-byte model 3 97)
+       (put-byte model 4 108)
+       (put-byte selected 0 108) (put-byte selected 1 111)
+       (put-byte selected 2 99) (put-byte selected 3 97)
+       (put-byte selected 4 108)
+       (put-byte prompt 0 104) (put-byte prompt 1 101)
+       (put-byte prompt 2 108) (put-byte prompt 3 108)
+       (put-byte prompt 4 111)))
 
 (defn- initialize-header [header :i64] :bool
   (and (clear-words header 0 64)
@@ -47,9 +63,15 @@
 
 (defn main [] :i64
   (let [header (kernel-owned-page 0)
-        receipt (kernel-owned-page 1)]
+        receipt (kernel-owned-page 1)
+        model (kernel-owned-page 2)
+        selected (kernel-owned-page 3)
+        result (kernel-owned-page 4)
+        system (kernel-owned-page 5)
+        prompt (kernel-owned-page 6)]
     (if (and (initialize-header header)
-             (clear-words receipt 0 96)
+             (clear-words receipt 0 136)
+             (initialize-model model selected prompt)
              (record-check receipt 0 (= (header-valid header) 1))
              (bad-field header receipt 1 0 0 827149387)
              (bad-field header receipt 2 8 12 11)
@@ -61,5 +83,49 @@
              (bad-field header receipt 8 20 65537 5)
              (bad-field header receipt 9 36 65537 64)
              (bad-field header receipt 10 12 0 5)
-             (bad-field header receipt 11 36 0 64))
+             (bad-field header receipt 11 36 0 64)
+             (record-check receipt 12
+               (= (request/aiueos-llm-v1-request-shape-valid
+                    (kernel-subregion header 4096 0 64) 64
+                    (kernel-subregion model 4096 0 5) 5
+                    (kernel-subregion system 4096 0 0) 0
+                    (kernel-subregion prompt 4096 0 5) 5
+                    (kernel-subregion selected 4096 0 5) 5
+                    (kernel-subregion result 4096 0 64) 64) 1))
+             (put-byte selected 0 120)
+             (record-check receipt 13
+               (= (request/aiueos-llm-v1-request-shape-valid
+                    (kernel-subregion header 4096 0 64) 64
+                    (kernel-subregion model 4096 0 5) 5
+                    (kernel-subregion system 4096 0 0) 0
+                    (kernel-subregion prompt 4096 0 5) 5
+                    (kernel-subregion selected 4096 0 5) 5
+                    (kernel-subregion result 4096 0 64) 64) 0))
+             (put-byte selected 0 108)
+             (record-check receipt 14
+               (= (request/aiueos-llm-v1-request-shape-valid
+                    (kernel-subregion header 4096 0 64) 64
+                    (kernel-subregion model 4096 0 5) 5
+                    (kernel-subregion system 4096 0 0) 0
+                    (kernel-subregion prompt 4096 0 4) 4
+                    (kernel-subregion selected 4096 0 5) 5
+                    (kernel-subregion result 4096 0 64) 64) 0))
+             (record-check receipt 15
+               (= (request/aiueos-llm-v1-request-shape-valid
+                    (kernel-subregion header 4096 0 64) 64
+                    (kernel-subregion model 4096 0 5) 5
+                    (kernel-subregion system 4096 0 0) 0
+                    (kernel-subregion prompt 4096 0 5) 5
+                    (kernel-subregion selected 4096 0 5) 5
+                    (kernel-subregion result 4096 0 63) 63) 0))
+             (put-byte model 0 120)
+             (record-check receipt 16
+               (= (request/aiueos-llm-v1-request-shape-valid
+                    (kernel-subregion header 4096 0 64) 64
+                    (kernel-subregion model 4096 0 5) 5
+                    (kernel-subregion system 4096 0 0) 0
+                    (kernel-subregion prompt 4096 0 5) 5
+                    (kernel-subregion selected 4096 0 5) 5
+                    (kernel-subregion result 4096 0 64) 64) 0))
+             (put-byte model 0 108))
       42 0)))
