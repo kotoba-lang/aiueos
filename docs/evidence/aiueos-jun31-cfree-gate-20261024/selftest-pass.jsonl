@@ -1,2 +1,0 @@
-{"tool":"zig","argv":["version"]}
-{"tool":"zig","argv":["ld.lld","--version"]}

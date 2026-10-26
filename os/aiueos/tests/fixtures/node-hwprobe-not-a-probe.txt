@@ -1,2 +1,0 @@
-this is not a hardware record at all
-SERIAL="PLAUSIBLE0001"

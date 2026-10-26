@@ -1,2 +1,0 @@
-{:aiueos/system :browser-demo
- :aiueos/components ["app.edn"]}
