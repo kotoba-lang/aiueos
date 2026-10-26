@@ -1385,6 +1385,82 @@ static int browser_gesture_stage(uint32_t *surface, const uint8_t *font, uint64_
 }
 #endif
 
+/* I2 (scorecard row: battery and power management). The reference VM has no
+   battery to read -- no ACPI BAT0, and QEMU's PC machines expose none -- so
+   the level is the guest's own state, set through aiueos_desktop_battery_set,
+   and this stage walks it: start on AC at 100, switch to battery, drain
+   through the scripted steps, and let the status band show each one. What is
+   asserted per step is the band itself: the POWER field's warning colour
+   (0x00d08060, framebuffer.c) must be present exactly when the level is at or
+   below 10, and the normal POWER colour (0x00c0c0c0) the rest of the time --
+   so the level reading is checked against pixels, not against the variable
+   that produced it. The sleep half of the row is the machine's existing
+   suspend path (ADR-0273), which the chain still runs after this stage; the
+   profile's judge asks for those markers on the same serial.
+   Compiled only with AIUEOS_BATTERY_PROBE: without the flag the status band
+   every gate's frame model pins does not contain a BAT field at all. */
+#ifdef AIUEOS_BATTERY_PROBE
+static int browser_battery_stage(uint32_t *surface, const uint8_t *font, uint64_t font_length) {
+  static const uint32_t step_ac[8]    = {1, 0, 0, 0, 0, 0, 0, 0};
+  static const uint32_t step_level[8] = {100, 100, 80, 60, 40, 20, 10, 5};
+  uint32_t bad = 0, sfo_last = 0;
+  uint64_t sp = (uint64_t)(uintptr_t)surface;
+  uint32_t band_y = 0;
+  serial_string("AIUEOS_BATTERY_GO steps=8\r\n");
+  band_y = (surface[4] > 14U) ? (surface[4] - 14U) : 0U;
+  for (uint32_t i = 0; i < 8; i++) {
+    uint32_t warn_px = 0, base_px = 0;
+    int64_t sfo;
+    aiueos_desktop_battery_set(step_ac[i], step_level[i]);
+    sfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
+    if (sfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)sfo, font, font_length)) {
+      (void)aiueos_desktop_show();  /* repaints the band with the new level */
+      sfo_last = (uint32_t)(sfo < 0 ? -sfo : sfo);
+    }
+    /* The POWER field starts at x = 4 + 6*11 and spans the eight glyph cells
+       the AC text used; sample one pixel per cell centre in the text rows. */
+    for (uint32_t gx = 73; gx < 118; gx += 6) {
+      for (uint32_t gy = band_y + 5; gy < band_y + 11 && gy < surface[4]; gy++) {
+        uint32_t rgb = aiueos_desktop_sample_rgb(gx, gy);
+        if (rgb == 0x00d08060U) warn_px++;
+        if (rgb == 0x00c0c0c0U) base_px++;
+      }
+    }
+    if ((step_level[i] <= 10 && step_ac[i] == 0) != (warn_px > 0)) bad++;
+    if (step_ac[i] || step_level[i] > 10) { if (base_px == 0) bad++; }
+    serial_string("AIUEOS_BATTERY step=");
+    serial_decimal(i);
+    serial_string(" ac=");
+    serial_decimal(step_ac[i]);
+    serial_string(" level=");
+    serial_decimal(step_level[i]);
+    serial_string(" warn-px=");
+    serial_decimal(warn_px);
+    serial_string(" base-px=");
+    serial_decimal(base_px);
+    serial_string(" ops=");
+    serial_decimal(sfo_last);
+    serial_string("\r\n");
+  }
+  if (bad == 0 && aiueos_desktop_battery_level() == 5 && aiueos_desktop_battery_ac() == 0) {
+    debug_string("AIUEOS_BATTERY_OK\n");
+    serial_string("AIUEOS_BATTERY_OK steps=8 warn-from=10 critical=5 ac=0 band-y=");
+    serial_decimal(band_y);
+    serial_string("\r\n");
+    return 1;
+  }
+  debug_string("AIUEOS_BATTERY leftover=mismatch\n");
+  serial_string("AIUEOS_BATTERY leftover=mismatch bad=");
+  serial_decimal(bad);
+  serial_string(" level=");
+  serial_decimal(aiueos_desktop_battery_level());
+  serial_string(" ac=");
+  serial_decimal(aiueos_desktop_battery_ac());
+  serial_string("\r\n");
+  return 0;
+}
+#endif
+
 /* Selection (ADR-0240). After the wheel (window 4 on top and focused, its
    offset 0, the pointer at (300, 300)), the host sends seventeen events, each
    after the previous frame line: five wheel notches toward the end (tablet
@@ -7088,6 +7164,9 @@ qwen_runtime_boot_complete:
                                             if (browser_scroll_stage(surface, font, font_length))
 #ifdef AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC
                                               if (browser_gesture_stage(surface, font, font_length))
+#endif
+#ifdef AIUEOS_BATTERY_PROBE
+                                              if (browser_battery_stage(surface, font, font_length))
 #endif
                                               if (browser_selection_stage(surface, font, font_length, dict, dict_length))
                                                 if (browser_clipboard_stage(surface, font, font_length, dict, dict_length))

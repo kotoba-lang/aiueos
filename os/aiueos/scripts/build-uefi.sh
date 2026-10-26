@@ -1353,6 +1353,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $physical_qualification_cflags \
+  $input_smoke_cflags \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$plc_runtime_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
