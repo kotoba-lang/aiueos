@@ -1,7 +1,7 @@
 {
   "schema": "aiueos.distribution.v1",
   "id": "awai",
-  "name": "AWAI OS",
+  "name": "Itonami OS",
   "base": "aiueos",
   "sourceRepository": "kotoba-lang/aiueos",
   "core": "shared",

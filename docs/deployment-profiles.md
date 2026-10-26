@@ -7,9 +7,9 @@ aiueos is a containment architecture. A deployment profile states which
 additional claims a deployment is allowed to make beyond Phase-0 containment.
 
 AIUEOS also has [product distributions](../distributions/README.md): `aiueos`
-is the common OS and `awai` is AWAI OS, the same-core Awai Network composition.
+is the common OS and `awai` is Itonami OS, the same-core Awai Network composition.
 Distribution is a separate axis from the security profiles below, ISA/target,
-runtime class and diagnostic entry. Selecting AWAI OS does not select
+runtime class and diagnostic entry. Selecting Itonami OS does not select
 `regulated`, add a grant or satisfy any evidence requirement below. Historical
 hosted requirements here remain migration inventory under current native-only
 build rules.

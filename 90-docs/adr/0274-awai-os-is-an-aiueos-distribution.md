@@ -1,11 +1,12 @@
-# ADR 0274 — AWAI OS is an AIUEOS distribution
+# ADR 0274 — Itonami OS is an AIUEOS distribution
 
 - Status: accepted direction, owner instruction 2026-10-26. Candidate metadata selection implemented; full distribution release remains separately qualified.
+- Display name: **Itonami OS** (owner instruction, renamed from AWAI OS on the same date; distribution ID `awai`, repository, kernel and ABI are unchanged). This file name keeps `awai-os` for link stability.
 - Tracking: [AWAI-84](https://linear.app/kotobalabs/issue/AWAI-84), [AWAI-89](https://linear.app/kotobalabs/issue/AWAI-89), [AWAI-92](https://linear.app/kotobalabs/issue/AWAI-92).
 
 ## Decision
 
-**AIUEOS is the common OS foundation. AWAI OS is the Awai Network distribution
+**AIUEOS is the common OS foundation. Itonami OS is the Awai Network distribution
 of AIUEOS, maintained in the same `kotoba-lang/aiueos` repository.**
 The distribution ID is `awai`; the general foundation ID remains `aiueos`.
 Do not create another OS repository, kernel, syscall ABI or permission system.
@@ -16,10 +17,10 @@ Do not create another OS repository, kernel, syscall ABI or permission system.
 | Amu / Kototama | Compiler/target generation and the common execution/state/authority-budget/receipt contracts |
 | AIUEOS | Shared OS, boot, device/memory/process enforcement and reusable desktop mechanisms |
 | `network-awai` / Awai Network | Distributed network, node/service composition, governance/operations and product distribution |
-| AWAI OS | Awai-oriented AIUEOS distribution: identity/display name, intended component set, defaults and release composition |
+| Itonami OS | Awai-oriented AIUEOS distribution: identity/display name, intended component set, defaults and release composition |
 | Awai Node / Itonami | Logical host and agent workspace components, also available on other qualified OS hosts |
 
-AIUEOS remains useful independently of Awai membership. Running AWAI OS is not
+AIUEOS remains useful independently of Awai membership. Running Itonami OS is not
 required to participate from another qualified host. OS distribution, node,
 Cell, principal, hardware and network are different identities. Murakumo
 continues to name dedicated hardware and its separately described compute
@@ -64,12 +65,12 @@ IDs and historical receipts. App release/source/interface/profile identity,
 mon CID × agent Cell and verified head survive a distribution choice; fresh
 host admission still applies. Distribution ID alone is not migration authority.
 Do not rewrite old signed manifests/CIDs or relabel a NixOS installer / Linux
-VM monitor preview as an AIUEOS-based AWAI OS image.
+VM monitor preview as an AIUEOS-based Itonami OS image.
 
 Browser/CSSOM (JUN-93), user target (JUN-414), workspace image (AWAI-90/JUN-145),
 release (AWAI-86/92), independent node recovery and physical hardware acceptance
 retain their own states. A same-core candidate build proves neither all those
-components nor a released AWAI OS installer.
+components nor a released Itonami OS installer.
 
 ## Migration
 
