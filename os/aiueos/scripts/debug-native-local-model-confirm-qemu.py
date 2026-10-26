@@ -22,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 ENTRY = "/os/aiueos/native/user-elf-v2-local-model-entry.kotoba"
 ELF_SHA256 = "6d5ec74da6197788a5e778b8903cc40f001602c4c19cb4701d2620a948208e6d"
 USER_ENTRY = "/os/aiueos/native/user-elf-v3-local-model-entry.kotoba"
-USER_ELF_SHA256 = "331a3ed64c5859bc546a36ce9666e1a1e17e31195caca96407def6f63f5cc7b1"
+USER_ELF_SHA256 = "108174e896008ac4b523450acd57d16b2b37ba3eb31f6b21d3ad3874344ca4ec"
 PROMPT_TITLE = "AIUEOS local model Goal? y/n"
 if not __debug__:
     raise RuntimeError("the QEMU assertion gate must not run with Python -O")
@@ -79,16 +79,17 @@ def endpoint(base, qmp, directory, code, request, elf, expected, goal, user_call
                 qmp.call("stop")
                 code_bytes = qmp.dump(code, 4096, "code-final.bin", directory)
                 final = qmp.dump(request, 4096, "request-final.bin", directory)
-                code_length = 462 if user_call else 330
+                code_length = 478 if user_call else 330
                 assert code_bytes[:code_length] == elf[4096:4096 + code_length]
                 assert struct.unpack_from("<I", final, 256)[0] == len(goal)
                 assert final[260:260 + len(goal)] == goal.encode("ascii")
                 assert final[260 + len(goal):320] == bytes(60 - len(goal))
                 if user_call:
                     assert struct.unpack_from("<I", final, 128)[0] == 1364350539
-                    assert final[132:136] == bytes((1, 6, 0, 0))
-                    assert struct.unpack_from("<I", final, 136)[0] == ord(goal[-1])
-                    assert final[140:232] == bytes(92)
+                    assert final[132:136] == bytes((2, 6, 0, 0))
+                    assert struct.unpack_from("<I", final, 136)[0] == len(goal)
+                    assert final[140:140 + len(goal)] == goal.encode("ascii")
+                    assert final[140 + len(goal):232] == bytes(92 - len(goal))
                     assert final[316:320] == bytes(4), "host prefilled user token"
                 else:
                     assert struct.unpack_from("<I", final, 316)[0] == expected
@@ -278,7 +279,7 @@ def main():
                                lambda s: s["pending"] == 1 and s["approved"] == 0
                                and s["modelToken"] == 0 and s["title"] == PROMPT_TITLE)
                 assert qmp.dump(request, 4096, "request-pending.bin", directory)[256:320] == bytes(64)
-                assert qmp.dump(code, 4096, "code-pending.bin", directory)[:462 if user_call else 330] == bytes(462 if user_call else 330)
+                assert qmp.dump(code, 4096, "code-pending.bin", directory)[:478 if user_call else 330] == bytes(478 if user_call else 330)
                 approval_ppm = directory / "approval.ppm"
                 approval_png = directory / "approval.png"
                 qmp.call("screendump", {"filename": str(approval_ppm)})
@@ -290,7 +291,7 @@ def main():
                               and s["submitted"] == 0 and s["modelToken"] == 0
                               and s["title"] == "Itonami")
                 assert qmp.dump(request, 4096, "request-denied.bin", directory)[256:320] == bytes(64)
-                assert qmp.dump(code, 4096, "code-denied.bin", directory)[:462 if user_call else 330] == bytes(462 if user_call else 330)
+                assert qmp.dump(code, 4096, "code-denied.bin", directory)[:478 if user_call else 330] == bytes(478 if user_call else 330)
                 registers = qmp.hmp("info registers")
                 assert re.search(r"\bCPL=0\b", registers)
                 base.key(qmp, "ret")
@@ -349,7 +350,7 @@ def main():
                 rip, cpl = int(rip_match.group(1), 16), int(cpl_match.group(1))
                 assert cpl != 3, "modified user ELF reached CPL3"
                 if (cpl == 0 and page[:320] == bytes(320)
-                        and code_page[:462 if user_call else 330] == bytes(462 if user_call else 330)
+                        and code_page[:478 if user_call else 330] == bytes(478 if user_call else 330)
                         and current["modelToken"] == 0):
                     samples = samples + 1 if rip == last_rip else 1
                     last_rip = rip
