@@ -559,9 +559,9 @@
   (if (= (bit-and (sw s sb 31) (min-bit id)) 0) 0 1))
 
 (defn vis-count [s sb n k]
-  (if (>= k n) 0
-    (+ (if (= (minimized s sb (sw s sb (+ 5 (* k 5)))) 1) 0 1)
-       (vis-count s sb n (+ k 1)))))
+  (loop [j k acc 0]
+    (if (>= j n) acc
+      (recur (+ j 1) (+ acc (if (= (minimized s sb (sw s sb (+ 5 (* j 5)))) 1) 0 1))))))
 
 
 ;; ADR-0246: a control is hot when the pointer (surface words 2046 = x + 1,
@@ -695,11 +695,11 @@
         ;; ADR-0262: the focus ring on tray button i is ring target 8 + i
         (if (= (sw s sb 2032) (+ 8 i)) (put-ring s sb x y (+ (* 120 65536) 24)) 0)))))
 
-(defn tray [s sb f fb p0] (let [k (u3a p0) i (u3b p0) vh (u3c p0)]
+(defn tray [s sb f fb p0] (loop [p0 p0] (let [k (u3a p0) i (u3b p0) vh (u3c p0)]
   (if (> k 4) 0
     (if (= (minimized s sb k) 1)
-      (do (tray-item s sb f fb (pk3 k i vh)) (tray s sb f fb (pk3 (+ k 1) (+ i 1) vh)))
-      (tray s sb f fb (pk3 (+ k 1) i vh))))))
+      (do (tray-item s sb f fb (pk3 k i vh)) (recur (pk3 (+ k 1) (+ i 1) vh)))
+      (recur (pk3 (+ k 1) i vh)))))))
 
 (defn dock [s sb f fb p0] (let [vw (lo16 p0) vh (hi16 p0)]
   (if (= (sw s sb 31) 0) 0
@@ -777,10 +777,11 @@
 
 (defn arrow [s sb x y r]
   ;; rows r..11 above the viewport's bottom
-  (if (> r 11) 0
-    (if (>= (+ y r) (sw s sb 4)) 0
-      (do (arrow-row s sb x y (+ (* r 65536) (sw s sb 3)))
-          (arrow s sb x y (+ r 1))))))
+  (loop [q r]
+    (if (> q 11) 0
+      (if (>= (+ y q) (sw s sb 4)) 0
+        (do (arrow-row s sb x y (+ (* q 65536) (sw s sb 3)))
+            (recur (+ q 1)))))))
 
 ;; ADR 0252: over the resize handle of the topmost window under it (the last 16 px of
 ;; both axes, inclusive -- browser-reduce's in-handle on browser-reduce's topmost hit)
