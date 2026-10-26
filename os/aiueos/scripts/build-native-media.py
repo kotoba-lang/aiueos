@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import importlib.util
+import os
 import json
 from pathlib import Path
 import platform
@@ -22,7 +23,10 @@ def main(amu,compiler,expected,efi,out):
  assert compiler.read_bytes()[:4]==b'\x7fELF' and struct.unpack_from('<H',compiler.read_bytes(),18)[0]==machine
  parts=[amu/'seed/00-ns-static.kotoba',amu/'seed/01-mem.kotoba',amu/'seed/02-io.kotoba',HERE.parent/'native/media-builder.kotoba']
  source=out/'media.kotoba';source.write_bytes(b''.join(p.read_bytes()+b'\n' for p in parts))
- env=dict(PATH='/nonexistent',KEXE_ALLOW='35,37,38,39',KEXE_CAP_RESOURCES_35=str(out),KEXE_STACK_BYTES='8388608')
+ # KEXE_SECCOMP opt-in passes through when the caller sets it (seccomp-less
+ # hosts, measured 2026-10-26); native Linux is unchanged without it.
+ _kexe = {'KEXE_SECCOMP': os.environ['KEXE_SECCOMP']} if os.environ.get('KEXE_SECCOMP') else {}
+ env=dict(PATH='/nonexistent',KEXE_ALLOW='35,37,38,39',KEXE_CAP_RESOURCES_35=str(out),KEXE_STACK_BYTES='8388608',**_kexe)
  calls=[]
  def run(name,args,expected_exit=0,custom=None):
   r=subprocess.run(list(map(str,args)),env=custom or env,capture_output=True,timeout=300)
