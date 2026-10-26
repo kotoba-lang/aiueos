@@ -1,3 +1,0 @@
-AIUEOS_RELEASE_SIGNATURE_OK rsa2048-pkcs1-sha256
-negative-control:
-ValueError: release signature does not verify
