@@ -910,7 +910,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_user_object_jo
   0225a24d0e3bb105be13344b898866659ce0b25a01f15a471261ab24d66ba92b \
   kotoba_aiueos_user_object_journal_value
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_sha256_object" \
-  60b003c8364c9d02cfbef37e8599fd654300eda4d4ad664446865918d1be5a88 \
+  e73ea80aeb200c5f6ab5eec49e4d54f5921b78baf9d5d018aed74ec2c8cf40ec \
   kotoba_aiueos_sha256
 # tokenizer: same check as every object above -- one export, zero imports, one
 # relocation into its own .data, and the sha256 of the artifact this tree
@@ -1047,10 +1047,10 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_tls13_record_o
   572b7e33640a413bb68e37f39f09e155282eefe86c33f9e2a31040c70a170d7a \
   kotoba_aiueos_tls13_record
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_cid_v1_admit_object" \
-  131f1b6ff5be321ed4bea210a1c30f4e9fed5620e890856070f91e461b4c620e \
+  4760b9183029babcad5b2d3dcf8418f4a970cbdc289e5c8a1b053d1149d6c333 \
   kotoba_aiueos_cid_v1_admit
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_value_runtime_cas_verify_object" \
-  8825ba5cb2bc0a9df36fe16562acce1f91dd01c08ebf73931823f3f1eaa06661 \
+  851e6af2813dc651a69a65bf1036d4bb8d7a374fe117df6fe2b0e0dd4d1b4ad7 \
   kotoba_aiueos_value_runtime_cas_verify
 if [ -n "$model_handoff_link" ] || [ -n "$qwen35_parity_cflags" ]; then
   python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_qwen35_dot_object" \
