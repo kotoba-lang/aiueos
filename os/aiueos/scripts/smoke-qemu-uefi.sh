@@ -236,6 +236,22 @@ case "$boot_transport" in
     ;;
 esac
 usb_args=
+# H1's second drive is attached from the branch below whichever medium boots,
+# so its argument list is initialised HERE: `set -u` reaches the QEMU line on
+# every route, and only the AIUEOS_DISK_IMAGE route assigned it (measured
+# 2026-10-26: the default ESP boot died with `update_drive_args: unbound
+# variable` before QEMU ever started).
+update_drive_args=
+# F5 USB storage (JUN-140): a UHCI host controller with a usb-storage disk
+# behind it. The guest probes the UHCI controller (class 0c/03/00); the disk
+# carries AIUEOS_USB_STORAGE as its raw contents.
+if [ -n "${AIUEOS_USB_STORAGE:-}" ]; then
+  [ -f "$AIUEOS_USB_STORAGE" ] || {
+    echo "error: AIUEOS_USB_STORAGE does not exist: $AIUEOS_USB_STORAGE" >&2
+    exit 1
+  }
+  usb_args="$usb_args -device piix3-usb-uhci,id=aiueos_uhci -drive if=none,id=aiueos_usb,file=$AIUEOS_USB_STORAGE,format=raw -device usb-storage,drive=aiueos_usb,bus=aiueos_uhci.0"
+fi
 if [ -n "${AIUEOS_CDROM_IMAGE:-}" ]; then
   [ -f "$AIUEOS_CDROM_IMAGE" ] || {
     echo "error: AIUEOS_CDROM_IMAGE does not exist: $AIUEOS_CDROM_IMAGE" >&2
@@ -257,8 +273,19 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
     boot_drive="if=none,id=aiueosusb,format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
     usb_args="-device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=aiueosusb,removable=on"
   else
-    boot_drive="format=raw,snapshot=on,file=$AIUEOS_DISK_IMAGE"
+    # AIUEOS_DISK_SNAPSHOT=off makes writes persist (H1/H2 multi-boot tests);
+    # the default stays on so the release artifact is immutable.
+    boot_drive="format=raw,snapshot=${AIUEOS_DISK_SNAPSHOT:-on},file=$AIUEOS_DISK_IMAGE"
   fi
+# H1: an update volume attached as a second fixed drive (a FAT16 image the
+# loader's update scan looks for \\UPDATE.ID on).
+if [ -n "${AIUEOS_UPDATE_IMAGE:-}" ]; then
+  [ -f "$AIUEOS_UPDATE_IMAGE" ] || {
+    echo "error: AIUEOS_UPDATE_IMAGE does not exist: $AIUEOS_UPDATE_IMAGE" >&2
+    exit 2
+  }
+  update_drive_args="-drive format=raw,file=$AIUEOS_UPDATE_IMAGE"
+fi
 else
   [ "$boot_transport" = disk ] || {
     echo "error: AIUEOS_BOOT_TRANSPORT=usb requires AIUEOS_DISK_IMAGE" >&2
@@ -1270,7 +1297,7 @@ PY
   timeout "$qemu_timeout" "$qemu" \
     -machine q35,accel=tcg -cpu max -m 128M -smp 2 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-    -drive "$boot_drive" \
+    -drive "$boot_drive" $update_drive_args \
     -device isa-debugcon,iobase=0xe9,chardev=debug \
     -chardev file,id=debug,path="$log" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
@@ -1283,7 +1310,7 @@ PY
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
     $kbd_args \
-    -device virtio-vga,disable-legacy=on,max_outputs=2 \
+    -device virtio-vga,id=aiueosvga,disable-legacy=on,max_outputs=2 \
     $qmp_args \
     -display "$display_opt" -serial "file:$serial_log" -monitor none -no-reboot &
   qemu_pid=$!

@@ -16,6 +16,23 @@ makes decisions is compiled from Kotoba source rather than hand-written in C.
 Before that split this repository named an authority and a machine at once,
 and the two were nearly the same size.
 
+## AIUEOS and AWAI OS
+
+**AIUEOS is the common OS foundation. AWAI OS is its Awai Network distribution.**
+Both are maintained in this repository and use the same kernel, drivers, ABI
+and native build pipeline. Awai-specific branding and composition belong to
+the [`awai` distribution](distributions/README.md), while reusable OS changes
+belong to the common AIUEOS core.
+
+Kotoba is the language/tooling ecosystem; Amu compiles it and Kototama defines
+execution contracts. `network-awai` composes and operates the distributed
+network, services and AWAI OS product configuration. An Awai Node can also run
+on other qualified hosts. Selecting AWAI OS does not enroll a node, grant
+authority or qualify a component. Current installer/runtime evidence retains
+its original scope; existing NixOS previews are not renamed AIUEOS releases.
+
+See the [distribution decision](90-docs/adr/0274-awai-os-is-an-aiueos-distribution.md).
+
 ## Lisp machine architecture
 
 AiueOS is the OS for a modern Kotoba Lisp machine in development. Kototama

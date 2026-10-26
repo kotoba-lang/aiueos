@@ -1,5 +1,14 @@
 # AGENTS.md — aiueos
 
+## Common OS and distributions
+
+AIUEOS is the common OS foundation. AWAI OS is the Awai distribution in this
+same repository (`distributions/awai`), using the same kernel/ABI/build path.
+Keep generic OS mechanisms in the common core and Awai composition/branding
+in distribution configuration. Distribution metadata neither grants authority
+nor changes component qualification. See `distributions/README.md` and
+`90-docs/adr/0274-awai-os-is-an-aiueos-distribution.md`.
+
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native

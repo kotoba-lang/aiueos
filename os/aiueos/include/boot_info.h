@@ -41,9 +41,15 @@ struct aiueos_boot_info {
     uint64_t model_paging_pages; /* v4 */
     uint64_t tsc_hz;             /* v5, paging pages are fixed by the ABI */
   };
+  /* v6 (G3, data encrypted at rest): the loader's data-disk key, carried to
+     the kernel so the data disk can be written as ciphertext. The key lives
+     on the system ESP (\EFI\AIUEOS\DATA.KEY), a different disk from the
+     data volume it protects. data_key_tag != 0 means the fields are set. */
+  uint8_t data_key[16];
+  uint64_t data_key_tag;
 };
 
-_Static_assert(sizeof(struct aiueos_boot_info) == 208,
-               "boot-info v3-v5 ABI size changed");
+_Static_assert(sizeof(struct aiueos_boot_info) == 232,
+               "boot-info v3-v6 ABI size changed");
 
 #endif

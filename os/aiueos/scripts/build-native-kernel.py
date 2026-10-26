@@ -95,7 +95,12 @@ def main(amu):
         for p in [entry, out, *roots]:
             path_text(p)
         scope = ':'.join(map(str, [*roots, out, *([payload.parent] if payload else [])]))
-        env = dict(PATH='/nonexistent', KEXE_STACK_BYTES='8388608', KEXE_CAP_RESOURCES_35=scope)
+        # KEXE_SECCOMP opt-in passes through when the caller sets it: the
+        # hardened runtime fails closed with `kexe-runtime: resource limit
+        # setup failed` where seccomp(2) is unavailable (measured 2026-10-26 in
+        # an emulated container); native Linux never sets it and is unchanged.
+        _kexe = {'KEXE_SECCOMP': os.environ['KEXE_SECCOMP']} if os.environ.get('KEXE_SECCOMP') else {}
+        env = dict(PATH='/nonexistent', KEXE_STACK_BYTES='8388608', KEXE_CAP_RESOURCES_35=scope, **_kexe)
         source_args = [value for root in roots for value in ['--source-path', str(root)]]
 
         def run(name, args):

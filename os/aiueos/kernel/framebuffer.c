@@ -48,7 +48,7 @@ static int inference_screen_initialized;
 static const uint32_t *desktop_list_ops;
 static uint64_t desktop_list_count, desktop_list_generation, desktop_list_base_generation;
 static uint64_t desktop_shown_generation;
-static uint32_t desktop_shadow[2048] __attribute__((aligned(16)));
+static uint32_t desktop_shadow[2048] __attribute__((section(".high_bss"), aligned(16))); /* .high_bss: the low layout is at its aperture limit (ADR-0222) */
 static uint32_t desktop_damage_last[4], desktop_damage_counts[5];
 static uint64_t desktop_damage_bytes;
 int aiueos_desktop_surface_ready(void) { return desktop_surface_ready; }
@@ -67,8 +67,21 @@ int aiueos_desktop_surface_copy(uint64_t generation, uint32_t x, uint32_t y,
         desktop_surface_pixels[(uint64_t)(y + row) * desktop_surface.stride + x + column];
   return 1;
 }
+/* A2 (JUN-142 / scorecard row A2): the desktop presents at ITS OWN size --
+   the boot GOP framebuffer -- and the host frontend scales that image into
+   whatever window the user gives it, so a host resize is no longer a bind
+   failure. What this check still requires is that GET_DISPLAY_INFO answered
+   at all: "the display exists and reports a size" is the condition it was
+   written for, and the exact-equality form was over-reading it.
+
+   Measured 2026-10-26 with `-display cocoa,zoom-to-fit=on`: the window
+   shrank to 361x389 before this point, GET_DISPLAY_INFO reported 577x361
+   against a 1280x800 surface, and the equality form stopped the boot with
+   AIUEOS_VIRTIO_GPU_FAIL surface-binding-scanout-w=577 scanout-h=361 ->
+   AIUEOS_EVIDENCE_STOP -- a display change the machine was supposed to
+   survive. */
 int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height) {
-  return desktop_surface_ready && desktop_surface.width == width && desktop_surface.height == height;
+  return desktop_surface_ready && width && height;
 }
 
 static uint32_t pixel(uint32_t rgb, uint32_t format);
@@ -606,12 +619,111 @@ int aiueos_desktop_present_ops2(const uint32_t *ops, uint64_t count,
 extern int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t height,
                                            uint32_t stride, uint32_t pixel_format,
                                            uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+/* A2: drain a host display change, re-read the geometry and drop the GPU
+   desktop resource so the next present re-binds it. Returns 1 when the
+   geometry changed and the caller must send a full frame. */
+extern int aiueos_gpu_display_refresh(void);
+extern int aiueos_gpu_geometry_changed_take(void);
+extern uint32_t aiueos_dhcp_lease_seconds(void);
+extern volatile uint64_t aiueos_apic_timer_ticks;
+extern void aiueos_kernel_serial_marker(const char *text);
+
+/* C9: the status area — network, power and clock — painted on the desktop
+   surface on every frame and announced once per state. The clock shows the
+   APIC timer ticks (the guest's running timebase); power is AC in the
+   reference VM (there is no battery device to read). */
+static uint32_t status_last_state; /* 0 = unseen, 1 = offline, 2 = online */
+/* The pointer rectangle the stages last drew (ADR-0236), reported by
+   aiueos_desktop_set_pointer. The bar paints AFTER the frame, so without this
+   it covered the arrow: measured 2026-10-26, the cursor stage's corner point
+   (1276,796) sampled 0x00202830 -- the bar's own colour -- instead of the
+   tip's 0x333333, one frame failed, and the stage chain behind it (FOCUS ..
+   SCALE .. SUSPEND) never ran. list -> status bar -> pointer is the order a
+   desktop keeps: the bar draws, then the pointer's pixels go back on top. */
+static uint32_t pointer_x = 0xffffffffU, pointer_y; /* x sentinel = none */
+void aiueos_desktop_set_pointer(uint32_t x, uint32_t y) { pointer_x = x; pointer_y = y; }
+/* .high_bss: the low layout is at its budget (qualification/low-region-budget.edn).
+   Bounded by construction: only the 14 band rows and 16 pointer columns. */
+static uint32_t saved_pointer[14 * 16] __attribute__((section(".high_bss")));
+void aiueos_desktop_paint_status(void) {
+  char line[64];
+  uint32_t y, x;
+  uint32_t online = aiueos_dhcp_lease_seconds() > 0;
+  uint32_t save_r0 = 0, save_rows = 0, save_c0 = 0, save_cols = 0;
+  if (!desktop_surface_ready) return;
+  y = desktop_surface.height - 14;
+  /* 1. lift the pointer pixels that live inside the band */
+  if (pointer_x != 0xffffffffU) {
+    uint32_t r0 = (pointer_y > 1U) ? pointer_y - 1U : 0U;
+    uint32_t r1 = pointer_y + 17U;
+    uint32_t c0 = (pointer_x > 1U) ? pointer_x - 1U : 0U;
+    uint32_t c1 = pointer_x + 14U;
+    if (r1 > y && r0 < y + 14U) {
+      save_r0 = (r0 < y) ? y : r0;
+      save_rows = ((r1 > y + 14U) ? y + 14U : r1) - save_r0;
+      save_c0 = c0;
+      save_cols = (c1 > desktop_surface.width ? desktop_surface.width : c1) - c0;
+      if (save_cols > 16U) save_cols = 16U;
+      for (uint32_t r = 0; r < save_rows; r++)
+        for (uint32_t c = 0; c < save_cols; c++)
+          saved_pointer[r * 16U + c] =
+            desktop_surface_pixels[(save_r0 + r) * desktop_surface.stride + save_c0 + c];
+    }
+  }
+  /* 2. the bar and its text */
+  rectangle(desktop_surface_pixels, desktop_surface.stride,
+            desktop_surface.pixel_format, 0, y, desktop_surface.width, 14, 0x00202830U);
+  x = 4;
+  qualification_text(online ? "NET ONLINE" : "NET OFFLINE", x, y + 3, 1,
+                     online ? 0x0060d080U : 0x00d08060U);
+  x += 6 * 11;
+  qualification_text("POWER AC", x, y + 3, 1, 0x00c0c0c0U);
+  x += 6 * 9;
+  {
+    uint64_t ticks = aiueos_apic_timer_ticks;
+    int i = 0;
+    line[i++] = 'C'; line[i++] = 'L'; line[i++] = 'K'; line[i++] = ' ';
+    /* decimal ticks, bounded to 12 digits */
+    char digits[16]; int n = 0;
+    if (ticks == 0) digits[n++] = '0';
+    while (ticks && n < 16) { digits[n++] = (char)('0' + (ticks % 10)); ticks /= 10; }
+    while (n > 0) line[i++] = digits[--n];
+    line[i] = 0;
+    qualification_text(line, x, y + 3, 1, 0x00c0c0c0U);
+  }
+  {
+    uint32_t state = online ? 2 : 1;
+    if (state != status_last_state) {
+      status_last_state = state;
+      aiueos_kernel_serial_marker(online ? "AIUEOS_STATUS_AREA_OK network=online power=ac clock=running\r\n"
+                                         : "AIUEOS_STATUS_AREA_OK network=offline power=ac clock=running\r\n");
+    }
+  }
+  /* 3. the pointer goes back on top of the bar (see the note above
+     aiueos_desktop_set_pointer). */
+  for (uint32_t r = 0; r < save_rows; r++)
+    for (uint32_t c = 0; c < save_cols; c++)
+      desktop_surface_pixels[(save_r0 + r) * desktop_surface.stride + save_c0 + c] =
+        saved_pointer[r * 16U + c];
+}
+extern void aiueos_kernel_serial_marker(const char *text);
 extern int64_t kotoba_aiueos_browser_damage(uint64_t ops, uint64_t ops_bytes, uint64_t shadow,
                                             uint64_t shadow_bytes, uint64_t count);
 int aiueos_desktop_show(void) {
   uint32_t x = 0, y = 0, w, h;
   int ok, listed;
   if (!desktop_surface_ready) return 0;
+  /* A2: a display change re-binds the GPU resource; the frame after one is
+     always whole. FRAMEBUFFER_PROGRESS(258) is the qualification channel;
+     AIUEOS_GPU_DISPLAY_CHANGE_OK is the evidence marker (production). */
+  /* refresh() first (it throttles its own device read), then the latch: the
+     idle loop may have polled the same change already, and the marker must
+     still fire -- once. */
+  if (aiueos_gpu_display_refresh() | aiueos_gpu_geometry_changed_take()) {
+    desktop_shadow[0] = 0;
+    FRAMEBUFFER_PROGRESS(258);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_DISPLAY_CHANGE_OK rebind-fullframe\r\n");
+  }
   w = desktop_surface.width;
   h = desktop_surface.height;
   listed = desktop_list_ops && desktop_list_generation == desktop_surface.generation;
@@ -640,6 +752,7 @@ int aiueos_desktop_show(void) {
     desktop_shown_generation = desktop_surface.generation;
     return 1;
   }
+  aiueos_desktop_paint_status();
   ok = aiueos_gpu_present_desktop_rect((uint64_t)(uintptr_t)desktop_surface_pixels,
                                        desktop_surface.width, desktop_surface.height,
                                        desktop_surface.stride, desktop_surface.pixel_format,
