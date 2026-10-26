@@ -16,6 +16,11 @@ private QMP standard-input/output pipes and needs no socket listener. A QMP
 screenshot and diagnostic desktop state do not qualify
 the full Itonami agent loop or physical AIUEOS hardware.
 
+For the user-v2 Goal ELF, run the private-QMP CPL3 gate in
+`docs/evidence/aiueos-user-v2-goal-20261026/README.md` instead of asking for
+a Screen Sharing key press. Its `a b` Goal is a fixed boot fixture; live UI
+ingress, approval and durable Itonami execution remain separate work.
+
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native
