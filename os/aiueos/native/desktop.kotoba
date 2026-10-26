@@ -2,7 +2,7 @@
   (:require [aiueos.browser-frame2 :as browser-frame]
             [aiueos.session.app-catalog :as app-catalog]
             [aiueos.native.draft-store :as draft-store])
-  (:export [main workspace-main goal-main]))
+  (:export [main workspace-main goal-main goal-draft-main]))
 
 ;; Guest-specific desktop adapter. The hosted AIUEOS session uses the actual
 ;; browser.surface + cssom.layout pipeline; this module currently consumes the
@@ -332,7 +332,7 @@
         0))))
 
 (defn reduce-key [s code ctx]
-  (if (and (= (word ctx 86) 2) (= (word s 2) 2)
+  (if (and (or (= (word ctx 86) 2) (= (word ctx 86) 3)) (= (word s 2) 2)
            (= code 28) (> (word s 2038) 12))
     (do (put-word ctx 85 1) 1)
   (if (and (= (word ctx 84) 1) (= (word s 2) 2) (= code 63))
@@ -575,13 +575,13 @@
             (put-word context 80 0)
             (put-word context 81 0)
             (put-word context 82 0)
-            (put-word context 84 (if (= profile 1) 1 0))
+            (put-word context 84 (if (or (= profile 1) (= profile 3)) 1 0))
             (put-word context 85 0)
             (put-word context 86 profile)
             (enable-mouse)
             (clear-surface surface 0)
             (seed-desktop surface width height)
-            (if (= profile 1)
+            (if (or (= profile 1) (= profile 3))
               (let [generation (draft-store/restore surface)]
                 (do (put-word surface 229 108)
                     (put-word surface 230 111)
@@ -598,3 +598,4 @@
 (defn main [] (run-desktop 0))
 (defn workspace-main [] (run-desktop 1))
 (defn goal-main [] (run-desktop 2))
+(defn goal-draft-main [] (run-desktop 3))

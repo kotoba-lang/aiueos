@@ -31,6 +31,15 @@ screenshot and exercise empty/tampered-slot refusals without a password or
 human key press. It does not qualify signed app admission, approval,
 model/tool effects or durable turns.
 
+For the combined local-draft and user-v2 diagnostic profile, run
+`os/aiueos/scripts/debug-native-user-v2-durable-unattended.py` on its exact
+Mac native build directory. It creates a fresh marked scratch disk, types a
+Goal, saves with F5, cold-boots, checks restored pixels and reads the CPL3
+result. Private QMP standard I/O needs no Screen Sharing login, VNC password,
+guest key press or network. Never treat injected test keys as trusted approval
+for a model, tool or other external operation. See
+`docs/evidence/aiueos-durable-user-v2-unattended-20261026/README.md`.
+
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native
