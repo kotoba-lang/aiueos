@@ -768,12 +768,12 @@
   ;; row r: the outline (r + 1 wide), then in rows 2..10 the fill (r - 1 wide
   ;; from x + 1); both cut at vw, a fill with no width left not drawn
   (do (sput s sb 422 (ink s sb))
-      (put-rect s sb x (+ y r) (+ (* (if (< (+ r 1) (- vw x)) (+ r 1) (- vw x)) 65536) 1))
+      (if (< (+ r 1) (- vw x)) (put-rect s sb x (+ y r) (+ (* (+ r 1) 65536) 1)) (put-rect s sb x (+ y r) (+ (* (- vw x) 65536) 1)))
       (if (< r 2) 0
         (if (> r 10) 0
           (if (< (- vw x) 2) 0
             (do (sput s sb 422 16777215)
-                (put-rect s sb (+ x 1) (+ y r) (+ (* (if (< (- r 1) (- vw (+ x 1))) (- r 1) (- vw (+ x 1))) 65536) 1)))))))))
+                (if (< (- r 1) (- vw (+ x 1))) (put-rect s sb (+ x 1) (+ y r) (+ (* (- r 1) 65536) 1)) (put-rect s sb (+ x 1) (+ y r) (+ (* (- vw (+ x 1)) 65536) 1))))))))))
 
 (defn arrow [s sb x y r]
   ;; rows r..11 above the viewport's bottom
@@ -984,7 +984,7 @@
     (do (put-glyph s sb x y (+ (* gi 65536) gw)) gw))))
 
 (defn lock-dot [s sb i vw vh]
-  (do (if (< i (bit-and (sw s sb 2031) 7)) (sput s sb 422 16777215) (sput s sb 422 (if (= (hc s sb) 1) 8421504 5593702)))
+  (do (if (< i (bit-and (sw s sb 2031) 7)) (sput s sb 422 16777215) (if (= (hc s sb) 1) (sput s sb 422 8421504) (sput s sb 422 5593702)))
       (put-rect s sb (+ (- (quot vw 2) 44) (* 24 i)) (quot vh 2) (+ (* 12 65536) 12))))
 
 (defn lock-screen [s sb f fb p0] (let [vw (lo16 p0) vh (hi16 p0)]
