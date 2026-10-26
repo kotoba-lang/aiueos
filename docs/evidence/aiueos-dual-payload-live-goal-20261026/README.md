@@ -9,7 +9,7 @@ the compiled code into its CPL3 page. This kernel entry does not use the
 earlier inline diagnostic program.
 
 The [private-QMP receipt](qmp.json) is a fresh four-boot readback. The
-[unattended debugger](../../../../os/aiueos/scripts/debug-native-user-v2-unattended.py)
+[unattended debugger](../../../os/aiueos/scripts/debug-native-user-v2-unattended.py)
 typed `debug run` and `hello` through Itonami. Their compiled user program
 returned `9` and `5` at CPL3. Empty Enter kept the request page untouched
 at CPL0. Changing one code byte in the EFI user slot kept both user pages
