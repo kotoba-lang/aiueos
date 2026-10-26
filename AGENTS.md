@@ -2,7 +2,7 @@
 
 ## Common OS and distributions
 
-AIUEOS is the common OS foundation. AWAI OS is the Awai distribution in this
+AIUEOS is the common OS foundation. Itonami OS is the Awai distribution in this
 same repository (`distributions/awai`), using the same kernel/ABI/build path.
 Keep generic OS mechanisms in the common core and Awai composition/branding
 in distribution configuration. Distribution metadata neither grants authority

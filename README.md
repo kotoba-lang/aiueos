@@ -16,9 +16,9 @@ makes decisions is compiled from Kotoba source rather than hand-written in C.
 Before that split this repository named an authority and a machine at once,
 and the two were nearly the same size.
 
-## AIUEOS and AWAI OS
+## AIUEOS and Itonami OS
 
-**AIUEOS is the common OS foundation. AWAI OS is its Awai Network distribution.**
+**AIUEOS is the common OS foundation. Itonami OS is its Awai Network distribution.**
 Both are maintained in this repository and use the same kernel, drivers, ABI
 and native build pipeline. Awai-specific branding and composition belong to
 the [`awai` distribution](distributions/README.md), while reusable OS changes
@@ -26,8 +26,8 @@ belong to the common AIUEOS core.
 
 Kotoba is the language/tooling ecosystem; Amu compiles it and Kototama defines
 execution contracts. `network-awai` composes and operates the distributed
-network, services and AWAI OS product configuration. An Awai Node can also run
-on other qualified hosts. Selecting AWAI OS does not enroll a node, grant
+network, services and Itonami OS product configuration. An Awai Node can also run
+on other qualified hosts. Selecting Itonami OS does not enroll a node, grant
 authority or qualify a component. Current installer/runtime evidence retains
 its original scope; existing NixOS previews are not renamed AIUEOS releases.
 

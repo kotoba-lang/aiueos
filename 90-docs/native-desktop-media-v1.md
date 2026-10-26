@@ -5,7 +5,7 @@ entry to an agent-first workspace; an Awai Node Console would own node setup,
 resources and observation. Murakumo names the dedicated hardware that can host
 an Awai Node. These UI and node roles do not require a Linux guest.
 
-AIUEOS is the common OS foundation; **AWAI OS is its Awai distribution in
+AIUEOS is the common OS foundation; **Itonami OS is its Awai distribution in
 this same repository**. `build-native-desktop.py --distribution awai` (or
 `AIUEOS_DISTRIBUTION=awai` in the shell wrapper) stages and digest-binds the
 [distribution descriptor](../distributions/README.md). Both selections use

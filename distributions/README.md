@@ -1,13 +1,13 @@
 # AIUEOS distributions
 
-AIUEOS is the common OS foundation. **AWAI OS is its Awai Network distribution**,
+AIUEOS is the common OS foundation. **Itonami OS is its Awai Network distribution**,
 maintained in this same repository. Both use the same kernel, drivers, syscall
 ABI, build pipeline and shared authority/runtime contracts.
 
 | Distribution ID | Display name | Configuration owner | Purpose |
 |---|---|---|---|
 | `aiueos` | AIUEOS | `kotoba-lang` | General OS foundation |
-| `awai` | AWAI OS | `network-awai` | Awai-oriented composition and distribution |
+| `awai` | Itonami OS | `network-awai` | Awai-oriented composition and distribution |
 
 The JSON files are static build inputs describing composition intent. They
 are not app release manifests, validators, grants, enrollment records or an
@@ -21,7 +21,7 @@ exact copy as `distribution.json` and binds its SHA-256/size in
 `native-desktop.json`. Both selections invoke the identical native core
 producer. The selection currently changes candidate metadata and composition
 intent; it does not change kernel/UI bytes or install the intended components.
-The output remains a diagnostic candidate, not a qualified AWAI OS release.
+The output remains a diagnostic candidate, not a qualified Itonami OS release.
 
 ```sh
 AIUEOS_DISTRIBUTION=awai \
