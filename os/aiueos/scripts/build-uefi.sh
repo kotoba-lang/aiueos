@@ -253,11 +253,12 @@ device_result_link=
 # ADR-0270: the guest-browser build signs and verifies the lock's passkey ceremony, so it links the sign and public objects too.
 if [ "${AIUEOS_ECDSA_SIGN_KAT:-0}" = 1 ] || [ "${AIUEOS_SSH_LISTEN:-0}" = 1 ] ||
    [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ] || [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] ||
-   [ "${AIUEOS_KERNEL_SIZE_BUILD:-0}" = 1 ]; then
+   [ "${AIUEOS_KERNEL_SIZE_BUILD:-0}" = 1 ] || [ "${AIUEOS_KERNEL_SIZE_DEFINE:-0}" = 1 ]; then
   ecdsa_sign_link="$kotoba_ecdsa_sign_object"
 fi
 if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ] || [ "${AIUEOS_GUEST_BROWSER:-0}" = 1 ] ||
-   [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ] || [ "${AIUEOS_KERNEL_SIZE_BUILD:-0}" = 1 ]; then
+   [ "${AIUEOS_ECDSA_PUBLIC_KAT:-0}" = 1 ] || [ "${AIUEOS_KERNEL_SIZE_BUILD:-0}" = 1 ] ||
+   [ "${AIUEOS_KERNEL_SIZE_DEFINE:-0}" = 1 ]; then
   ecdsa_public_link="$kotoba_ecdsa_public_object"
 fi
 if [ "${AIUEOS_MURAKUMO_DEVICE_RESULT:-0}" = 1 ]; then
@@ -1177,6 +1178,11 @@ else
 # ADR-0270: the low region (kernel/linker.ld, 0x1f4000) has no room for the passkey's ECDSA sign and public objects at -O2; the guest-browser
 # build, which carries the desktop stages, compiles main.c for size. Every other build is unchanged.
 kernel_main_opt=-O2
+# AIUEOS_KERNEL_OPT: the optimisation level alone, for splitting the ring3
+# investigation's bundle (JUN-140, 2026-10-26): the default image dies before
+# AIUEOS_RING3_OK and the working flavour bundles -Os, -DAIUEOS_SIZE_BUILD and
+# the ECDSA objects. Empty keeps -O2.
+if [ -n "${AIUEOS_KERNEL_OPT:-}" ]; then kernel_main_opt="$AIUEOS_KERNEL_OPT"; fi
 # -fno-builtin: -Os turns clear loops into memset/memcpy calls the freestanding kernel does not define.
 # AIUEOS_KERNEL_SIZE_BUILD: the same main.c flavour the guest-browser build
 # uses, selectable on its own (explicit caller choice wins -- the pattern
@@ -1186,6 +1192,10 @@ kernel_main_opt=-O2
 # which confound any attempt to ask whether the -O2 default build is what dies
 # before AIUEOS_RING3_OK.
 if [ "${AIUEOS_KERNEL_SIZE_BUILD:-${AIUEOS_GUEST_BROWSER:-0}}" = 1 ]; then kernel_main_opt="-Os -fno-builtin -DAIUEOS_SIZE_BUILD"; fi
+# AIUEOS_KERNEL_SIZE_DEFINE: the define (and the ECDSA objects passkey
+# ceremony needs) WITHOUT -Os, so -O2+define can be measured against -Os+define
+# and against plain -O2. Second knob of the same investigation.
+if [ "${AIUEOS_KERNEL_SIZE_DEFINE:-0}" = 1 ]; then kernel_main_opt="$kernel_main_opt -fno-builtin -DAIUEOS_SIZE_BUILD"; fi
 zig cc -target x86_64-freestanding-none -std=c11 $kernel_main_opt \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $input_smoke_cflags $model_handoff_cflags $physical_qualification_cflags \
