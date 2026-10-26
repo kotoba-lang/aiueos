@@ -416,9 +416,9 @@
   
     (if (= (at s sb (u3a p0) (u3b p0)) 0) 0
       (if (= (ws (at s sb (u3a p0) (u3b p0))) 1)
-        (do (if (= (u3c p0) 1) 0 (place-body s sb f fb (+ (* 32 65536) (u3b p0))))
+        (do (if (= (u3c p0) 1) 0 (do (sput s sb 436 32) (place-body s sb f fb (u3b p0))))
             (recur (pk3 (u3a p0) (+ (u3b p0) 1) 1)))
-        (do (place-body s sb f fb (+ (* (at s sb (u3a p0) (u3b p0)) 65536) (u3b p0)))
+        (do (do (sput s sb 436 (at s sb (u3a p0) (u3b p0))) (place-body s sb f fb (u3b p0)))
             (recur (pk3 (u3a p0) (+ (u3b p0) 1) 0)))))))
 
 (defn word-end [s sb base i]
@@ -430,18 +430,18 @@
   (if (>= (u3b p0) (u3c p0)) acc (recur (pk3 (u3a p0) (+ (u3b p0) 1) (u3c p0)) (+ acc (adv s sb f fb (at s sb (u3a p0) (u3b p0))))))))
 
 (defn place-body [s sb f fb p0] 
-  ;; the glyph for body code point (hi16 p0) at the cursor unless it passes the
+  ;; the glyph for body code point (sw s sb 436) at the cursor unless it passes the
   ;; bottom, the top inset (ADR-0238) or the viewport, drawn the offset
-  ;; higher, with the highlight behind it when (hi16 p0) is selected (ADR-0240);
+  ;; higher, with the highlight behind it when (sw s sb 436) is selected (ADR-0240);
   ;; advance
   
-    (do (cap s sb (hi16 p0))
+    (do (cap s sb (sw s sb 436))
         (if (> (+ (sw s sb 418) 16) (sw s sb 421)) 0
           (if (< (sw s sb 418) (sw s sb 2044)) 0
-            (if (> (+ (sw s sb 417) (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))) (sw s sb 3)) 0
-              (do (if (= (in-sel s sb (hi16 p0)) 1) (highlight s sb (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))) 0)
-                  (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* (glyph-of s sb f fb (lo16 p0)) 65536) (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))))))))
-        (sput s sb 417 (+ (sw s sb 417) (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))))
+            (if (> (+ (sw s sb 417) (glyph-width s sb f fb (glyph-of s sb f fb p0))) (sw s sb 3)) 0
+              (do (if (= (in-sel s sb (sw s sb 436)) 1) (highlight s sb (glyph-width s sb f fb (glyph-of s sb f fb p0))) 0)
+                  (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* (glyph-of s sb f fb p0) 65536) (glyph-width s sb f fb (glyph-of s sb f fb p0))))))))
+        (sput s sb 417 (+ (sw s sb 417) (glyph-width s sb f fb (glyph-of s sb f fb p0))))
         0))
 
 (defn cap [s sb j]
@@ -468,7 +468,7 @@
 
 (defn emit-run [s sb f fb p0] (loop [p0 p0] 
   (if (>= (u3b p0) (u3c p0)) 0
-    (do (place-body s sb f fb (+ (* (at s sb (u3a p0) (u3b p0)) 65536) (u3b p0)))
+    (do (do (sput s sb 436 (at s sb (u3a p0) (u3b p0))) (place-body s sb f fb (u3b p0)))
         (recur (pk3 (u3a p0) (+ (u3b p0) 1) (u3c p0)))))))
 
 (defn put-word [s sb f fb p0] 
@@ -477,7 +477,7 @@
   (do (if (= (sw s sb 417) (sw s sb 419)) 0
         (if (<= (+ (- (sw s sb 417) (sw s sb 419)) (+ (adv s sb f fb 32) (word-width s sb f fb (pk3 (u3a p0) (u3b p0) (u3c p0)))))
                 (- (sw s sb 430) 28))
-          (place-body s sb f fb (+ (* 32 65536) (- (u3b p0) 1)))
+          (do (sput s sb 436 32) (place-body s sb f fb (- (u3b p0) 1)))
           (newline s sb)))
       (emit-run s sb f fb (pk3 (u3a p0) (u3b p0) (u3c p0)))))
 
@@ -551,13 +551,13 @@
 (defn min-bit [id]
   (if (= id 1) 16 (if (= id 2) 32 (if (= id 3) 64 (if (= id 4) 128 0)))))
 
-(defn minimized [s sb id]
-  (if (= (bit-and (sw s sb 31) (min-bit id)) 0) 0 1))
+(defn minimized [s sb]
+  (if (= (bit-and (sw s sb 31) (min-bit (sw s sb 437))) 0) 0 1))
 
 (defn vis-count [s sb n k]
   (loop [j k acc 0]
     (if (>= j n) acc
-      (recur (+ j 1) (+ acc (if (= (minimized s sb (sw s sb (+ 5 (* j 5)))) 1) 0 1))))))
+      (recur (+ j 1) (+ acc (if (= (do (sput s sb 437 (sw s sb (+ 5 (* j 5)))) (minimized s sb)) 1) 0 1))))))
 
 
 ;; ADR-0246: a control is hot when the pointer (surface words 2046 = x + 1,
@@ -672,7 +672,7 @@
           (sput s sb 422 16777215)
           (put-glyph s sb (+ left (quot (- 36 gw) 2)) (+ top 10) (+ (* gi 65536) gw))
           ;; ADR-0254: a minimized app's icon carries a bar 12 x 3 under it
-          (if (= (minimized s sb (u3a p0)) 1)
+          (if (= (do (sput s sb 437 (u3a p0)) (minimized s sb)) 1)
             (do (sput s sb 422 (icon-rgb s sb))
                 (put-rect s sb (+ left 12) (+ top 37) (+ (* 12 65536) 3)))
             0)))))
@@ -692,7 +692,7 @@
 
 (defn tray [s sb f fb p0] (loop [p0 p0] 
   (if (> (u3a p0) 4) 0
-    (if (= (minimized s sb (u3a p0)) 1)
+    (if (= (do (sput s sb 437 (u3a p0)) (minimized s sb)) 1)
       (do (tray-item s sb f fb (pk3 (u3a p0) (u3b p0) (u3c p0))) (recur (pk3 (+ (u3a p0) 1) (+ (u3b p0) 1) (u3c p0))))
       (recur (pk3 (+ (u3a p0) 1) (u3b p0) (u3c p0)))))))
 
@@ -924,7 +924,7 @@
 (defn emit [s sb f fb k]
   (loop [q k]
     (if (>= q (sw s sb 1)) 0
-      (do (if (= (minimized s sb (sw s sb (+ 5 (* q 5)))) 1) 0 (emit-window s sb f fb q))
+      (do (if (= (do (sput s sb 437 (sw s sb (+ 5 (* q 5)))) (minimized s sb)) 1) 0 (emit-window s sb f fb q))
           (recur (+ q 1))))))
 
 ;; --- admission --------------------------------------------------------------
