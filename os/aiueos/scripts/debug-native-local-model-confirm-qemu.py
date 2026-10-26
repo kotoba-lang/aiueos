@@ -118,6 +118,8 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--qemu", type=Path)
     parser.add_argument("--firmware", type=Path)
+    parser.add_argument("--boot-media", type=Path,
+                        help="matching native GPT/FAT16 image for the two positive boots")
     args = parser.parse_args()
     base = load_base()
     build = args.build_dir.resolve(strict=True)
@@ -169,6 +171,15 @@ def main():
             or efi.count(kernel) != 1 or efi.count(slot_bytes) != 1
             or efi.count(font.read_bytes()) != 1):
         parser.error("kernel, EFI or model user payload differs")
+    media = None
+    if args.boot_media is not None:
+        media = args.boot_media.resolve(strict=True)
+        if args.boot_media.is_symlink() or not media.is_file():
+            parser.error("boot media must be a regular non-symlink file")
+        reader = base.import_file("media_reader", "check-native-media-format.py")
+        reader.verify(media, args.efi)
+    args.boot_media = media
+    media_pin = base.pin(media) if media is not None else None
     header = struct.unpack_from("<IIQQQQQQ", kernel, 120)
     if header[:4] != (1, 6, 1048576, 0x200000):
         parser.error("unexpected native context layout")
@@ -268,6 +279,7 @@ def main():
     modified_efi = output / "modified-slot.EFI"
     modified_efi.write_bytes(changed)
     args.efi = modified_efi
+    args.boot_media = None  # The altered EFI is tested through its own FAT boot.
     directory = output / "modified-slot"
     process, qmp, log = base.boot(args, directory, disk)
     try:
@@ -305,12 +317,17 @@ def main():
     finally:
         base.close(process, qmp, log)
         args.efi = original_efi
+        args.boot_media = media
     assert disk.read_bytes() == first, "modified slot boot changed the draft disk"
+    if media is not None:
+        assert base.pin(media) == media_pin, "boot media changed during QEMU snapshot runs"
     report = {"schema": "aiueos.native-local-model-confirm-qemu.v2",
               "status": ("PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE" if user_call
                          else "PASS_NATIVE_LOCAL_MODEL_DENY_APPROVE_CPL3_AFTER_RESTORE"),
               "kernelEntry": entry, "userOriginatedModelCall": user_call,
               "build": str(build), "kernel": base.pin(args.kernel), "efi": base.pin(args.efi),
+              "bootMedia": media_pin, "positiveBootsFromMedia": media is not None,
+              "modifiedSlotBoot": "modified-efi-fat-directory",
               "slot": base.pin(slot), "font": base.pin(font),
               "userSource": base.pin(user_source), "userElf": base.pin(user_elf),
               "qemu": base.pin(args.qemu), "firmware": base.pin(args.firmware),

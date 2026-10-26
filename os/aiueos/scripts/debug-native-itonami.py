@@ -8,6 +8,7 @@ the failure log, in a new mode-0700 observation directory.
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,8 @@ def main():
     parser.add_argument("--goal", help="lowercase Goal for live or durable profiles")
     parser.add_argument("--qemu", type=Path)
     parser.add_argument("--firmware", type=Path)
+    parser.add_argument("--boot-media", type=Path,
+                        help="matching GPT/FAT16 media for the local-model gate")
     args = parser.parse_args()
     if args.goal is not None and (not re.fullmatch(r"[a-z ]{1,51}", args.goal)
                                   or not args.goal.strip()):
@@ -57,6 +60,15 @@ def main():
     script, expected, accepts_goal = GATES[entry]
     if args.goal is not None and not accepts_goal:
         parser.error("local-model gate has a fixed Goal fixture; omit --goal")
+    if args.boot_media is not None and accepts_goal:
+        parser.error("--boot-media is currently supported by the local-model gate only")
+    if args.boot_media is not None:
+        if args.boot_media.is_symlink() or not args.boot_media.is_file():
+            parser.error("--boot-media requires a regular non-symlink image")
+        args.boot_media = args.boot_media.resolve(strict=True)
+    media_pin = ({"bytes": args.boot_media.stat().st_size,
+                  "sha256": hashlib.sha256(args.boot_media.read_bytes()).hexdigest()}
+                 if args.boot_media else None)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = (args.output or build.parent / f"{build.name}-itonami-debug-{stamp}-{os.getpid()}").resolve()
     if output.exists():
@@ -67,7 +79,8 @@ def main():
                "--output", str(guest)]
     if args.goal is not None:
         command.extend(("--goal", args.goal))
-    for flag, value in (("--qemu", args.qemu), ("--firmware", args.firmware)):
+    for flag, value in (("--qemu", args.qemu), ("--firmware", args.firmware),
+                        ("--boot-media", args.boot_media)):
         if value is not None:
             command.extend((flag, str(value.resolve(strict=True))))
     (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
@@ -101,10 +114,17 @@ def main():
               and gate.get("qmpTransport") == "private-stdio"
               and gate.get("vncUsed") is False
               and gate.get("networkUsed") is False)
+    if args.boot_media is not None:
+        passed = (passed and gate.get("positiveBootsFromMedia") is True
+                  and gate.get("bootMedia") == media_pin
+                  and hashlib.sha256(args.boot_media.read_bytes()).hexdigest()
+                  == media_pin["sha256"])
     screenshots = [str(path) for path in sorted(guest.rglob("*.png"))]
     report = {"schema": "aiueos.native-itonami-unattended-debug.v1",
               "status": "PASS" if passed else "FAIL", "kernelEntry": entry,
               "build": str(build), "buildReceipt": str(state_path),
+              "bootMedia": str(args.boot_media) if args.boot_media else None,
+              "bootMediaPin": media_pin,
               "gate": script, "gateStatus": gate.get("status") if isinstance(gate, dict) else None,
               "gateReceipt": str(gate_path) if gate_path.is_file() else None,
               "exitCode": exit_code, "stdout": str(output / "stdout.log"),

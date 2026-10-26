@@ -96,13 +96,17 @@ def screenshot(qmp, directory, font, goal, name):
 
 def boot(args, directory, disk):
     directory.mkdir(mode=0o700)
-    esp = directory / "esp/EFI/BOOT"
-    esp.mkdir(parents=True)
-    (esp / "BOOTX64.EFI").write_bytes(args.efi.read_bytes())
+    media = getattr(args, "boot_media", None)
+    if media is None:
+        esp = directory / "esp/EFI/BOOT"
+        esp.mkdir(parents=True)
+        (esp / "BOOTX64.EFI").write_bytes(args.efi.read_bytes())
+    boot_drive = (f"file={media},format=raw,if=ide,snapshot=on" if media is not None
+                  else "file=fat:rw:esp,format=raw")
     command = [str(args.qemu), "-machine", "q35,accel=tcg", "-cpu", "max",
                "-m", "128M", "-smp", "1",
                "-drive", f"if=pflash,format=raw,readonly=on,file={args.firmware}",
-               "-drive", "file=fat:rw:esp,format=raw", "-boot", "order=c",
+               "-drive", boot_drive, "-boot", "order=c",
                "-device", "isa-ide,id=draft-controller",
                "-drive", f"file={disk},format=raw,if=none,id=draft,cache=directsync",
                "-device", "ide-hd,drive=draft,bus=draft-controller.0,unit=1,serial=AWAI90DRAFT000001",

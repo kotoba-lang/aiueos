@@ -26,6 +26,13 @@ top-level `debug-run.json` even when a guest check fails:
 python3 os/aiueos/scripts/debug-native-itonami.py "$BUILD"
 ```
 
+For a native local-model build with a matching Kotoba-built GPT/FAT16 image,
+pass `--boot-media "$MEDIA"`. The positive save/restore/model boots read that
+image through QEMU's snapshot drive; the separate altered-slot refusal boots
+its modified EFI through an isolated FAT directory. The gate verifies the
+disk's EFI bytes before boot and checks the media digest again afterwards.
+The marked 64 KiB Goal draft disk remains an output-owned fixture.
+
 Use `--goal 'a b'` for live or durable Goal builds. The local-model gate has a
 fixed fixture and rejects `--goal`. The command prints the receipt path and
 returns nonzero on failure. Read `stderr.log`, `guest/boot-2/last-state.json`
