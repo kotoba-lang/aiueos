@@ -703,6 +703,12 @@ extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
 /* D3: scripted touchpad gestures (pci.c, AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC). */
 extern void aiueos_tablet_gesture_arm(void);
 extern uint32_t aiueos_tablet_gesture_done(void);
+#ifdef AIUEOS_BATTERY_PROBE
+/* I2: the synthetic battery state behind the BAT status text (framebuffer.c). */
+extern void aiueos_desktop_battery_set(uint32_t ac, uint32_t level);
+extern uint32_t aiueos_desktop_battery_level(void);
+extern uint32_t aiueos_desktop_battery_ac(void);
+#endif
 /* C9/status bar keeps the pointer on top; see the note in framebuffer.c. */
 extern void aiueos_desktop_set_pointer(uint32_t x, uint32_t y);
 extern int aiueos_desktop_wm_rects_fit(void);

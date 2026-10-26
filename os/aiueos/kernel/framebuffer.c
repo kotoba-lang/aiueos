@@ -633,6 +633,22 @@ extern void aiueos_kernel_serial_marker(const char *text);
    APIC timer ticks (the guest's running timebase); power is AC in the
    reference VM (there is no battery device to read). */
 static uint32_t status_last_state; /* 0 = unseen, 1 = offline, 2 = online */
+#ifdef AIUEOS_BATTERY_PROBE
+/* I2: there is no battery device in the reference VM (no ACPI BAT0; QEMU's PC
+   machines expose none), so the level lives in the guest and the gate drives
+   it: start on AC at 100, switch to battery, drain through the scripted
+   steps, warn at and below 10, and let the stage send the machine to the
+   existing suspend path at critical. The receipt says the source is
+   synthetic; the level reading, the warning and the sleep are real guest
+   behaviour. */
+static uint32_t battery_level = 100, battery_ac = 1;
+void aiueos_desktop_battery_set(uint32_t ac, uint32_t level) {
+  battery_ac = ac ? 1 : 0;
+  battery_level = level > 100 ? 100 : level;
+}
+uint32_t aiueos_desktop_battery_level(void) { return battery_level; }
+uint32_t aiueos_desktop_battery_ac(void) { return battery_ac; }
+#endif
 /* The pointer rectangle the stages last drew (ADR-0236), reported by
    aiueos_desktop_set_pointer. The bar paints AFTER the frame, so without this
    it covered the arrow: measured 2026-10-26, the cursor stage's corner point
@@ -677,7 +693,31 @@ void aiueos_desktop_paint_status(void) {
   qualification_text(online ? "NET ONLINE" : "NET OFFLINE", x, y + 3, 1,
                      online ? 0x0060d080U : 0x00d08060U);
   x += 6 * 11;
+#ifdef AIUEOS_BATTERY_PROBE
+  /* I2: the reference VM has no battery device (no ACPI BAT0, and QEMU's PC
+     machines expose none), so the level is driven by the guest's own power
+     state machine -- set through aiueos_desktop_battery_set. Eight glyph
+     cells either way ("POWER AC" / "BAT 100%"), so the CLK column does not
+     move and the band's geometry is the same shape the models know; the
+     colour turns to the warning hue at and below 10. Production builds carry
+     none of this: the flag is unset and the line below is the only POWER
+     text that exists. */
+  if (battery_ac) {
+    qualification_text("POWER AC", x, y + 3, 1, 0x00c0c0c0U);
+  } else {
+    char bat[16];
+    uint32_t lv = battery_level > 100 ? 100 : battery_level;
+    bat[0] = 'B'; bat[1] = 'A'; bat[2] = 'T'; bat[3] = ' ';
+    bat[4] = (char)('0' + (lv / 100) % 10);
+    bat[5] = (char)('0' + (lv / 10) % 10);
+    bat[6] = (char)('0' + (lv % 10));
+    bat[7] = '%';
+    bat[8] = 0;
+    qualification_text(bat, x, y + 3, 1, lv <= 10 ? 0x00d08060U : 0x00c0c0c0U);
+  }
+#else
   qualification_text("POWER AC", x, y + 3, 1, 0x00c0c0c0U);
+#endif
   x += 6 * 9;
   {
     uint64_t ticks = aiueos_apic_timer_ticks;
