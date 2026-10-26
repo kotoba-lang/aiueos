@@ -30,3 +30,21 @@ second display is enabled and showing guest content, not a disabled output.
 - a receipt.edn under receipts/ binding all of it to one commit
 
 This directory is evidence, not a receipt: the I3 row stays :unachieved.
+
+## 2026-10-26 second run — image readback of BOTH heads
+
+The graphics device now carries an id (`-device virtio-vga,id=aiueosvga,disable-legacy=on,max_outputs=2`
+in smoke-qemu-uefi.sh), which is what QMP `screendump` needs to name a head:
+
+    head 0 -> screen-head0.ppm  P6 1280x800  top colour f1f1f2 (the desktop background)
+    head 1 -> screen-head1.ppm  P6 32x32     colour 22aa55 on all 1024 pixels
+
+22aa55 is the exact fill the kernel writes into its SECOND 2D resource
+(`pixels2[i] = 0xff22aa55U`), so the image the host reports for head 1 IS the
+guest's own second-resource content, not an enabled-but-empty output. DBus in
+the same run: `aiueosvga.0` Head 0 1280x800, `aiueosvga.1` Head 1 32x32, both
+pci/0000/06.0, beside AIUEOS_GUEST_SCANOUT_TWO_OK scanouts=2 ... kotoba-n=2
+and AIUEOS_GUEST_GPU_TWO_OK with zero failure markers.
+
+Still missing for the I3 row: the scale half inside one receipt (its own gate,
+`browser-desktop-ui-scale`) and a receipt.edn binding both halves to a commit.
