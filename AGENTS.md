@@ -3,8 +3,8 @@
 ## Native desktop debug without a human login
 
 For routine QEMU Itonami debugging, run
-`os/aiueos/scripts/debug-native-itonami.py` on a completed native user-v2
-build. It selects the matching live-Goal, durable-Goal or local-model gate from
+`os/aiueos/scripts/debug-native-itonami.py` on a completed native user-v2 or
+user-v3 build. It selects the matching live-Goal, durable-Goal or local-model gate from
 the build receipt, launches isolated QEMU boots and writes a run receipt plus
 logs even when the guest gate fails. For the older local-draft desktop profile,
 run `os/aiueos/scripts/debug-native-desktop-unattended.py`, adding
@@ -53,6 +53,14 @@ Private-QMP injected Y/N keys prove the guest branching logic, not that a
 human approved an external operation. This profile is a local model proof,
 not a general `:llm/generate` provider or Itonami agent loop. See
 `docs/evidence/aiueos-local-model-confirm-20261026/README.md`.
+
+The user-v3 local-model profile uses the same headless entry on a pinned
+Mac-native build. It checks a user-originated syscall 5 request and a consumed
+one-operation choice after Goal cold restore; it also exercises denial and
+modified-slot refusal. See
+`docs/evidence/aiueos-user-v3-local-model-20261026/README.md`. The synthetic
+QMP choice does not count as human consent, and the fixed one-token model is
+not a general agent loop.
 
 ## Shared Browser native progress (JUN-93)
 
