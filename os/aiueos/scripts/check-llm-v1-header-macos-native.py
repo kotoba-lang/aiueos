@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "native/llm-v1-header.kotoba"
@@ -86,6 +87,14 @@ def main():
             or len(image) < 512 or image[:4] != b"\x7fELF"
             or struct.unpack_from("<HH", image, 16) != (1, 62)):
         raise RuntimeError("native object changed or is not x86_64 ELF ET_REL")
+    object_check = subprocess.run(
+        [sys.executable, "-I", str(Path(__file__).with_name(
+            "verify-kotoba-kernel-object.py")), str(output / "header.o"),
+         pin(output / "header.o")["sha256"], "aiueos-llm-v1-header-valid"],
+        capture_output=True, check=False, timeout=30)
+    if (object_check.returncode or
+            b"imports=0 relocations=1" not in object_check.stdout):
+        raise RuntimeError("native object ABI verification failed")
     text = SOURCE.read_text()
     if text.count(UNROOTED_CALL) != 1:
         raise RuntimeError("rooted load site changed")
@@ -104,6 +113,7 @@ def main():
               "reproducedObject": pin(output / "header-reproduced.o"),
               "unrootedSource": pin(output / "header-unrooted.kotoba"),
               "unrootedDiagnostic": "E7106", "unrootedArtifactAbsent": True,
+              "objectAbi": "AIUEOS_KOTOBA_OBJECT_OK imports=0 relocations=1",
               "observer": pin(Path(__file__)), "guestExecution": False,
               "wire11Dispatch": False, "humanConsent": False}
     receipt = output / "llm-v1-header-native-build.json"
