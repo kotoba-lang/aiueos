@@ -241,7 +241,7 @@
 
 ;; --- ops --------------------------------------------------------------------
 
-(defn put-op [s sb kind x p0] (let [y (lo16 p0) a (hi16 p0)]
+(defn put-op [s sb kind x p0] (let [ a (hi16 p0)]
   ;; b and rgb come from the caller through scratch 429 and 422.
   
     (if (>= (sw s sb 416) 248)
@@ -249,60 +249,60 @@
       (let [base (+ 480 (* 6 (sw s sb 416)))]
         (do (sput s sb base kind)
             (sput s sb (+ base 1) x)
-            (sput s sb (+ base 2) y)
+            (sput s sb (+ base 2) (lo16 p0))
             (sput s sb (+ base 3) a)
             (sput s sb (+ base 4) (sw s sb 429))
             (sput s sb (+ base 5) (sw s sb 422))
             (sput s sb 416 (+ (sw s sb 416) 1))
             0)))))
 
-(defn put-rect [s sb x y p0] (let [w (lo16 p0) h (hi16 p0)]
+(defn put-rect [s sb x y p0] (let [ h (hi16 p0)]
   (do (sput s sb 429 h)
-      (put-op s sb 1 x (+ (* y 65536) w)))))
+      (put-op s sb 1 x (+ (* y 65536) (lo16 p0))))))
 
-(defn put-glyph [s sb x y p0] (let [gi (lo16 p0) gw (hi16 p0)]
+(defn put-glyph [s sb x y p0] (let [ gw (hi16 p0)]
   (do (sput s sb 429 gw)
-      (put-op s sb 2 x (+ (* y 65536) gi)))))
+      (put-op s sb 2 x (+ (* y 65536) (lo16 p0))))))
 
-(defn put-ring [s sb x y p0] (let [w (lo16 p0) h (hi16 p0)]
+(defn put-ring [s sb x y p0] (let [ h (hi16 p0)]
   (do (sput s sb 422 (ring-rgb s sb))
-      (put-rect s sb (- x 2) (- y 2) (+ (* (+ w 4) 65536) 2))
-      (put-rect s sb (- x 2) (+ y h) (+ (* (+ w 4) 65536) 2))
+      (put-rect s sb (- x 2) (- y 2) (+ (* (+ (lo16 p0) 4) 65536) 2))
+      (put-rect s sb (- x 2) (+ y h) (+ (* (+ (lo16 p0) 4) 65536) 2))
       (put-rect s sb (- x 2) y (+ (* 2 65536) h))
-      (put-rect s sb (+ x w) y (+ (* 2 65536) h)))))
+      (put-rect s sb (+ x (lo16 p0)) y (+ (* 2 65536) h)))))
 
 ;; --- font -------------------------------------------------------------------
 
-(defn bsearch [s sb f fb p0] (loop [p0 p0] (let [lo (u3a p0) hi (u3b p0) cp (u3c p0)]
-  (if (> lo hi) -1
-    (let [mid (quot (+ lo hi) 2)
+(defn bsearch [s sb f fb p0] (loop [p0 p0] (let [ hi (u3b p0) cp (u3c p0)]
+  (if (> (u3a p0) hi) -1
+    (let [mid (quot (+ (u3a p0) hi) 2)
           e (bit-and (fw s sb f fb (+ 4 mid)) 16777215)]
       (if (= e cp) mid
         (if (< e cp)
           (recur (pk3 (+ mid 1) hi cp))
-          (recur (pk3 lo (- mid 1) cp)))))))))
+          (recur (pk3 (u3a p0) (- mid 1) cp)))))))))
 
 (defn glyph-of [s sb f fb cp]
-  (let [i (bsearch s sb f fb (pk3 0 (- (sw s sb 424) 1) cp))]
-    (if (< i 0) (sw s sb 425) i)))
+  
+    (if (< (bsearch s sb f fb (pk3 0 (- (sw s sb 424) 1) cp)) 0) (sw s sb 425) (bsearch s sb f fb (pk3 0 (- (sw s sb 424) 1) cp))))
 
 (defn glyph-width [s sb f fb gi]
   (if (> (fw s sb f fb (+ 4 gi)) 16777215) 16 8))
 
 (defn fffd-ok [s sb f fb n]
-  (let [r (bsearch s sb f fb (pk3 0 (- n 1) 65533))]
-    (if (< r 0) 0
-      (do (sput s sb 424 n) (sput s sb 425 r) 1))))
+  
+    (if (< (bsearch s sb f fb (pk3 0 (- n 1) 65533)) 0) 0
+      (do (sput s sb 424 n) (sput s sb 425 (bsearch s sb f fb (pk3 0 (- n 1) 65533))) 1)))
 
 (defn font-header-ok [s sb f fb]
   ;; Scratch 407 already holds fb, so `fw` reads inside the font's bounds.
-  (let [n (fw s sb f fb 2)]
+  
     (if (not (= (fw s sb f fb 0) 1179994433)) 0
       (if (not (= (fw s sb f fb 1) 1)) 0
-        (if (< n 1) 0
-          (if (> n 65536) 0
-            (if (< fb (+ 16 (* 36 n))) 0
-              (fffd-ok s sb f fb n))))))))
+        (if (< (fw s sb f fb 2) 1) 0
+          (if (> (fw s sb f fb 2) 65536) 0
+            (if (< fb (+ 16 (* 36 (fw s sb f fb 2)))) 0
+              (fffd-ok s sb f fb (fw s sb f fb 2))))))))
 
 ;; 1179994433 is 0x46554941, "AIUF" little-endian.
 (defn font-ok [s sb f fb]
@@ -317,52 +317,52 @@
       (sput s sb 418 (+ (sw s sb 418) 20))
       0))
 
-(defn place [s sb f fb p0] (let [gi (lo16 p0) gw (hi16 p0)]
+(defn place [s sb f fb p0] (let [ gw (hi16 p0)]
   ;; The glyph at the cursor, if it fits under the bottom; then advance.
   (do (if (> (+ (sw s sb 418) 16) (sw s sb 421))
         0
-        (put-glyph s sb (sw s sb 417) (sw s sb 418) (+ (* gi 65536) gw)))
+        (put-glyph s sb (sw s sb 417) (sw s sb 418) (+ (* (lo16 p0) 65536) gw)))
       (sput s sb 417 (+ (sw s sb 417) gw))
       0)))
 
-(defn lay [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0)]
+(defn lay [s sb f fb p0] (loop [p0 p0] (let [ i (hi16 p0)]
   (if (>= i (sw s sb 428)) 0
     
-      (if (= (sw s sb (+ base i)) 0) 0
-        (if (= (sw s sb (+ base i)) 10)
-          (do (newline s sb) (recur (+ (* base 65536) (+ i 1))))
-          (let [gi (glyph-of s sb f fb (sw s sb (+ base i)))
-                gw (glyph-width s sb f fb gi)]
+      (if (= (sw s sb (+ (lo16 p0) i)) 0) 0
+        (if (= (sw s sb (+ (lo16 p0) i)) 10)
+          (do (newline s sb) (recur (+ (* (lo16 p0) 65536) (+ i 1))))
+          (let [
+                gw (glyph-width s sb f fb (glyph-of s sb f fb (sw s sb (+ (lo16 p0) i))))]
             (if (> (+ (sw s sb 417) gw) (sw s sb 420))
               (if (= (sw s sb 426) 1)
-                (do (newline s sb) (place s sb f fb (+ (* gi 65536) gw)) (recur (+ (* base 65536) (+ i 1))))
+                (do (newline s sb) (place s sb f fb (+ (* (glyph-of s sb f fb (sw s sb (+ (lo16 p0) i))) 65536) gw)) (recur (+ (* (lo16 p0) 65536) (+ i 1))))
                 0)
-              (do (place s sb f fb (+ (* gi 65536) gw)) (recur (+ (* base 65536) (+ i 1))))))))))))
+              (do (place s sb f fb (+ (* (glyph-of s sb f fb (sw s sb (+ (lo16 p0) i))) 65536) gw)) (recur (+ (* (lo16 p0) 65536) (+ i 1))))))))))))
 
 (defn comp-cp [s sb i]
   ;; The i-th code point of the composition: preedit, then romaji bytes.
   (if (< i (sw s sb 445)) (sw s sb (+ 446 i))
     (sw s sb (+ 434 (- i (sw s sb 445))))))
 
-(defn place-ruled [s sb f fb p0] (let [gi (lo16 p0) gw (hi16 p0)]
+(defn place-ruled [s sb f fb p0] (let [ gw (hi16 p0)]
   ;; A composition glyph and its rule, if it fits between the top inset
   ;; (scratch 2044) and the bottom; drawn the offset (2045) higher; advance.
   (do (if (> (+ (sw s sb 418) 16) (sw s sb 421))
         0
         (if (< (sw s sb 418) (sw s sb 2044))
           0
-          (do (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* gi 65536) gw))
+          (do (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* (lo16 p0) 65536) gw))
               (put-rect s sb (sw s sb 417) (+ (- (sw s sb 418) (sw s sb 2045)) 17) (+ (* gw 65536) 1)))))
       (sput s sb 417 (+ (sw s sb 417) gw))
       0)))
 
-(defn lay-comp [s sb f fb p0] (loop [p0 p0] (let [i (lo16 p0) n (hi16 p0)]
-  (if (>= i n) 0
-    (let [gi (glyph-of s sb f fb (comp-cp s sb i))
-          gw (glyph-width s sb f fb gi)]
+(defn lay-comp [s sb f fb p0] (loop [p0 p0] (let [ n (hi16 p0)]
+  (if (>= (lo16 p0) n) 0
+    (let [
+          gw (glyph-width s sb f fb (glyph-of s sb f fb (comp-cp s sb (lo16 p0))))]
       (do (if (> (+ (sw s sb 417) gw) (sw s sb 420)) (newline s sb) 0)
-          (place-ruled s sb f fb (+ (* gi 65536) gw))
-          (recur (+ (* (+ i 1) 65536) n))))))))
+          (place-ruled s sb f fb (+ (* (glyph-of s sb f fb (comp-cp s sb (lo16 p0))) 65536) gw))
+          (recur (+ (* (+ (lo16 p0) 1) 65536) n))))))))
 
 (defn caret [s sb]
   ;; ADR-0232: 1 x 16 in the text colour at the cursor, if its foot is above
@@ -378,11 +378,11 @@
           (do (sput s sb 422 (ink s sb))
               (put-rect s sb cx (- cy (sw s sb 2045)) (+ (* 1 65536) 16))))))))
 
-(defn text-block [s sb f fb p0] (let [base (u3a p0) x (u3b p0) y (u3c p0)]
+(defn text-block [s sb f fb p0] (let [ x (u3b p0) y (u3c p0)]
   ;; Right limit, bottom, wrap and limit are already in scratch.
   (do (sput s sb 417 x) (sput s sb 418 y) (sput s sb 419 x)
       (sput s sb 422 (ink s sb))
-      (lay s sb f fb (+ (* base 65536) 0)))))
+      (lay s sb f fb (+ (* (u3a p0) 65536) 0)))))
 
 ;; --- body flow (ADR-0234) -----------------------------------------------------
 
@@ -407,43 +407,43 @@
   
     (if (= (at s sb base i) 0) 0 (if (= (ws (at s sb base i)) 1) (recur base (+ i 1)) 1))))
 
-(defn cwidth [s sb f fb p0] (loop [p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
+(defn cwidth [s sb f fb p0] (loop [p0 p0 acc 0] (let [ i (u3b p0) pws (u3c p0)]
   
-    (if (= (at s sb base i) 0) acc
-      (if (= (ws (at s sb base i)) 1)
-        (recur (pk3 base (+ i 1) 1) (+ acc (if (= pws 1) 0 (adv s sb f fb 32))))
-        (recur (pk3 base (+ i 1) 0) (+ acc (adv s sb f fb (at s sb base i)))))))))
+    (if (= (at s sb (u3a p0) i) 0) acc
+      (if (= (ws (at s sb (u3a p0) i)) 1)
+        (recur (pk3 (u3a p0) (+ i 1) 1) (+ acc (if (= pws 1) 0 (adv s sb f fb 32))))
+        (recur (pk3 (u3a p0) (+ i 1) 0) (+ acc (adv s sb f fb (at s sb (u3a p0) i)))))))))
 
-(defn verbatim [s sb f fb p0] (loop [p0 p0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
+(defn verbatim [s sb f fb p0] (loop [p0 p0] (let [ i (u3b p0) pws (u3c p0)]
   
-    (if (= (at s sb base i) 0) 0
-      (if (= (ws (at s sb base i)) 1)
+    (if (= (at s sb (u3a p0) i) 0) 0
+      (if (= (ws (at s sb (u3a p0) i)) 1)
         (do (if (= pws 1) 0 (place-body s sb f fb (+ (* 32 65536) i)))
-            (recur (pk3 base (+ i 1) 1)))
-        (do (place-body s sb f fb (+ (* (at s sb base i) 65536) i))
-            (recur (pk3 base (+ i 1) 0))))))))
+            (recur (pk3 (u3a p0) (+ i 1) 1)))
+        (do (place-body s sb f fb (+ (* (at s sb (u3a p0) i) 65536) i))
+            (recur (pk3 (u3a p0) (+ i 1) 0))))))))
 
 (defn word-end [s sb base i]
   (loop [j i]
     
       (if (= (at s sb base j) 0) j (if (= (at s sb base j) 10) j (if (= (ws (at s sb base j)) 1) j (recur (+ j 1)))))))
 
-(defn word-width [s sb f fb p0] (loop [p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
-  (if (>= i e) acc (recur (pk3 base (+ i 1) e) (+ acc (adv s sb f fb (at s sb base i))))))))
+(defn word-width [s sb f fb p0] (loop [p0 p0 acc 0] (let [ i (u3b p0) e (u3c p0)]
+  (if (>= i e) acc (recur (pk3 (u3a p0) (+ i 1) e) (+ acc (adv s sb f fb (at s sb (u3a p0) i))))))))
 
-(defn place-body [s sb f fb p0] (let [cp (lo16 p0) j (hi16 p0)]
+(defn place-body [s sb f fb p0] (let [ j (hi16 p0)]
   ;; the glyph for body code point j at the cursor unless it passes the
   ;; bottom, the top inset (ADR-0238) or the viewport, drawn the offset
   ;; higher, with the highlight behind it when j is selected (ADR-0240);
   ;; advance
-  (let [gi (glyph-of s sb f fb cp)
-        gw (glyph-width s sb f fb gi)]
+  (let [
+        gw (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))]
     (do (cap s sb j)
         (if (> (+ (sw s sb 418) 16) (sw s sb 421)) 0
           (if (< (sw s sb 418) (sw s sb 2044)) 0
             (if (> (+ (sw s sb 417) gw) (sw s sb 3)) 0
               (do (if (= (in-sel s sb j) 1) (highlight s sb gw) 0)
-                  (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* gi 65536) gw))))))
+                  (put-glyph s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* (glyph-of s sb f fb (lo16 p0)) 65536) gw))))))
         (sput s sb 417 (+ (sw s sb 417) gw))
         0))))
 
@@ -469,39 +469,39 @@
       (put-rect s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* gw 65536) 16))
       (sput s sb 422 (ink s sb))))
 
-(defn emit-run [s sb f fb p0] (loop [p0 p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
+(defn emit-run [s sb f fb p0] (loop [p0 p0] (let [ i (u3b p0) e (u3c p0)]
   (if (>= i e) 0
-    (do (place-body s sb f fb (+ (* (at s sb base i) 65536) i))
-        (recur (pk3 base (+ i 1) e)))))))
+    (do (place-body s sb f fb (+ (* (at s sb (u3a p0) i) 65536) i))
+        (recur (pk3 (u3a p0) (+ i 1) e)))))))
 
-(defn put-word [s sb f fb p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
+(defn put-word [s sb f fb p0] (let [ i (u3b p0) e (u3c p0)]
   ;; the first word of a line goes whatever its width; a next one joins after
   ;; a space if the line still fits in W = w - 28, else it opens the next line
   (do (if (= (sw s sb 417) (sw s sb 419)) 0
-        (if (<= (+ (- (sw s sb 417) (sw s sb 419)) (+ (adv s sb f fb 32) (word-width s sb f fb (pk3 base i e))))
+        (if (<= (+ (- (sw s sb 417) (sw s sb 419)) (+ (adv s sb f fb 32) (word-width s sb f fb (pk3 (u3a p0) i e))))
                 (- (sw s sb 430) 28))
           (place-body s sb f fb (+ (* 32 65536) (- i 1)))
           (newline s sb)))
-      (emit-run s sb f fb (pk3 base i e)))))
+      (emit-run s sb f fb (pk3 (u3a p0) i e)))))
 
-(defn pack [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0)]
+(defn pack [s sb f fb p0] (loop [p0 p0] (let [ i (hi16 p0)]
   
-    (if (= (at s sb base i) 0) 0
-      (if (= (at s sb base i) 10)
-        (do (cap s sb i) (newline s sb) (recur (+ (* base 65536) (+ i 1))))
-        (if (= (ws (at s sb base i)) 1)
-          (recur (+ (* base 65536) (+ i 1)))
-          (let [e (word-end s sb base i)]
-            (do (put-word s sb f fb (pk3 base i e))
-                (recur (+ (* base 65536) e))))))))))
+    (if (= (at s sb (lo16 p0) i) 0) 0
+      (if (= (at s sb (lo16 p0) i) 10)
+        (do (cap s sb i) (newline s sb) (recur (+ (* (lo16 p0) 65536) (+ i 1))))
+        (if (= (ws (at s sb (lo16 p0) i)) 1)
+          (recur (+ (* (lo16 p0) 65536) (+ i 1)))
+          
+            (do (put-word s sb f fb (pk3 (lo16 p0) i (word-end s sb (lo16 p0) i)))
+                (recur (+ (* (lo16 p0) 65536) (word-end s sb (lo16 p0) i))))))))))
 
 (defn fits [s sb f fb base]
   ;; cssom: the collapsed text fits when its width is at most max(0, W)
-  (let [cw (cwidth s sb f fb (pk3 base 0 0))
+  (let [
         wm (- (sw s sb 430) 28)]
     (if (< wm 0)
-      (if (= cw 0) 1 0)
-      (if (<= cw wm) 1 0))))
+      (if (= (cwidth s sb f fb (pk3 base 0 0)) 0) 1 0)
+      (if (<= (cwidth s sb f fb (pk3 base 0 0)) wm) 1 0))))
 
 (defn flow [s sb f fb base]
   (if (= (has-nl s sb base 0) 1)
@@ -531,17 +531,17 @@
 
 (defn sel-pack [s sb id base]
   ;; ADR-0240 / ADR-0263: lo + 128 hi + 16384 c, see `cap`
-  (let [a (f-anchor s sb id base)
+  (let [
         c (f-caret s sb id base)
-        lo (if (< a 0) c (if (< a c) a c))
-        hi (if (< a 0) c (if (> a c) a c))]
+        lo (if (< (f-anchor s sb id base) 0) c (if (< (f-anchor s sb id base) c) (f-anchor s sb id base) c))
+        hi (if (< (f-anchor s sb id base) 0) c (if (> (f-anchor s sb id base) c) (f-anchor s sb id base) c))]
     (+ (if (= lo hi) 127 lo) (+ (* (if (= lo hi) 127 hi) 128) (* c 16384)))))
 
-(defn body-block [s sb f fb p0] (let [base (u3a p0) x (u3b p0) y (u3c p0)]
+(defn body-block [s sb f fb p0] (let [ x (u3b p0) y (u3c p0)]
   ;; Right limit, bottom, limit and window width are already in scratch.
   (do (sput s sb 417 x) (sput s sb 418 y) (sput s sb 419 x)
       (sput s sb 422 (ink s sb))
-      (flow s sb f fb base))))
+      (flow s sb f fb (u3a p0)))))
 
 ;; --- launcher and close (ADR-0233) -------------------------------------------
 
@@ -566,12 +566,12 @@
 ;; ADR-0246: a control is hot when the pointer (surface words 2046 = x + 1,
 ;; 2047 = y; 0 = no pointer yet) is inside its rectangle. Kotoba decides it;
 ;; the colour of a hot control is the only thing it changes.
-(defn hot [s sb x y p0] (let [w (lo16 p0) h (hi16 p0)]
+(defn hot [s sb x y p0] (let [ h (hi16 p0)]
   (if (= (sw s sb 2046) 0) 0
     (let [px (- (sw s sb 2046) 1)
           py (sw s sb 2047)]
       (if (< px x) 0
-        (if (>= px (+ x w)) 0
+        (if (>= px (+ x (lo16 p0))) 0
           (if (< py y) 0
             (if (>= py (+ y h)) 0 1))))))))
 
@@ -580,8 +580,8 @@
 ;; 11:1); hot and not pressed is as before.
 (defn pressed-rgb [s sb] (if (= (hc s sb) 1) 15120384 12566463))
 
-(defn ctl-rgb [s sb x y p0] (let [w (lo16 p0) h (hi16 p0)]
-  (if (= (hot s sb x y (+ (* w 65536) h)) 1)
+(defn ctl-rgb [s sb x y p0] (let [ h (hi16 p0)]
+  (if (= (hot s sb x y (+ (* (lo16 p0) 65536) h)) 1)
     (if (= (sw s sb 2033) 1) (pressed-rgb s sb) (hot-rgb s sb))
     (face-rgb s sb))))
 
@@ -597,10 +597,10 @@
 
 ;; ADR-0264: the status area, at the right end of the launcher row. Word 1968 is the status C reports (0 = none
 ;; reported, nothing drawn): the minute of the day + 1. Today it is the clock, HH:MM in the ink from (vw - 48, 6).
-(defn clock-glyph [s sb f fb p0] (let [cp (lo16 p0) x (hi16 p0)]
-  (let [gi (glyph-of s sb f fb cp)
-        gw (glyph-width s sb f fb gi)]
-    (do (put-glyph s sb x 6 (+ (* gi 65536) gw)) (+ x gw)))))
+(defn clock-glyph [s sb f fb p0] (let [ x (hi16 p0)]
+  (let [
+        gw (glyph-width s sb f fb (glyph-of s sb f fb (lo16 p0)))]
+    (do (put-glyph s sb x 6 (+ (* (glyph-of s sb f fb (lo16 p0)) 65536) gw)) (+ x gw)))))
 
 (defn clock [s sb f fb vw]
   
@@ -665,51 +665,51 @@
 (defn dock-letter [k]
   (if (= k 1) 77 (if (= k 2) 73 (if (= k 3) 89 65))))
 
-(defn dock-icon [s sb f fb p0] (let [k (u3a p0) vw (u3b p0) vh (u3c p0)]
-  (if (= (bit-and (sw s sb 31) (app-bit k)) 0) 0
-    (let [left (+ (quot (- vw 184) 2) 8 (* 44 (- k 1)))
+(defn dock-icon [s sb f fb p0] (let [ vw (u3b p0) vh (u3c p0)]
+  (if (= (bit-and (sw s sb 31) (app-bit (u3a p0))) 0) 0
+    (let [left (+ (quot (- vw 184) 2) 8 (* 44 (- (u3a p0) 1)))
           top (+ (- vh 52) 6)
-          gi (glyph-of s sb f fb (dock-letter k))
+          gi (glyph-of s sb f fb (dock-letter (u3a p0)))
           gw (glyph-width s sb f fb gi)]
-      (do (sput s sb 422 (dock-color k))
+      (do (sput s sb 422 (dock-color (u3a p0)))
           (put-rect s sb left top (+ (* 36 65536) 36))
           (sput s sb 422 16777215)
           (put-glyph s sb (+ left (quot (- 36 gw) 2)) (+ top 10) (+ (* gi 65536) gw))
           ;; ADR-0254: a minimized app's icon carries a bar 12 x 3 under it
-          (if (= (minimized s sb k) 1)
+          (if (= (minimized s sb (u3a p0)) 1)
             (do (sput s sb 422 (icon-rgb s sb))
                 (put-rect s sb (+ left 12) (+ top 37) (+ (* 12 65536) 3)))
             0))))))
 
 ;; ADR-0255: the tray of minimized windows: one 120 x 24 button per minimized window, by id, at
 ;; (6 + 126 i, vh - 30), the window's title (the launcher's slot) in the ink clipped at x + 114.
-(defn tray-item [s sb f fb p0] (let [k (u3a p0) i (u3b p0) vh (u3c p0)]
+(defn tray-item [s sb f fb p0] (let [ i (u3b p0) vh (u3c p0)]
   (let [x (+ 6 (* 126 i))
         y (- vh 30)]
     (do (sput s sb 422 (ctl-rgb s sb x y (+ (* 120 65536) 24)))
         (put-rect s sb x y (+ (* 120 65536) 24))
         (sput s sb 420 (+ x 114)) (sput s sb 421 (+ y 26))
         (sput s sb 426 0) (sput s sb 428 32)
-        (text-block s sb f fb (pk3 (+ 32 (* 32 (- k 1))) (+ x 6) (+ y 4)))
+        (text-block s sb f fb (pk3 (+ 32 (* 32 (- (u3a p0) 1))) (+ x 6) (+ y 4)))
         ;; ADR-0262: the focus ring on tray button i is ring target 8 + i
         (if (= (sw s sb 2032) (+ 8 i)) (put-ring s sb x y (+ (* 120 65536) 24)) 0)))))
 
-(defn tray [s sb f fb p0] (loop [p0 p0] (let [k (u3a p0) i (u3b p0) vh (u3c p0)]
-  (if (> k 4) 0
-    (if (= (minimized s sb k) 1)
-      (do (tray-item s sb f fb (pk3 k i vh)) (recur (pk3 (+ k 1) (+ i 1) vh)))
-      (recur (pk3 (+ k 1) i vh)))))))
+(defn tray [s sb f fb p0] (loop [p0 p0] (let [ i (u3b p0) vh (u3c p0)]
+  (if (> (u3a p0) 4) 0
+    (if (= (minimized s sb (u3a p0)) 1)
+      (do (tray-item s sb f fb (pk3 (u3a p0) i vh)) (recur (pk3 (+ (u3a p0) 1) (+ i 1) vh)))
+      (recur (pk3 (+ (u3a p0) 1) i vh)))))))
 
-(defn dock [s sb f fb p0] (let [vw (lo16 p0) vh (hi16 p0)]
+(defn dock [s sb f fb p0] (let [ vh (hi16 p0)]
   (if (= (sw s sb 31) 0) 0
-    (let [left (quot (- vw 184) 2)
+    (let [left (quot (- (lo16 p0) 184) 2)
           top (- vh 52)]
       (do (sput s sb 422 15132390)
           (put-rect s sb left top (+ (* 184 65536) 48))
-          (dock-icon s sb f fb (pk3 1 vw vh))
-          (dock-icon s sb f fb (pk3 2 vw vh))
-          (dock-icon s sb f fb (pk3 3 vw vh))
-          (dock-icon s sb f fb (pk3 4 vw vh)))))))
+          (dock-icon s sb f fb (pk3 1 (lo16 p0) vh))
+          (dock-icon s sb f fb (pk3 2 (lo16 p0) vh))
+          (dock-icon s sb f fb (pk3 3 (lo16 p0) vh))
+          (dock-icon s sb f fb (pk3 4 (lo16 p0) vh)))))))
 
 (defn chrome [s sb w]
   (if (= (sw s sb 31) 0) 0 (if (< w 40) 0 1)))
@@ -736,14 +736,14 @@
         (put-rect s sb (- (+ x w) 60) (+ y 16) (+ (* 8 65536) 2)))))
 
 
-(defn max-control [s sb f fb p0] (let [x (u3a p0) y (u3b p0) w (u3c p0)]
+(defn max-control [s sb f fb p0] (let [ y (u3b p0) w (u3c p0)]
   (if (= (max-ctl s sb w) 0) 0
-    (let [gi (glyph-of s sb f fb 9633)
-          gw (glyph-width s sb f fb gi)]
-      (do (sput s sb 422 (ctl-rgb s sb (- (+ x w) 44) (+ y 6) (+ (* 16 65536) 16)))
-          (put-rect s sb (- (+ x w) 44) (+ y 6) (+ (* 16 65536) 16))
+    (let [
+          gw (glyph-width s sb f fb (glyph-of s sb f fb 9633))]
+      (do (sput s sb 422 (ctl-rgb s sb (- (+ (u3a p0) w) 44) (+ y 6) (+ (* 16 65536) 16)))
+          (put-rect s sb (- (+ (u3a p0) w) 44) (+ y 6) (+ (* 16 65536) 16))
           (sput s sb 422 (icon-rgb s sb))
-          (put-glyph s sb (+ (- (+ x w) 44) (quot (- 16 gw) 2)) (+ y 6) (+ (* gi 65536) gw)))))))
+          (put-glyph s sb (+ (- (+ (u3a p0) w) 44) (quot (- 16 gw) 2)) (+ y 6) (+ (* (glyph-of s sb f fb 9633) 65536) gw)))))))
 
 ;; ADR-0257: the close control of the only visible window is disabled (browser-reduce refuses that
 ;; close): never hot or pressed, its glyph #9e9e9e (#707070 in the high-contrast palette), not the ink.
@@ -752,27 +752,27 @@
 (defn close-off [s sb]
   (if (< (vis-count s sb (sw s sb 1) 0) 2) 1 0))
 
-(defn close-control [s sb f fb p0] (let [x (u3a p0) y (u3b p0) w (u3c p0)]
+(defn close-control [s sb f fb p0] (let [ y (u3b p0) w (u3c p0)]
   (if (= (chrome s sb w) 0) 0
-    (let [gi (glyph-of s sb f fb 215)
-          gw (glyph-width s sb f fb gi)]
-      (do (if (= (close-off s sb) 1) (sput s sb 422 (face-rgb s sb)) (sput s sb 422 (ctl-rgb s sb (- (+ x w) 24) (+ y 6) (+ (* 16 65536) 16))))
-          (put-rect s sb (- (+ x w) 24) (+ y 6) (+ (* 16 65536) 16))
+    (let [
+          gw (glyph-width s sb f fb (glyph-of s sb f fb 215))]
+      (do (if (= (close-off s sb) 1) (sput s sb 422 (face-rgb s sb)) (sput s sb 422 (ctl-rgb s sb (- (+ (u3a p0) w) 24) (+ y 6) (+ (* 16 65536) 16))))
+          (put-rect s sb (- (+ (u3a p0) w) 24) (+ y 6) (+ (* 16 65536) 16))
           (if (= (close-off s sb) 1) (sput s sb 422 (disabled-rgb s sb)) (sput s sb 422 (ink s sb)))
-          (put-glyph s sb (+ (- (+ x w) 24) (quot (- 16 gw) 2)) (+ y 6) (+ (* gi 65536) gw)))))))
+          (put-glyph s sb (+ (- (+ (u3a p0) w) 24) (quot (- 16 gw) 2)) (+ y 6) (+ (* (glyph-of s sb f fb 215) 65536) gw)))))))
 
 ;; --- pointer (ADR-0236) ---------------------------------------------------------
 
-(defn arrow-row [s sb x y p0] (let [r (lo16 p0) vw (hi16 p0)]
-  ;; row r: the outline (r + 1 wide), then in rows 2..10 the fill (r - 1 wide
+(defn arrow-row [s sb x y p0] (let [ vw (hi16 p0)]
+  ;; row (lo16 p0): the outline ((lo16 p0) + 1 wide), then in rows 2..10 the fill ((lo16 p0) - 1 wide
   ;; from x + 1); both cut at vw, a fill with no width left not drawn
   (do (sput s sb 422 (ink s sb))
-      (if (< (+ r 1) (- vw x)) (put-rect s sb x (+ y r) (+ (* (+ r 1) 65536) 1)) (put-rect s sb x (+ y r) (+ (* (- vw x) 65536) 1)))
-      (if (< r 2) 0
-        (if (> r 10) 0
+      (if (< (+ (lo16 p0) 1) (- vw x)) (put-rect s sb x (+ y (lo16 p0)) (+ (* (+ (lo16 p0) 1) 65536) 1)) (put-rect s sb x (+ y (lo16 p0)) (+ (* (- vw x) 65536) 1)))
+      (if (< (lo16 p0) 2) 0
+        (if (> (lo16 p0) 10) 0
           (if (< (- vw x) 2) 0
             (do (sput s sb 422 16777215)
-                (if (< (- r 1) (- vw (+ x 1))) (put-rect s sb (+ x 1) (+ y r) (+ (* (- r 1) 65536) 1)) (put-rect s sb (+ x 1) (+ y r) (+ (* (- vw (+ x 1)) 65536) 1))))))))))
+                (if (< (- (lo16 p0) 1) (- vw (+ x 1))) (put-rect s sb (+ x 1) (+ y (lo16 p0)) (+ (* (- (lo16 p0) 1) 65536) 1)) (put-rect s sb (+ x 1) (+ y (lo16 p0)) (+ (* (- vw (+ x 1)) 65536) 1))))))))))
 
 (defn arrow [s sb x y r]
   ;; rows r..11 above the viewport's bottom
@@ -800,11 +800,11 @@
             (if (> py (+ y h)) (recur (- k 1) px py) k))))))))
 
 (defn on-handle [s sb px py]
-  (let [k (top-at s sb (- (sw s sb 1) 1) px py)]
-    (if (< k 0) 0
-      (let [b (+ 5 (* k 5))]
+  
+    (if (< (top-at s sb (- (sw s sb 1) 1) px py) 0) 0
+      (let [b (+ 5 (* (top-at s sb (- (sw s sb 1) 1) px py) 5))]
         (if (< px (- (+ (sw s sb (+ b 1)) (sw s sb (+ b 3))) 16)) 0
-          (if (< py (- (+ (sw s sb (+ b 2)) (sw s sb (+ b 4))) 16)) 0 1))))))
+          (if (< py (- (+ (sw s sb (+ b 2)) (sw s sb (+ b 4))) 16)) 0 1)))))
 
 (defn cursor-resize? [s sb px py]
   (if (< px 6) 0
@@ -845,21 +845,21 @@
     (if (= focused 1) 16765952 13684944)
     (if (= focused 1) 13421772 15132390)))
 
-(defn window-shadow [s sb x y p0] (let [w (lo16 p0) h (hi16 p0)]
+(defn window-shadow [s sb x y p0] (let [ h (hi16 p0)]
   ;; The shadow belongs to the outside edge only. A filled offset rectangle
   ;; hides the contents of every lower window it overlaps; these clipped
   ;; right and bottom strips keep the retained painter order intact.
-  (let [right-room (- (sw s sb 3) (+ x w))
+  (let [right-room (- (sw s sb 3) (+ x (lo16 p0)))
         bottom-room (- (sw s sb 4) (+ y h))
         right-width (if (> right-room 3) 3 right-room)
         bottom-height (if (> bottom-room 3) 3 bottom-room)]
     (do (if (> right-width 0)
           (do (sput s sb 422 (shadow-rgb s sb))
-              (put-rect s sb (+ x w) (+ y 3) (+ (* right-width 65536) (- h 3))))
+              (put-rect s sb (+ x (lo16 p0)) (+ y 3) (+ (* right-width 65536) (- h 3))))
           0)
         (if (> bottom-height 0)
           (do (sput s sb 422 (shadow-rgb s sb))
-              (put-rect s sb (+ x 3) (+ y h) (+ (* (- w 3) 65536) bottom-height)))
+              (put-rect s sb (+ x 3) (+ y h) (+ (* (- (lo16 p0) 3) 65536) bottom-height)))
           0)))))
 
 (defn emit-window [s sb f fb k]
@@ -964,10 +964,10 @@
         (if (> (+ x w) vw) 0
           (if (> (+ y h) vh) 0 1))))))
 
-(defn rects-ok [s sb n k p0] (loop [n n k k p0 p0] (let [vw (lo16 p0) vh (hi16 p0)]
+(defn rects-ok [s sb n k p0] (loop [n n k k p0 p0] (let [ vh (hi16 p0)]
   (if (>= k n) 1
-    (if (= (rect-ok s sb k vw vh) 0) 0
-      (recur n (+ k 1) (+ (* vw 65536) vh)))))))
+    (if (= (rect-ok s sb k (lo16 p0) vh) 0) 0
+      (recur n (+ k 1) (+ (* (lo16 p0) 65536) vh)))))))
 
 (defn scroll-ok [s sb id] (loop [id id]
   (if (> id 4) 1
@@ -979,29 +979,29 @@
 ;; (word 2026), a red bar under them; no window, launcher or dock is drawn, and the pointer is the arrow.
 (defn lock-bg [s sb] (if (= (hc s sb) 1) 0 2040880))
 
-(defn lock-glyph [s sb f fb p0] (let [cp (u3a p0) x (u3b p0) y (u3c p0)]
-  (let [gi (glyph-of s sb f fb cp)
-        gw (glyph-width s sb f fb gi)]
-    (do (put-glyph s sb x y (+ (* gi 65536) gw)) gw))))
+(defn lock-glyph [s sb f fb p0] (let [ x (u3b p0) y (u3c p0)]
+  (let [
+        gw (glyph-width s sb f fb (glyph-of s sb f fb (u3a p0)))]
+    (do (put-glyph s sb x y (+ (* (glyph-of s sb f fb (u3a p0)) 65536) gw)) gw))))
 
 (defn lock-dot [s sb i vw vh]
   (do (if (< i (bit-and (sw s sb 2031) 7)) (sput s sb 422 16777215) (if (= (hc s sb) 1) (sput s sb 422 8421504) (sput s sb 422 5593702)))
       (put-rect s sb (+ (- (quot vw 2) 44) (* 24 i)) (quot vh 2) (+ (* 12 65536) 12))))
 
-(defn lock-screen [s sb f fb p0] (let [vw (lo16 p0) vh (hi16 p0)]
-  (let [x0 (- (quot vw 2) 32)
+(defn lock-screen [s sb f fb p0] (let [ vh (hi16 p0)]
+  (let [x0 (- (quot (lo16 p0) 2) 32)
         y0 (- (quot vh 2) 48)]
     (do (sput s sb 422 (lock-bg s sb))
-        (put-rect s sb 0 0 (+ (* vw 65536) vh))
+        (put-rect s sb 0 0 (+ (* (lo16 p0) 65536) vh))
         (sput s sb 422 16777215)
         (let [x1 (+ x0 (lock-glyph s sb f fb (pk3 12525 x0 y0)))
               x2 (+ x1 (lock-glyph s sb f fb (pk3 12483 x1 y0)))
               x3 (+ x2 (lock-glyph s sb f fb (pk3 12463 x2 y0)))]
           (lock-glyph s sb f fb (pk3 20013 x3 y0)))
-        (lock-dot s sb 0 vw vh) (lock-dot s sb 1 vw vh) (lock-dot s sb 2 vw vh) (lock-dot s sb 3 vw vh)
+        (lock-dot s sb 0 (lo16 p0) vh) (lock-dot s sb 1 (lo16 p0) vh) (lock-dot s sb 2 (lo16 p0) vh) (lock-dot s sb 3 (lo16 p0) vh)
         (if (= (sw s sb 2026) 1)
           (do (sput s sb 422 14233637)
-              (put-rect s sb (- (quot vw 2) 44) (+ (quot vh 2) 24) (+ (* 84 65536) 4)))
+              (put-rect s sb (- (quot (lo16 p0) 2) 44) (+ (quot vh 2) 24) (+ (* 84 65536) 4)))
           0)
         (if (= (sw s sb 2046) 0) 0 (arrow s sb (- (sw s sb 2046) 1) (sw s sb 2047) 0))))))
 
@@ -1011,53 +1011,53 @@
 ;; the shown entries stack downward in entry order. The open panel replaces the toasts: a white box (vw - 216, 36) 208 wide
 ;; and 8 + 22 m high for the m entries that are not empty, each row at y 42 + 22 row, a '*' at vw - 208 for an entry still
 ;; shown and the text from vw - 198.
-(defn note-glyph [s sb f fb p0] (let [cp (u3a p0) x (u3b p0) y (u3c p0)]
-  (let [gi (glyph-of s sb f fb cp)
-        gw (glyph-width s sb f fb gi)]
-    (do (put-glyph s sb x y (+ (* gi 65536) gw)) (+ x gw)))))
+(defn note-glyph [s sb f fb p0] (let [ x (u3b p0) y (u3c p0)]
+  (let [
+        gw (glyph-width s sb f fb (glyph-of s sb f fb (u3a p0)))]
+    (do (put-glyph s sb x y (+ (* (glyph-of s sb f fb (u3a p0)) 65536) gw)) (+ x gw)))))
 
-(defn note-text [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0) x (sw s sb 436) y (sw s sb 437)]
+(defn note-text [s sb f fb p0] (loop [p0 p0] (let [ i (hi16 p0) x (sw s sb 436) y (sw s sb 437)]
   (if (>= i 7) 0
-      (if (= (sw s sb (+ base (+ i 1))) 0) 0
-        (let [x2 (note-glyph s sb f fb (pk3 (sw s sb (+ base (+ i 1))) x y))]
-          (do (sput s sb 436 x2) (sput s sb 437 y) (recur (+ (* base 65536) (+ i 1))))))))))
+      (if (= (sw s sb (+ (lo16 p0) (+ i 1))) 0) 0
+        (let [x2 (note-glyph s sb f fb (pk3 (sw s sb (+ (lo16 p0) (+ i 1))) x y))]
+          (do (sput s sb 436 x2) (sput s sb 437 y) (recur (+ (* (lo16 p0) 65536) (+ i 1))))))))))
 
-(defn toast [s sb f fb p0] (let [vw (u3a p0) slot (u3b p0) base (u3c p0)]
+(defn toast [s sb f fb p0] (let [ slot (u3b p0) base (u3c p0)]
   (do (sput s sb 422 16774084)
-      (put-rect s sb (- vw 216) (+ 36 (* 30 slot)) (+ (* 208 65536) 26))
+      (put-rect s sb (- (u3a p0) 216) (+ 36 (* 30 slot)) (+ (* 208 65536) 26))
       (sput s sb 422 (ink s sb))
-      (do (sput s sb 436 (- vw 208)) (sput s sb 437 (+ 41 (* 30 slot))) (note-text s sb f fb (+ (* base 65536) 0))))))
+      (do (sput s sb 436 (- (u3a p0) 208)) (sput s sb 437 (+ 41 (* 30 slot))) (note-text s sb f fb (+ (* base 65536) 0))))))
 
-(defn toasts [s sb f fb p0] (loop [p0 p0] (let [vw (u3a p0) k (u3b p0) slot (u3c p0)]
+(defn toasts [s sb f fb p0] (loop [p0 p0] (let [ k (u3b p0) slot (u3c p0)]
   (if (>= k 4) 0
     (let [base (+ 1971 (* 8 k))]
       (if (= (sw s sb base) 1)
-        (do (toast s sb f fb (pk3 vw slot base))
-            (recur (pk3 vw (+ k 1) (+ slot 1))))
-        (recur (pk3 vw (+ k 1) slot))))))))
+        (do (toast s sb f fb (pk3 (u3a p0) slot base))
+            (recur (pk3 (u3a p0) (+ k 1) (+ slot 1))))
+        (recur (pk3 (u3a p0) (+ k 1) slot))))))))
 
 (defn panel-count [s sb k]
   (loop [j k acc 0]
     (if (>= j 4) acc
       (recur (+ j 1) (+ acc (if (= (sw s sb (+ 1971 (* 8 j))) 0) 0 1))))))
 
-(defn panel-rows [s sb f fb p0] (loop [p0 p0] (let [vw (u3a p0) k (u3b p0) row (u3c p0)]
+(defn panel-rows [s sb f fb p0] (loop [p0 p0] (let [ k (u3b p0) row (u3c p0)]
   (if (>= k 4) 0
     (let [base (+ 1971 (* 8 k))
           st (sw s sb base)]
-      (if (= st 0) (recur (pk3 vw (+ k 1) row))
+      (if (= st 0) (recur (pk3 (u3a p0) (+ k 1) row))
         (let [y (+ 42 (* 22 row))]
-          (do (if (= st 1) (note-glyph s sb f fb (pk3 42 (- vw 208) y)) 0)
-              (do (sput s sb 436 (- vw 198)) (sput s sb 437 y) (note-text s sb f fb (+ (* base 65536) 0)))
-              (recur (pk3 vw (+ k 1) (+ row 1)))))))))))
+          (do (if (= st 1) (note-glyph s sb f fb (pk3 42 (- (u3a p0) 208) y)) 0)
+              (do (sput s sb 436 (- (u3a p0) 198)) (sput s sb 437 y) (note-text s sb f fb (+ (* base 65536) 0)))
+              (recur (pk3 (u3a p0) (+ k 1) (+ row 1)))))))))))
 
 (defn notify-layer [s sb f fb vw]
   (if (= (sw s sb 2003) 1)
-    (let [m (panel-count s sb 0)]
+    
       (do (sput s sb 422 16777215)
-          (put-rect s sb (- vw 216) 36 (+ (* 208 65536) (+ 8 (* 22 m))))
+          (put-rect s sb (- vw 216) 36 (+ (* 208 65536) (+ 8 (* 22 (panel-count s sb 0)))))
           (sput s sb 422 (ink s sb))
-          (panel-rows s sb f fb (pk3 vw 0 0))))
+          (panel-rows s sb f fb (pk3 vw 0 0)))
     (toasts s sb f fb (pk3 vw 0 0))))
 
 (defn aiueos-browser-frame2 [s sb f fb]
