@@ -424,9 +424,16 @@ if [ "${AIUEOS_INPUT_SMOKE_SYNTHETIC:-0}" = 1 ]; then
   input_smoke_cflags=-DAIUEOS_INPUT_SMOKE_SYNTHETIC=1
 fi
 # D3: scripted touchpad gestures (pinch / three-finger swipe / two-finger tap).
-# virtio-tablet has no multi-touch to carry them; see the note in pci.c.
+# virtio-tablet has no multi-touch; see the note in pci.c.
 if [ "${AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_TOUCHPAD_GESTURE_SYNTHETIC=1"
+fi
+# I2: synthetic battery probe. The reference VM has no battery device to read
+# (framebuffer.c's status note), so the level state and the BAT status text
+# exist only in this build -- without the flag the status band is byte-for-byte
+# the one every gate's frame model already pins.
+if [ "${AIUEOS_BATTERY_PROBE:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_BATTERY_PROBE=1"
 fi
 if [ "${AIUEOS_CATALOG_POLICY_SELFTEST:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_CATALOG_POLICY_SELFTEST=1"
@@ -1346,6 +1353,7 @@ zig cc -target x86_64-freestanding-none -std=c11 -O2 \
 zig cc -target x86_64-freestanding-none -std=c11 -O2 \
   -ffreestanding -fno-stack-protector -mno-red-zone -I "$out" \
   $physical_qualification_cflags \
+  $input_smoke_cflags \
   -c -o "$kernel_framebuffer_object" "$aiueos/kernel/framebuffer.c"
 if [ -n "$plc_runtime_link" ]; then
   zig cc -target x86_64-freestanding-none -std=c11 -O2 \
