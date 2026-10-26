@@ -80,7 +80,7 @@ def main():
             report = json.loads(receipt.read_text())
             assert report["result"] == 42
             assert report["llmHeader"]["checks"] == [1] * 12
-            assert report["llmRequest"]["checks"] == [1] * 5
+            assert report["llmRequest"]["checks"] == [1] * 9
             assert report["llmHeader"]["providerDispatch"] is False
             assert report["llmHeader"]["modelExecution"] is False
         else:
@@ -100,7 +100,7 @@ def main():
              "firmware": pin(a.firmware), "calls": calls,
              "guestEmulation": "QEMU TCG", "wire11Dispatch": False,
              "modelExecution": False, "humanConsent": False,
-             "utf8Qualified": False, "aliasingQualified": False,
+             "utf8ComponentValidated": True, "aliasingQualified": False,
              "desktop": False, "physicalHardware": False}
     (output / "llm-header-qemu.json").write_text(json.dumps(proof, indent=2) + "\n")
     print(proof["status"])
