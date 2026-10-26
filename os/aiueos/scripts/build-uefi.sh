@@ -146,7 +146,7 @@ kotoba_user_elf_valid_object=${AIUEOS_KOTOBA_USER_ELF_VALID_OBJECT:-"$aiueos/kot
 # committed os/aiueos/kotoba/user-elf-valid.o (ab027deff...), not the
 # pre-rebuild d79cc375... the PLC branch used to pin here. The PLC-RT-SMOKE
 # override below still swaps in plc-user-elf-valid.o with its own digest.
-kotoba_user_elf_valid_sha=bcfd72c3914667fbf1bfee027d1bcc03129fd6f5281736b2e287c9e36afa2e6c
+kotoba_user_elf_valid_sha=941707062dcdd34c77c0bb1794126589cd83ff2d58d1b9c04eb066ba509ff8d2
 kotoba_user_context_object=${AIUEOS_KOTOBA_USER_CONTEXT_OBJECT:-"$aiueos/kotoba/user-context-build.o"}
 # The kernel-selector twin of the object above, for tasks `iret` enters at ring
 # 0. Same 160-byte frame in the same bounded 4 KiB stack; CS 0x08 / SS 0x10 and
@@ -948,7 +948,7 @@ python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_kernel_context
   f5bc59c40dde2df00db88a2e6097409c222bed80308778c6f5a94211bea1ef4d \
   kotoba_aiueos_kernel_context_build
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_mapping_plan_object" \
-  263369d9194a08c361c6e9572cfe9c38cbdedf4d0678b7f14cdac84481e256f3 \
+  bdff4601a48da4627345a8b5bf2018cce70baff7ee56151e56365f6ccb42c66a \
   kotoba_aiueos_page_mapping_plan
 python3 "$aiueos/scripts/verify-kotoba-kernel-object.py" "$kotoba_process_plan_object" \
   35b980f64d0238a67662e924a641fead9cb742523911963cf4d5e32db6bc7752 \
