@@ -137,7 +137,7 @@
 ;;   -12 the offset would pass 65535
 
 (ns aiueos.browser-reduce
-  (:export [aiueos-browser-reduce main]))
+  (:export [aiueos-browser-reduce]))
 
 ;; The state size is checked once at the entry (128 or 8192); every word below
 ;; 32 is inside both.
@@ -241,8 +241,6 @@
       (if (< py (- f 16)) 0 1))))
 
 ;; Set the capture for a press on stack index k (before the raise moves it).
-;; The x86 object admission refuses more than 5 arguments; the capture's four
-;; values arrive as two calls of two.
 (defn set-capture [st sb kind id]
   (do (w-put st sb 25 kind) (w-put st sb 26 id)))
 (defn set-capture2 [st sb c d]
@@ -285,8 +283,7 @@
 ;; Move k code points from the source body's offset start to the target body's
 ;; offset line*1 (the drop's line start). The target keeps room: the move is
 ;; refused (0) when the target cannot take the payload, else 1.
-;; The source's (window, offset) travels as one packed word (src*64 + start)
-;; because the object admission refuses more than 5 arguments.
+;; The source's (window, offset) travels as one packed word (src*64 + start).
 (defn body-move [st sb packed k tw]
   (let [src (quot packed 64) start (- packed (* src 64))
         sbase (+ 160 (* (- src 1) 64))
@@ -538,18 +535,18 @@
 
 ;; ADR-0255: the tray of minimized windows, bottom left: item i (0 first) is the i-th minimized
 ;; window by id, 120 x 24 at (6 + 126 i, vh - 30), inclusive. The id under (px, py) from id k on, or 0.
-;; The point travels packed (px*65536 + py): the object admission refuses
-;; more than 5 arguments.
+(defn px-of [point] (quot point 65536))
+(defn py-of [point] (- point (* (px-of point) 65536)))
+
 (defn tray-at [st sb k i point]
-  (let [px (quot point 65536) py (- point (* px 65536))]
-    (if (> k 4) 0
-      (if (= (is-min st sb k) 0) (tray-at st sb (+ k 1) i point)
-        (let [x (+ 6 (* 126 i))
-              y (- (w-at st sb 4) 30)]
-          (if (< px x) (tray-at st sb (+ k 1) (+ i 1) point)
-            (if (> px (+ x 120)) (tray-at st sb (+ k 1) (+ i 1) point)
-              (if (< py y) (tray-at st sb (+ k 1) (+ i 1) point)
-                (if (> py (+ y 24)) (tray-at st sb (+ k 1) (+ i 1) point) k)))))))))
+  (if (> k 4) 0
+    (if (= (is-min st sb k) 0) (tray-at st sb (+ k 1) i point)
+      (let [x (+ 6 (* 126 i))
+            y (- (w-at st sb 4) 30)]
+        (if (< (px-of point) x) (tray-at st sb (+ k 1) (+ i 1) point)
+          (if (> (px-of point) (+ x 120)) (tray-at st sb (+ k 1) (+ i 1) point)
+            (if (< (py-of point) y) (tray-at st sb (+ k 1) (+ i 1) point)
+              (if (> (py-of point) (+ y 24)) (tray-at st sb (+ k 1) (+ i 1) point) k))))))))
 
 (defn restore [st sb n id]
   (do (release-all st sb)
