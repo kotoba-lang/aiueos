@@ -332,7 +332,7 @@ int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t 
     kotoba_app_count*sizeof(kotoba_apps[0]));
   if (!plan) return 0;
   uint64_t one_based=plan&7,length_plan=plan>>3;
-  if (!one_based||one_based>kotoba_app_count||!length_plan||length_plan>12288) return 0;
+  if (!one_based||one_based>kotoba_app_count||!length_plan||length_plan>98304) return 0;
   *data=kotoba_app_objects[one_based-1];*length=length_plan;return 1;
 }
 int aiueos_journal_ready(void) { return journal_ready; }
