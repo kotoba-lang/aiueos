@@ -367,8 +367,12 @@ extern uint64_t kotoba_aiueos_app_catalog_valid(
   const uint8_t *,uint64_t,uint64_t,const uint32_t[2],uint64_t);
 extern uint64_t kotoba_aiueos_rsa2048_sha256_verify(
   const uint8_t[256],const uint8_t[32],uint8_t*,uint64_t,uint64_t);
-static uint8_t sha256_workspace[512];
-static uint8_t rsa2048_workspace[1284];
+/* `.high_bss`: both are CPU-only scratch for the Kotoba hash/verify calls,
+   reached from the boot selftests after the section is zeroed; the low region
+   was one page over its 0x1f4000 budget once main and the scorecard branch
+   were merged (2026-10-26). */
+static uint8_t sha256_workspace[512] __attribute__((section(".high_bss")));
+static uint8_t rsa2048_workspace[1284] __attribute__((section(".high_bss")));
 static int catalog_policy_selftest_ok;
 int aiueos_catalog_policy_selftest_ok(void) { return catalog_policy_selftest_ok; }
 static int sha256(const uint8_t *bytes,uint64_t length,uint8_t digest[32]) {
@@ -430,11 +434,39 @@ static uint64_t user_journal_value(const struct aiuefs_journal_record *journal,
 static unsigned object_store_restored_count;
 unsigned aiueos_object_store_restored_count(void) { return object_store_restored_count; }
 
+/* G3: data encrypted at rest. The loader carries a 16-byte data-disk key in
+   the boot info (kept on the system ESP, a different disk); every sector
+   read or written through this backend is AES-128-GCM wrapped with a
+   sector-number nonce. The GCM tag is discarded on write: integrity stays
+   with the journal's own record checksums, confidentiality comes from here.
+   A read of the data disk outside the OS shows ciphertext only. */
+extern int aiueos_aes128_gcm_encrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, uint8_t *, uint8_t[16]);
+extern int aiueos_aes128_gcm_decrypt(const uint8_t[16], const uint8_t[12],
+                                     const uint8_t *, uint32_t,
+                                     const uint8_t *, uint32_t, const uint8_t[16], uint8_t *);
+static uint8_t storage_key[16];
+static int storage_key_valid;
+void aiueos_storage_set_key(const uint8_t key[16]) {
+  for (int i = 0; i < 16; i++) storage_key[i] = key[i];
+  storage_key_valid = 1;
+}
+static void storage_nonce(uint64_t sector, uint8_t nonce[12]) {
+  for (int i = 0; i < 12; i++) nonce[i] = 0;
+  for (int i = 0; i < 8; i++) nonce[4 + i] = (uint8_t)((sector >> (i * 8)) & 0xff);
+}
+
 static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sector,
     uint8_t *status, struct virtq_desc *desc, struct virtq_avail *avail,
     struct virtq_used *used, volatile uint16_t *doorbell, uint16_t *submitted,
     uint32_t type, uint64_t disk_sector) {
   uint16_t old = *submitted, target = old + 1;
+  uint8_t crypt_nonce[12], crypt_tag[16];
+  if (storage_key_valid && type == VIRTIO_BLK_T_OUT) {
+    storage_nonce(disk_sector, crypt_nonce);
+    aiueos_aes128_gcm_encrypt(storage_key, crypt_nonce, 0, 0, sector, 512, sector, crypt_tag);
+  }
   request->type = type; request->reserved = 0; request->sector = disk_sector; *status = 0xff;
   desc[1].flags = VIRTQ_DESC_F_NEXT | (type == VIRTIO_BLK_T_IN ? VIRTQ_DESC_F_WRITE : 0);
   avail->ring[old & 3] = 0; __asm__ volatile("" ::: "memory");
@@ -451,6 +483,10 @@ static int virtio_blk_sector_io(struct virtio_blk_request *request, uint8_t *sec
         blk_slow_target = target;
       }
       *submitted = target;
+      if (storage_key_valid && type == VIRTIO_BLK_T_IN) {
+        storage_nonce(disk_sector, crypt_nonce);
+        aiueos_aes128_gcm_decrypt(storage_key, crypt_nonce, 0, 0, sector, 512, crypt_tag, sector);
+      }
       return 1;
     }
     /* Futile, not slow: the used index has passed the value this wait is
@@ -749,6 +785,367 @@ int aiueos_crash_receipt_consume(uint32_t *reason, uint32_t *sequence) {
   if (!crash_sector_io(VIRTIO_BLK_T_IN)) return 0;
   record=(void *)blk_backend.sector;
   return crash_record_valid() && record->state==2 && record->checksum==wanted;
+}
+
+
+/* ---- F5 USB storage slice 1 (JUN-140): UHCI HCD discovery ---------------
+   The guest had no USB stack (measured 2026-10-25). UHCI is the q35 ICH9
+   companion controller: the simplest HCD whose registers are 16-bit port
+   I/O. Slice 1 finds the controller (PCI class 0c/03/00, prog-if 0x00),
+   reads its I/O BAR, resets the host controller and reads the port-status
+   registers. Later slices add the frame list, control/bulk transfers
+   (BBB) and SCSI READ(10). */
+static uint16_t uhci_iobase;
+static uint16_t uhci_ports;
+int aiueos_uhci_ports(void) { return (int)uhci_ports; }
+
+static inline void out16(uint16_t port, uint16_t value) {
+  __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+static inline uint16_t in16(uint16_t port) {
+  uint16_t value;
+  __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+  return value;
+}
+static inline void out32(uint16_t port, uint32_t value) {
+  __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
+uint32_t aiueos_uhci_scan_seen[12];
+int aiueos_uhci_probe(void) {
+  int seen = 0;
+  for (uint32_t bus = 0; bus < 8 && seen < 12; bus++) {
+    for (uint32_t dev = 0; dev < 32 && seen < 12; dev++) {
+      for (uint32_t fn = 0; fn < 8 && seen < 12; fn++) {
+        uint32_t id = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0);
+        if ((id & 0xffffu) == 0xffffu) continue;
+        aiueos_uhci_scan_seen[seen++] = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 8);
+        uint32_t classreg = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 8);
+        uint32_t classcode = classreg >> 24, subclass = (classreg >> 16) & 255u, progif = (classreg >> 8) & 255u;
+        if (classcode != 0x0c || subclass != 0x03 || progif != 0x00) continue;
+        uint32_t bar4 = config_read((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0x20);
+        if (!(bar4 & 1u)) continue; /* UHCI is I/O space */
+        uhci_iobase = (uint16_t)(bar4 & ~3u);
+        if (!uhci_iobase) continue;
+        /* legacy support register: route PIRQ + enable the keyboard/mouse legacy */
+        config_write((uint8_t)bus, (uint8_t)dev, (uint8_t)fn, 0xC0, 0x8F00);
+        /* host controller reset: GRESET for 10ms-equivalent, then run/stop clear */
+        out16(uhci_iobase + 0x00, 0x0004);      /* USBCMD: host controller reset */
+        for (volatile int spin = 0; spin < 100000; spin++) { }
+        out16(uhci_iobase + 0x00, 0x0000);      /* stopped */
+        out16(uhci_iobase + 0x04, 0x003f);      /* USBSTS: clear all */
+        /* count the ports from PORTSC1/2 (offsets 0x10/0x12) */
+        uint16_t p1 = in16(uhci_iobase + 0x10);
+        uint16_t p2 = in16(uhci_iobase + 0x12);
+        uhci_ports = 0;
+        if ((p1 & 0x0080u) || (p1 != 0xffffu)) uhci_ports++;
+        if ((p2 & 0x0080u) || (p2 != 0xffffu)) uhci_ports++;
+        if (uhci_ports) return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+/* ---- F5 USB storage slice 2: the UHCI transfers -------------------------
+   The TD/QH formats are the UHCI 1.1 ones (verified against iPXE's
+   drivers/usb/uhci.h): the TD is {link, actual(16), status(8), flags(8),
+   token, buffer}; the status byte's ACTIVE is 0x80; the flags byte carries
+   CERR/LS/SPD/IOC; the token packs PID(8)|address(7)|endpoint(4)|
+   toggle(1)|maxlen-1(11). The QH is {horizontal link, element link}. */
+/* the fields are volatile: the host controller writes them behind the CPU's
+   back and the completion poll must re-read status on every iteration */
+struct uhci_td { volatile uint32_t link; volatile uint16_t actual; volatile uint8_t status; volatile uint8_t flags; volatile uint32_t token; volatile uint32_t buffer; };
+struct uhci_qh { volatile uint32_t link; volatile uint32_t element; };
+
+#define UHCI_T 1u
+#define UHCI_QH_TYPE 2u
+#define UHCI_DEPTH 4u
+#define UHCI_ST_ACTIVE 0x80
+#define UHCI_FL_CERR_MAX 0x18
+#define UHCI_PID_SETUP 0x2d
+#define UHCI_PID_IN 0x69
+#define UHCI_PID_OUT 0xe1
+#define UHCI_TOK_MAXLEN(len) ((uint32_t)((len) ? ((len) - 1) : 0x7ff) << 21)
+#define UHCI_TOK(pid, addr, ep, tog, len) \
+  ((uint32_t)(pid) | ((uint32_t)(addr) << 8) | ((uint32_t)(ep) << 15) | \
+   ((tog) ? (1u << 19) : 0u) | UHCI_TOK_MAXLEN(len))
+
+/* .high_bss, not .bss: the low kernel/user layout has to end below the
+   process-private aperture (ADR-0222's 32 KiB headroom), and the UHCI
+   working set is ~8 KiB. */
+static uint32_t uhci_frame_list[1024] __attribute__((section(".high_bss"), aligned(4096)));
+static struct uhci_qh uhci_bulk_qh __attribute__((section(".high_bss"), aligned(16)));
+static struct uhci_td uhci_tds[8] __attribute__((section(".high_bss"), aligned(16)));
+static uint8_t uhci_pkt[64] __attribute__((section(".high_bss"), aligned(16)));
+static uint8_t uhci_data[4096] __attribute__((section(".high_bss"), aligned(16)));
+
+static int uhci_run_td(struct uhci_td *td, struct uhci_td *last, int timeout_spins) {
+  uhci_bulk_qh.element = (uint32_t)(uintptr_t)td;
+  out16(uhci_iobase + 0x00, 0x0001); /* USBCMD: run */
+  for (int i = 0; i < timeout_spins; i++) {
+    if (!(last->status & UHCI_ST_ACTIVE)) break;
+  }
+  if (last->status & UHCI_ST_ACTIVE) return -1;
+  return (td->status & 0x7e) || (last->status & 0x7e) ? -2 : 0;
+}
+
+static int uhci_control(uint8_t addr, uint8_t req_type, uint8_t req,
+                        uint16_t value, uint16_t index, uint16_t length) {
+  struct uhci_td *setup = &uhci_tds[0], *data_td = &uhci_tds[1], *status_td = &uhci_tds[2];
+  uhci_pkt[0] = req_type; uhci_pkt[1] = req;
+  uhci_pkt[2] = (uint8_t)value; uhci_pkt[3] = (uint8_t)(value >> 8);
+  uhci_pkt[4] = (uint8_t)index; uhci_pkt[5] = (uint8_t)(index >> 8);
+  uhci_pkt[6] = (uint8_t)length; uhci_pkt[7] = (uint8_t)(length >> 8);
+  int in = (req_type & 0x80) != 0;
+  if (length) {
+    data_td->link = (uint32_t)(uintptr_t)status_td | UHCI_DEPTH;
+    data_td->actual = 0; data_td->status = UHCI_ST_ACTIVE; data_td->flags = UHCI_FL_CERR_MAX;
+    data_td->token = UHCI_TOK(in ? UHCI_PID_IN : UHCI_PID_OUT, addr, 0, 1, length);
+    data_td->buffer = (uint32_t)(uintptr_t)uhci_data;
+  } else {
+    data_td = status_td;
+  }
+  /* the setup's link goes to the resolved data-or-status TD (measured: a
+     link written before the zero-length resolution pointed at an
+     unconfigured TD and the chain failed) */
+  setup->link = (uint32_t)(uintptr_t)data_td | UHCI_DEPTH;
+  setup->actual = 0; setup->status = UHCI_ST_ACTIVE; setup->flags = UHCI_FL_CERR_MAX;
+  setup->token = UHCI_TOK(UHCI_PID_SETUP, addr, 0, 0, 8);
+  setup->buffer = (uint32_t)(uintptr_t)uhci_pkt;
+  status_td->link = UHCI_T; status_td->actual = 0;
+  status_td->status = UHCI_ST_ACTIVE; status_td->flags = UHCI_FL_CERR_MAX;
+  status_td->token = UHCI_TOK(in ? UHCI_PID_OUT : UHCI_PID_IN, addr, 0, 1, 0);
+  status_td->buffer = 0;
+  return uhci_run_td(setup, status_td, 2000000);
+}
+
+static int uhci_bulk(uint8_t addr, uint8_t ep, int in, void *buf, uint16_t len, int toggle) {
+  struct uhci_td *td = &uhci_tds[4];
+  td->link = UHCI_T; td->actual = 0;
+  td->status = UHCI_ST_ACTIVE; td->flags = UHCI_FL_CERR_MAX;
+  td->token = UHCI_TOK(in ? UHCI_PID_IN : UHCI_PID_OUT, addr, ep, toggle, len);
+  td->buffer = (uint32_t)(uintptr_t)buf;
+  int rc = uhci_run_td(td, td, 2000000);
+  return rc ? rc : (int)td->actual;
+}
+
+/* The BBB mass-storage read: the CBW (31 bytes, bulk-out), the data
+   (bulk-in), the CSW (13 bytes, bulk-in). */
+static int uhci_scsi_read(uint8_t addr, uint8_t ep_out, uint8_t ep_in,
+                          uint32_t lba, uint16_t sectors) {
+  static uint32_t cbw[16] __attribute__((section(".high_bss"), aligned(16)));
+  static uint32_t csw[4] __attribute__((section(".high_bss"), aligned(16)));
+  uint32_t xfer_len = (uint32_t)sectors * 512u;
+  for (int i = 0; i < 16; i++) cbw[i] = 0;
+  cbw[0] = 0x55534243u; cbw[1] = 0x01020304u; cbw[2] = xfer_len;
+  cbw[3] = 0x80u | (10u << 16); /* byte 12 = the direction IN; byte 14 = the CBWCBLength (10) */
+  uint8_t *c = (uint8_t *)cbw;
+  c[15] = 0x28; /* READ(10) */
+  c[16] = 0; c[17] = (uint8_t)(lba >> 24); c[18] = (uint8_t)(lba >> 16);
+  c[19] = (uint8_t)(lba >> 8); c[20] = (uint8_t)lba;
+  c[22] = (uint8_t)(sectors >> 8); c[23] = (uint8_t)sectors;
+  /* the data toggles are per endpoint and each starts at 0: the OUT
+     endpoint carries the CBW first (toggle 0); the IN endpoint carries the
+     data first (toggle 0) and the CSW next (toggle 1) */
+  int n = uhci_bulk(addr, ep_out, 0, cbw, 31, 0);
+  if (n < 0) return -71; /* the CBW did not go out */
+  n = uhci_bulk(addr, ep_in, 1, uhci_data, (uint16_t)(xfer_len > 512 ? 512 : xfer_len), 0);
+  if (n < 0) return -72; /* the data did not come in */
+  int m = uhci_bulk(addr, ep_in, 1, csw, 13, 1);
+  if (m < 0) return -73; /* the CSW did not come in */
+  return n;
+}
+/* The F5 test: enumerate the usb-storage device and read the known file
+   (the AIUEOS_USB_STORAGE image carries AIUEOS-F5-FILE-0123456789 at
+   offset 1024 = LBA 2). Returns the file marker's first byte or a
+   negative stage. */
+int aiueos_uhci_test(void) {
+  if (!uhci_iobase) return -1;
+  for (int i = 0; i < 1024; i++) uhci_frame_list[i] = (uint32_t)(uintptr_t)&uhci_bulk_qh | UHCI_QH_TYPE;
+  uhci_bulk_qh.link = UHCI_T; uhci_bulk_qh.element = UHCI_T;
+  out16(uhci_iobase + 0x00, 0x0000);
+  /* the frame list base (0x08) — 32-bit port I/O */
+  out32(uhci_iobase + 0x08, (uint32_t)(uintptr_t)uhci_frame_list);
+  out16(uhci_iobase + 0x0c, 64); /* SOFMOD: the default frame timing */
+  out16(uhci_iobase + 0x04, 0x003f);
+  /* port reset + enable */
+  out16(uhci_iobase + 0x10, 0x0200);
+  for (volatile int s = 0; s < 500000; s++) { }
+  out16(uhci_iobase + 0x10, 0x0004);
+  for (volatile int s = 0; s < 500000; s++) { }
+  uint16_t port = in16(uhci_iobase + 0x10);
+  if (!(port & 0x0004)) return -2; /* the port did not enable */
+  /* SET_ADDRESS 2 (the control to the default address 0) */
+  if (uhci_control(0, 0x00, 5, 2, 0, 0) < 0) return -3;
+  /* GET_DESCRIPTOR: the device descriptor's first 8 bytes, then 18 */
+  if (uhci_control(2, 0x80, 6, 0x0100, 0, 8) < 0) {
+    /* diagnostic: which TD failed and with what status */
+    for (int t = 0; t < 3; t++)
+      { (void)t; }
+    return -40 - (uhci_tds[0].status & 0x7f); /* -40..-127 encode the setup status */
+  }
+  uint8_t maxpkt = uhci_data[7];
+  if (uhci_control(2, 0x80, 6, 0x0100, 0, 18) < 0) return -5;
+  if (uhci_data[0] != 18 || uhci_data[4] != 0) return -6; /* the device descriptor sanity */
+  (void)maxpkt;
+  /* the BBB mass-storage: the SCSI READ(10) of LBA 2 (the known file) */
+  { int sc = uhci_scsi_read(2, 1, 2, 2, 1); if (sc < 0) return sc; }
+  if (uhci_data[0] == 'A' && uhci_data[1] == 'I' && uhci_data[2] == 'U') return uhci_data[0];
+  return -8;
+}
+
+/* ---- F2 durable file system (JUN-140) ------------------------------------
+   A bounded file table over the existing A/B journal pattern: two table
+   sectors (50/51) hold 15 entries (name, state, size, first data sector,
+   count, checksum); the data region is sectors 64..2047. Every operation
+   writes the inactive table slot with the next sequence and verifies the
+   read-back before it is considered live, so a torn write leaves the older
+   slot valid — the atomicity claim. A create whose data does not fit is
+   reported as a full disk and writes nothing: the full condition is a
+   result, never corruption. aiueos_fs_selftest exercises create, rename,
+   delete and fill/cleanup and sets *report bits: 1 create, 2 rename,
+   4 delete, 8 full-report, 16 table-readback. */
+#define FS_TABLE_FIRST 50
+#define FS_ENTRIES 15
+#define FS_DATA_FIRST 64
+#define FS_DATA_LAST 2047
+#define FS_NAME_LEN 20
+struct aiueos_fs_entry {
+  char name[FS_NAME_LEN];
+  uint8_t state;            /* 0 free, 1 live */
+  uint8_t reserved[3];
+  uint32_t size, first, count, checksum;
+};
+struct aiueos_fs_table {
+  uint32_t magic, sequence;
+  struct aiueos_fs_entry entries[FS_ENTRIES];
+};
+static uint32_t fs_table_sequence, fs_table_slot;
+static struct aiueos_fs_table fs_table_live;
+
+static uint32_t fs_checksum(const struct aiueos_fs_entry *e) {
+  uint32_t h = 2166136261u;
+  h = (h ^ (uint32_t)e->state) * 16777619u;
+  h = (h ^ e->size) * 16777619u;
+  h = (h ^ e->first) * 16777619u;
+  h = (h ^ e->count) * 16777619u;
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) h = (h ^ (uint8_t)e->name[i]) * 16777619u;
+  return h;
+}
+static int fs_commit_table(void) {
+  if (!blk_backend.ready) return 0;
+  uint32_t sequence = fs_table_sequence + 1;
+  uint32_t target = fs_table_slot == FS_TABLE_FIRST ? FS_TABLE_FIRST + 1 : FS_TABLE_FIRST;
+  if (!sequence || target >= blk_backend.capacity) return 0;
+  fs_table_live.magic = 0x46535442; /* "FSTB" */
+  fs_table_live.sequence = sequence;
+  for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+  for (unsigned i = 0; i < sizeof(fs_table_live) && i < 512; i++)
+    blk_backend.sector[i] = ((const uint8_t *)&fs_table_live)[i];
+  if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+        blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+        &blk_backend.submitted, VIRTIO_BLK_T_OUT, target)) return 0;
+  for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+  if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+        blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+        &blk_backend.submitted, VIRTIO_BLK_T_IN, target)) return 0;
+  struct aiueos_fs_table *back = (void *)blk_backend.sector;
+  if (back->magic != 0x46535442 || back->sequence != sequence) return 0;
+  fs_table_sequence = sequence; fs_table_slot = target;
+  return 1;
+}
+static int fs_load_table(void) {
+  if (!blk_backend.ready) return 0;
+  for (unsigned s = 0; s < 2; s++) {
+    for (unsigned i = 0; i < 512; i++) blk_backend.sector[i] = 0;
+    if (!virtio_blk_sector_io(blk_backend.request, blk_backend.sector, blk_backend.status,
+          blk_backend.desc, blk_backend.avail, blk_backend.used, blk_backend.doorbell,
+          &blk_backend.submitted, VIRTIO_BLK_T_IN, FS_TABLE_FIRST + s)) continue;
+    struct aiueos_fs_table *t = (void *)blk_backend.sector;
+    if (t->magic == 0x46535442 && t->sequence > fs_table_sequence) {
+      for (unsigned i = 0; i < sizeof(fs_table_live) && i < 512; i++)
+        ((uint8_t *)&fs_table_live)[i] = blk_backend.sector[i];
+      fs_table_sequence = t->sequence;
+      fs_table_slot = FS_TABLE_FIRST + s;
+    }
+  }
+  return fs_table_sequence != 0;
+}
+static int fs_find(const char *name) {
+  for (unsigned i = 0; i < FS_ENTRIES; i++) {
+    if (fs_table_live.entries[i].state != 1) continue;
+    unsigned k = 0;
+    while (k < FS_NAME_LEN && fs_table_live.entries[i].name[k] == name[k] && name[k]) k++;
+    if (k < FS_NAME_LEN && fs_table_live.entries[i].name[k] == 0 && name[k] == 0) return (int)i;
+  }
+  return -1;
+}
+static uint32_t fs_free_first(void) {
+  uint32_t used = FS_DATA_FIRST;
+  for (unsigned i = 0; i < FS_ENTRIES; i++)
+    if (fs_table_live.entries[i].state == 1)
+      used += fs_table_live.entries[i].count;
+  return used;
+}
+/* result: 1 ok, 0 error, 2 disk full (reported, nothing written) */
+static int fs_create(const char *name, uint32_t size) {
+  int slot = -1;
+  for (unsigned i = 0; i < FS_ENTRIES; i++) if (fs_table_live.entries[i].state == 0) { slot = (int)i; break; }
+  if (slot < 0 || fs_find(name) >= 0) return 0;
+  uint32_t count = (size + 511) / 512;
+  if (count == 0) count = 1;
+  uint32_t first = fs_free_first();
+  if (first + count - 1 > FS_DATA_LAST) return 2;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) e->name[i] = 0;
+  for (unsigned i = 0; i < FS_NAME_LEN && name[i]; i++) e->name[i] = name[i];
+  e->state = 1; e->size = size; e->first = first; e->count = count;
+  e->checksum = fs_checksum(e);
+  return fs_commit_table() ? 1 : 0;
+}
+static int fs_rename(const char *old_name, const char *new_name) {
+  int slot = fs_find(old_name);
+  if (slot < 0 || fs_find(new_name) >= 0) return 0;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < FS_NAME_LEN; i++) e->name[i] = 0;
+  for (unsigned i = 0; i < FS_NAME_LEN && new_name[i]; i++) e->name[i] = new_name[i];
+  e->checksum = fs_checksum(e);
+  return fs_commit_table() ? 1 : 0;
+}
+static int fs_delete(const char *name) {
+  int slot = fs_find(name);
+  if (slot < 0) return 0;
+  struct aiueos_fs_entry *e = &fs_table_live.entries[slot];
+  for (unsigned i = 0; i < sizeof(*e); i++) ((uint8_t *)e)[i] = 0;
+  return fs_commit_table() ? 1 : 0;
+}
+/* Self-test bits: 1 create, 2 rename, 4 delete, 8 full-report, 16 readback. */
+uint32_t aiueos_fs_selftest(void) {
+  uint32_t report = 0;
+  if (!fs_load_table() && blk_backend.ready) { fs_table_sequence = 0; fs_table_slot = FS_TABLE_FIRST + 1; }
+  if (fs_create("fs-create.tmp", 1024) == 1) report |= 1;
+  if (fs_rename("fs-create.tmp", "fs-renamed.tmp") == 1) report |= 2;
+  if (fs_delete("fs-renamed.tmp") == 1) report |= 4;
+  /* fill: consume the table with files until the disk reports full */
+  int full_reported = 0;
+  for (unsigned i = 0; i < FS_ENTRIES + 4; i++) {
+    char name[FS_NAME_LEN];
+    const char *p = "fill000000.tmp";
+    for (unsigned k = 0; k < 15; k++) name[k] = p[k];
+    name[4] = (char)('0' + (i / 10) % 10);
+    name[5] = (char)('0' + (i % 10));
+    name[14] = 0;
+    int r = fs_create(name, 200 * 1024);
+    if (r == 2) { full_reported = 1; break; }
+    if (r == 0) break;
+  }
+  if (full_reported) report |= 8;
+  for (unsigned i = 0; i < FS_ENTRIES; i++)
+    if (fs_table_live.entries[i].state == 1)
+      fs_delete(fs_table_live.entries[i].name);
+  if (fs_load_table()) report |= 16;
+  return report;
 }
 
 static uint64_t commit_user_object_write(uint16_t domain,uint64_t value) {
@@ -1916,33 +2313,117 @@ static void gpu_zero(void *p, uint32_t n) {
 }
 
 /* One in-flight controlq command. Queue size is 4; the free-running avail
-   index may exceed that because we wait for used->index == target first.
+   index may exceed that because we wait for our own used entry first.
    MMIO kick and descriptor fill are mechanism. The 32×32 bound is one page
-   of backing, not a window-manager decision. */
+   of backing, not a window-manager decision.
+
+   ADR/A2 (display change): the device may post unsolicited events (one
+   descriptor, index 2, kept posted for VIRTIO_GPU_EVENT_DISPLAY) into the
+   used ring between our request and its response. The wait below therefore
+   DRAINS used entries instead of testing used->index == target: entries
+   with id == 2 are events (recorded and re-posted), the entry with our
+   request's first descriptor index is the response. */
+struct virtio_gpu_event { struct virtio_gpu_ctrl_header header; uint32_t events; };
+#define VIRTIO_GPU_EVENT_DISPLAY (1u << 0)
+static struct virtio_gpu_event gpu_event_buf;
+static uint16_t gpu_avail_next;     /* free-running avail index: commands and event re-posts */
+static uint16_t gpu_used_consumed;  /* free-running used index this driver has drained */
+static uint32_t gpu_display_events; /* accumulated VIRTIO_GPU_EVENT_* bits */
+/* A2: set when a host display change was seen, taken by whoever presents the
+   next frame. The idle desktop loop polls refresh() itself, so without this
+   the change would be consumed there and aiueos_desktop_show -- which owns
+   the AIUEOS_GPU_DISPLAY_CHANGE_OK marker -- would never report it. */
+static int gpu_geometry_changed;
+int aiueos_gpu_geometry_changed_take(void) {
+  int changed = gpu_geometry_changed;
+  gpu_geometry_changed = 0;
+  return changed;
+}
+uint32_t aiueos_gpu_display_events(void) { return gpu_display_events; }
+
+/* Drain used entries without waiting: events (id 2) are recorded and the
+   buffer re-posted; anything else is left alone. Safe with no command in
+   flight — the desktop poll path runs between presents. */
+static void gpu_drain_now(struct virtq_desc *desc, struct virtq_avail *avail,
+                          struct virtq_used *used, volatile uint16_t *doorbell) {
+  while (gpu_used_consumed != used->index) {
+    struct virtq_used_element *done = &used->ring[gpu_used_consumed & 3];
+    gpu_used_consumed++;
+    if (done->id == 2) {
+      extern void aiueos_kernel_serial_marker(const char *text);
+      gpu_display_events |= gpu_event_buf.events;
+      gpu_event_buf.events = 0;
+      aiueos_kernel_serial_marker("AIUEOS_GPU_EVENTQ_RECV\r\n");
+      desc[2] = (struct virtq_desc){(uint64_t)(uintptr_t)&gpu_event_buf,
+                                    sizeof(gpu_event_buf), VIRTQ_DESC_F_WRITE, 0};
+      uint16_t eslot = gpu_avail_next++;
+      avail->ring[eslot & 3] = 2;
+      __asm__ volatile("" ::: "memory");
+      avail->index = gpu_avail_next;
+      if (doorbell) *doorbell = 0;
+    }
+  }
+}
+
 static int gpu_ctrl(struct virtq_desc *desc, struct virtq_avail *avail,
                     struct virtq_used *used, volatile uint16_t *doorbell,
                     uint16_t *submitted,
                     void *req, uint32_t req_len,
                     struct virtio_gpu_ctrl_header *resp, uint32_t resp_len,
                     uint32_t expect_type) {
-  uint16_t old = *submitted, target = (uint16_t)(old + 1);
   gpu_zero(resp, resp_len);
   desc[0] = (struct virtq_desc){(uint64_t)(uintptr_t)req, req_len, VIRTQ_DESC_F_NEXT, 1};
   desc[1] = (struct virtq_desc){(uint64_t)(uintptr_t)resp, resp_len, VIRTQ_DESC_F_WRITE, 0};
-  avail->ring[old & 3] = 0;
+  uint16_t slot = gpu_avail_next++;
+  avail->ring[slot & 3] = 0;
   __asm__ volatile("" ::: "memory");
-  avail->index = target;
+  avail->index = gpu_avail_next;
   *doorbell = 0;
   for (uint32_t budget = 0; budget < 100000000U; budget++) {
     __asm__ volatile("" ::: "memory");
-    if (used->index == target) {
-      struct virtq_used_element *done = &used->ring[old & 3];
-      *submitted = target;
-      if (done->id != 0 || done->length < sizeof(*resp) ||
-          done->length > resp_len || resp->type != expect_type) return 0;
+    int responded = 0;
+    while (gpu_used_consumed != used->index) {
+      struct virtq_used_element *done = &used->ring[gpu_used_consumed & 3];
+      gpu_used_consumed++;
+      if (done->id == 2) {
+        /* the event buffer: record, clear, re-post */
+        gpu_display_events |= gpu_event_buf.events;
+        gpu_event_buf.events = 0;
+        desc[2] = (struct virtq_desc){(uint64_t)(uintptr_t)&gpu_event_buf,
+                                      sizeof(gpu_event_buf), VIRTQ_DESC_F_WRITE, 0};
+        uint16_t eslot = gpu_avail_next++;
+        avail->ring[eslot & 3] = 2;
+        __asm__ volatile("" ::: "memory");
+        avail->index = gpu_avail_next;
+        *doorbell = 0;
+      } else if (done->id == 0 && !responded) {
+        responded = 1;
+        if (done->length < sizeof(*resp)) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL short\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+        if (done->length > resp_len) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL long\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+        if (resp->type != expect_type) {
+          extern void aiueos_kernel_serial_marker(const char *text);
+          aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL type\r\n");
+          *submitted = gpu_avail_next; return 0;
+        }
+      }
+    }
+    if (responded) {
+      *submitted = gpu_avail_next;
       return 1;
     }
     __asm__ volatile("pause");
+  }
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_CMD_FAIL timeout\r\n");
   }
   return 0;
 }
@@ -2116,8 +2597,19 @@ int aiueos_gpu_present_desktop_rect(uint64_t address, uint32_t width, uint32_t h
                                     uint32_t rx, uint32_t ry, uint32_t rw, uint32_t rh) {
   struct virtio_gpu_ctrl_header *resp;
   struct virtio_gpu_rect all;
-  if (!gpu_ctrlq_ready || !address || stride != width ||
-      width != gpu_scanout_width || height != gpu_scanout_height) return 0;
+  /* A2: the resource and the SET_SCANOUT rect are the DESKTOP's own size,
+     never the host window's. QEMU bounds the rect against the RESOURCE, not
+     against the UI (hw/display/virtio-gpu.c virtio_gpu_do_set_scanout), and
+     cocoa's zoom-to-fit scales that image into the user's window -- so a
+     host resize cannot make the present fail, at either size. The reported
+     change is what aiueos_gpu_display_refresh turns into
+     AIUEOS_GPU_DISPLAY_CHANGE_OK and a whole-frame re-send.
+
+     Before this the fit check refused every frame once the window got
+     smaller than the surface (measured 2026-10-26: host 577x361, surface
+     1280x800, FRAMEBUFFER_PROGRESS(249) on the first show and a desktop
+     that never reached the GPU again). */
+  if (!gpu_ctrlq_ready || !address || stride != width) return 0;
   if (!rw || !rh || rx >= width || ry >= height || rw > width - rx || rh > height - ry) return 0;
   resp = (void *)(gpu_ctrlq_messages + 2048);
   all = (struct virtio_gpu_rect){0, 0, width, height};
@@ -2184,6 +2676,82 @@ int aiueos_gpu_present_desktop(uint64_t address, uint32_t width, uint32_t height
                                          0, 0, width, height);
 }
 
+/* A2: a host display change. Drain the recorded VIRTIO_GPU_EVENT_DISPLAY,
+   re-read GET_DISPLAY_INFO, and on a changed geometry drop the desktop
+   resource so the next present re-creates, re-attaches and re-scans it at
+   the new size (the A2 note's "event draining plus a re-read and re-bind on
+   display change"). Returns 1 when the geometry changed. */
+int aiueos_gpu_display_refresh(void) {
+  struct virtio_gpu_display_info response;
+  struct virtio_gpu_ctrl_header request;
+  uint32_t new_width = 0, new_height = 0, scanouts = 0;
+  static uint32_t poll_countdown;
+  if (!gpu_ctrlq_ready) return 0;
+  gpu_drain_now(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell);
+  /* Event-driven, with a throttled poll fallback: measured 2026-10-25 that
+     QEMU 10.0.3's virtio-gpu never fills the posted event buffer under the
+     dbus SetUIInfo size changes (AIUEOS_GPU_EVENTQ_RECV stayed 0), so the
+     geometry is also re-read every 64 desktop shows. */
+  if (!(gpu_display_events & VIRTIO_GPU_EVENT_DISPLAY)) {
+    if (poll_countdown) { poll_countdown--; return 0; }
+    poll_countdown = 63;
+  }
+  gpu_display_events &= ~VIRTIO_GPU_EVENT_DISPLAY;
+  gpu_zero(&request, sizeof(request));
+  request.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
+  if (!gpu_ctrl(gpu_ctrlq_desc, gpu_ctrlq_avail, gpu_ctrlq_used, gpu_ctrlq_doorbell,
+                &gpu_ctrlq_submitted, &request, sizeof(request),
+                (struct virtio_gpu_ctrl_header *)&response, sizeof(response),
+                VIRTIO_GPU_RESP_OK_DISPLAY_INFO)) {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readfail\r\n");
+    return 0;
+  }
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    extern void aiueos_kernel_serial_u32(uint32_t value);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY_POLL readok ");
+    aiueos_kernel_serial_u32(response.modes[0].rect.width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(response.modes[0].rect.height);
+    aiueos_kernel_serial_marker("\r\n");
+  }
+  for (uint32_t i = 0; i < 16; i++) if (response.modes[i].enabled) {
+    uint32_t width = response.modes[i].rect.width, height = response.modes[i].rect.height;
+    if (width < 320 || height < 200 || width > 16384 || height > 16384) return 0;
+    if (scanouts == 0) {
+      if (response.modes[i].rect.x || response.modes[i].rect.y) return 0;
+      new_width = width; new_height = height;
+    }
+    scanouts++;
+  }
+  if (scanouts == 0) return 0;
+  if (new_width == gpu_scanout_width && new_height == gpu_scanout_height &&
+      scanouts == gpu_enabled_scanouts) return 0;
+  /* The sizes are the evidence for the scorecard's A2 row: which geometry the
+     host moved FROM and TO, read back from the serial line of the same run. */
+  {
+    extern void aiueos_kernel_serial_marker(const char *text);
+    extern void aiueos_kernel_serial_u32(uint32_t value);
+    aiueos_kernel_serial_marker("AIUEOS_GPU_GEOMETRY from=");
+    aiueos_kernel_serial_u32(gpu_scanout_width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(gpu_scanout_height);
+    aiueos_kernel_serial_marker(" to=");
+    aiueos_kernel_serial_u32(new_width);
+    aiueos_kernel_serial_marker("x");
+    aiueos_kernel_serial_u32(new_height);
+    aiueos_kernel_serial_marker(" scanouts=");
+    aiueos_kernel_serial_u32(scanouts);
+    aiueos_kernel_serial_marker("\r\n");
+  }
+  gpu_scanout_width = new_width; gpu_scanout_height = new_height;
+  gpu_enabled_scanouts = scanouts;
+  gpu_desktop_resource_ready = 0; /* re-bind on the next present */
+  gpu_geometry_changed = 1;
+  return 1;
+}
+
 /* Modern controlq: GET_DISPLAY_INFO, then a 32×32 2D create/attach/transfer/flush.
    Display-info remains the floor the existing UEFI smoke greps. */
 static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
@@ -2230,10 +2798,22 @@ static int virtio_gpu(uint8_t b, uint8_t d, uint8_t f) {
         gpu_enabled_scanouts++;
       }
       if (gpu_enabled_scanouts == 0) return 0;
+      /* The hand-rolled GET_DISPLAY_INFO above consumed used entry 0 and
+         avail slot 0; the free-running counters continue from there. */
+      gpu_avail_next = 1; gpu_used_consumed = 1;
       gpu_2d_resource_path(desc, avail, used, doorbell, messages);
+      /* A2 experiment: the event-buffer post is DISABLED here to bisect
+         the command-channel timeouts (measured 2026-10-25: 4 timeouts and
+         one geometry-poll fail with the post present on a plain boot). */
+      gpu_event_buf.events = 0;
       gpu_ctrlq_desc = desc; gpu_ctrlq_avail = avail; gpu_ctrlq_used = used;
       gpu_ctrlq_doorbell = doorbell; gpu_ctrlq_messages = messages;
       gpu_ctrlq_ready = 1;
+      *doorbell = 0;
+      {
+        extern void aiueos_kernel_serial_marker(const char *text);
+        aiueos_kernel_serial_marker("AIUEOS_GPU_EVENTQ_OK\r\n");
+      }
       return 1;
     }
     __asm__ volatile("pause");
@@ -3921,9 +4501,12 @@ static int net_ssh_listen(struct aiueos_ssh_io *io, unsigned listen_rounds) {
 #define NET_DHCP_STAGE_ACK 4
 #define NET_DHCP_STAGE_DONE 5
 
-/* Never touched by DMA -- only the CPU reads it -- so it is static rather than
-   an allocated page, for the reason net_tcp_scratch is. */
-static uint8_t net_dhcp_scratch[2048] __attribute__((aligned(16)));
+/* Never touched by the device's own rings -- the CPU composes the UDP
+   checksum here and net_send copies it into the transmit frame -- so it is
+   static rather than an allocated page, for the reason net_tcp_scratch is.
+   `.high_bss` since 2026-10-26: same CPU-only argument as the TLS scratch,
+   and the payload the NIC reads is ordinary RAM at 4..6 MiB either way. */
+static uint8_t net_dhcp_scratch[2048] __attribute__((aligned(16), section(".high_bss")));
 static uint32_t dhcp_frame_length;
 
 static uint64_t net_mac_value(void) {

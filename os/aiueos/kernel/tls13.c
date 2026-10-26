@@ -36,9 +36,13 @@ extern uint64_t kotoba_aiueos_tls13_record(uint8_t *, uint64_t, uint8_t *,
 #define AIUEOS_TLS_HIGH_BSS __attribute__((section(".high_bss")))
 #endif
 
-static uint8_t sha_ws[512];
-static uint8_t x_ws[646];
-static uint8_t ecdsa_ws[2048];
+/* `.high_bss` (4..6 MiB), not `.bss`: the 2026-10-26 merge of main into the
+   scorecard branch pushed `aiueos_low_end` to 0x1f5000, one page past
+   linker.ld's 0x1f4000 assert. These three are CPU-only scratch reached from
+   the selftests and the handshake, both after `main.c` zeroes the section. */
+static uint8_t TLS_SCRATCH sha_ws[512];
+static uint8_t TLS_SCRATCH x_ws[646];
+static uint8_t TLS_SCRATCH ecdsa_ws[2048];
 static uint8_t leaf_pub[64];
 static int have_leaf_pub;
 static int certverify_ok;
@@ -76,9 +80,9 @@ static uint32_t ch_record_len;
    Keeping bounded copies here lets the physical RTL8125 profile use the same
    record engine without retaining pointers to transient boot memory. The
    default below preserves the original kotobase smoke byte-for-byte. */
-static uint8_t configured_host[TLS_HOST_MAX];
+static uint8_t configured_host[TLS_HOST_MAX] AIUEOS_TLS_HIGH_BSS;
 static uint32_t configured_host_len;
-static uint8_t configured_http[TLS_HTTP_MAX];
+static uint8_t configured_http[TLS_HTTP_MAX] AIUEOS_TLS_HIGH_BSS;
 static uint32_t configured_http_len;
 static uint8_t configured_random[32];
 static uint8_t configured_scalar[32];
@@ -805,7 +809,7 @@ int aiueos_tls13_ecdsa_selftest(void) {
     0xf2,0xf1,0xb2,0x0c,0x2d,0x7e,0x9f,0x51,0x77,0xa3,0xc2,0x94,0xd4,0x46,0x22,0x99};
   uint8_t bad[64];
   uint32_t i;
-  static uint8_t ws[2048];
+  static uint8_t ws[2048] AIUEOS_TLS_HIGH_BSS;
   if (!kotoba_aiueos_ecdsa_p256_sha256_verify(sig, digest, pub, ws, 2048)) return 0;
   copy_bytes(bad, sig, 64);
   bad[63] = (uint8_t)(bad[63] + 1);

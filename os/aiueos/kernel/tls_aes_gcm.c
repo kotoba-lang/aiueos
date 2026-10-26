@@ -1,5 +1,14 @@
 #include "tls_aes_gcm.h"
 
+/* The kernel build puts movable scratch in the `.high_bss` 4..6 MiB window
+   (linker.ld); the host-side known-answer build is a userland binary with no
+   such section, so it keeps a plain static. */
+#ifdef AIUEOS_TLS_AES_GCM_HOST_TEST
+#define AIUEOS_GCM_HIGH_BSS
+#else
+#define AIUEOS_GCM_HIGH_BSS __attribute__((section(".high_bss")))
+#endif
+
 /* AES-128-GCM is `os/aiueos/kotoba/aes128-gcm.kotoba`, compiled to
    `kotoba_aiueos_aes128_gcm` (ADR-0132), and its boot known-answer test is
    `kotoba/aes128-gcm-selftest.kotoba` (ADR-0220). What is left in this file
@@ -96,8 +105,10 @@ int aiueos_aes128_gcm_selftest(void) {
      ciphertext left in place, and the 20-byte-AAD tag -- run at boot over
      the SAME core module the linked cipher object is built from. Zero is
      every step agreeing; a non-zero answer is the number of the step that
-     did not. The scratch is .bss for the same reason gcm_ctx is. */
-  static uint8_t scratch[1536];
+     did not. gcm_ctx stays .bss; the scratch moved to `.high_bss` on
+     2026-10-26 because the merged tree was one page over the low-region
+     budget, and this buffer zeroes itself before every use. */
+  static uint8_t scratch[1536] AIUEOS_GCM_HIGH_BSS;
   uint32_t i;
   for (i = 0; i < sizeof(scratch); i++) scratch[i] = 0;
   return kotoba_aiueos_aes128_gcm_selftest(scratch, (int64_t)sizeof(scratch)) == 0;

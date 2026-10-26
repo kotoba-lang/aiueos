@@ -40,10 +40,20 @@
 (def DURABLE-CONFIG (path/join OCI-DIR "config-jun-durable"))
 (def SESSION-CONFIG (path/join OCI-DIR "config"))
 (def REGION (or (aget (.-env js/process) "OCI_REGION") "ap-tokyo-1"))
+;; payload は JUN-31 acceptance pin（selfhost-proven image）の pack を既定にする。
+;; 旧 20261023 pack（qcow2 591b7c76…）は selfhost 証明前で compiler-lineage が無いので
+;; 既定から外す（2026-10-25 payload refresh の finding）。明示する場合は JUN34_ARTIFACT_DIR。
 (def ARTIFACT-DIR (or (aget (.-env js/process) "JUN34_ARTIFACT_DIR")
-                      (path/join HOME "github/workspaces/hermes/jun34-oci-payload-20261023")))
+                      (path/join HOME "github/workspaces/hermes/jun34-selfhost-payload-20261025")))
 (def QCOW2 (path/join ARTIFACT-DIR "aiueos-oci-boot.qcow2"))
-(def RECEIPT (path/join ARTIFACT-DIR "jun34-oci-artifact-receipt.json"))
+;; receipt は pack ごとに名前が違う（旧: jun34-oci-artifact-receipt.json /
+;; selfhost pack: jun34-selfhost-payload-receipt.json）。無い側は読まない。
+(def RECEIPT (let [primary (path/join ARTIFACT-DIR "jun34-oci-artifact-receipt.json")
+                   alt (path/join ARTIFACT-DIR "jun34-selfhost-payload-receipt.json")]
+               (cond
+                 (.existsSync fs primary) primary
+                 (.existsSync fs alt) alt
+                 :else primary)))
 (def STATE (path/join ARTIFACT-DIR "jun34-oci-state.json"))
 (def BOOT-LOG (path/join ARTIFACT-DIR "oci-boot-console-history.txt"))
 
