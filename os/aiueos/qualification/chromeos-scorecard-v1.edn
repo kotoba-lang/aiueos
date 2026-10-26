@@ -256,9 +256,9 @@
    :procedure "Two-finger scroll, tap-to-click, pinch, three-finger swipe on the reference touchpad."
    :expected "Each gesture does its ChromeOS action."
    :needs "A receipt or log and a screenshot or readback at the required level, kept with the run."
-   :status :unachieved :qemu-progress :none
-   :evidence []
-   }
+   :status :unachieved :qemu-progress :partial
+   :evidence ["gate guest-touchpad-gestures"]
+   :note "Measured 2026-10-26 on the reference VM (branch hermes/aiueos-tail-gates, commits e3d354f + 853ec16 + a602156): the gate gate browser-desktop-touchpad-gestures is green on its first run -- AIUEOS_COMPOSITOR_GUEST_BROWSER_TOUCHPAD_GESTURES_OK with AIUEOS_GUEST_BROWSER_GESTURE_OK events=6 frames=6 chain=25f5497d, all six FRAME lines at the scripted coordinates (three pinch steps at 640,0/640,1/640,2, two swipe steps at 640,0/640,1, one two-finger tap at 512,400), behind a green focus and scroll stage in the same run. Two-finger scroll itself was already covered by browser_scroll_stage (SCROLL_OK events=17, max=120). The row stays :unachieved for two reasons the gate's own leftover records: (1) the gestures are SCRIPTED by the kernel -- virtio-tablet has no multi-touch and QEMU's input-send-event sends only key/abs/rel/btn, so pinch and the three-finger swipe cannot arrive from the host at all (AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC, the same shape as AIUEOS_INPUT_SMOKE_SYNTHETIC); (2) the action does not happen yet: kotoba_aiueos_browser_reduce answers -5 for src 8/9/10, i.e. the Browser object refuses the kinds it does not know, and the frame is unchanged across all six events (ops=213 text-px=994 hash=78270fda). Binding a gesture to its action lives in browser-frame2, whose rebuild is the same object-toolchain wall as D8 (build-kotoba-native-desktop.sh --selfhost-desktop was retired 2026-10-23). :device evidence (a real touchpad) is open as well."}
   {:id :D4 :category :input :title "Japanese input"
    :weight 3 :required true :required-level :device
    :procedure "Type romaji; convert with Space; commit; use Hankaku/Zenkaku."

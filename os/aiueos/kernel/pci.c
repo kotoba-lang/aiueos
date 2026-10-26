@@ -2133,8 +2133,48 @@ int aiueos_tablet_drain(uint32_t rounds) {
    QEMU's virtio-tablet reports its wheel as REL_WHEEL +-1 and older ones as
    the gear buttons. One kind per batch, whatever the count in it; a button
    in the same batch wins. */
+/* D3 (scorecard row: touchpad gestures). virtio-tablet carries no multi-touch
+   and QEMU's input-send-event sends only key/abs/rel/btn, so a pinch, a
+   three-finger swipe and a two-finger tap cannot arrive from the host at all
+   -- there is nothing to inject. This is the same shape as
+   AIUEOS_INPUT_SMOKE_SYNTHETIC below: the transport above is real, this event
+   is test-only, and the receipt that cites it says so. The gesture stage arms
+   one gesture at a time; each call replays one scripted event through the
+   same API a wheel notch or a press takes, so the consumer cannot tell the
+   difference and the model table still has to hold.
+   Payload convention: kind 8 pinch (y = step index, x = centre), kind 9
+   three-finger swipe (x = direction, +1 right / -1 left, y = step), kind 10
+   two-finger tap (x, y = the point it clicks at, absolute tablet units). */
+#ifdef AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC
+static uint32_t tab_gest_at, tab_gest_live;
+static const uint8_t tab_gest_kind[6] = {8, 8, 8, 9, 9, 10};
+static const uint16_t tab_gest_x[6] = {640, 640, 640, 640, 640, 512};
+static const uint16_t tab_gest_y[6] = {0, 1, 2, 0, 1, 400};
+void aiueos_tablet_gesture_arm(void) { tab_gest_at = 0; tab_gest_live = 1; }
+uint32_t aiueos_tablet_gesture_done(void) { return tab_gest_live == 0; }
+#else
+void aiueos_tablet_gesture_arm(void) {}
+uint32_t aiueos_tablet_gesture_done(void) { return 1; }
+#endif
+
 uint32_t aiueos_tablet_next(uint32_t budget, uint32_t *x, uint32_t *y) {
   if (!tab_live) return 0;
+#ifdef AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC
+  /* scripted gestures outrank whatever the host had queued: the stage drains
+     the real tablet before arming, so anything left here is live input the
+     stage did not ask for. */
+  if (tab_gest_live) {
+    uint32_t k = tab_gest_at;
+    if (k >= sizeof(tab_gest_kind)) { tab_gest_live = 0; }
+    else {
+      *x = tab_gest_x[k];
+      *y = tab_gest_y[k];
+      tab_gest_at = k + 1;
+      if (tab_gest_at >= sizeof(tab_gest_kind)) tab_gest_live = 0;
+      return tab_gest_kind[k];
+    }
+  }
+#endif
   for (uint32_t i = 0; i < budget; i++) {
     __asm__ volatile("" ::: "memory");
     uint16_t n = tab_used->index;
