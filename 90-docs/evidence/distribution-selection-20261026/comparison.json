@@ -1,0 +1,55 @@
+{
+  "status": "PASS_SAME_CORE_DISTRIBUTIONS",
+  "aiueosBase": "5020ec48e77c9403d3bb6b688919dbe53f9e67d3",
+  "distributions": {
+    "aiueos": {
+      "bytes": 441,
+      "sha256": "e6f28efafd2539f624c2341861a48e9091fdecf64cf4e2f2ff54ff727b7e0cd7"
+    },
+    "awai": {
+      "bytes": 493,
+      "sha256": "91c0a557a56f8a977175bd46a6b29ea9daa90882357b7469e1af3f79dd38cfe4"
+    }
+  },
+  "artifacts": {
+    "font/aiueos-padded.fnt": {
+      "bytes": 524288,
+      "sha256": "2dec7f39b3e2daea96d595805adaa9ed45b96eca912c955b515067e30a435b5f"
+    },
+    "kernel/KERNEL.ELF": {
+      "bytes": 3313944,
+      "sha256": "ec72e01bd5233877235a55b64df3087c0c807e328f552310464863b817c5c875"
+    },
+    "kernel/BOOTX64.EFI": {
+      "bytes": 3866624,
+      "sha256": "a4a7370f48a8c752dbba24ce8ad45dbdab9f0277a0c8154c7df48ecdb3e3e43f"
+    },
+    "media/awai-native.img": {
+      "bytes": 8388608,
+      "sha256": "1e8a932f9b51523ce7d9dfffb7f2b21f732821f6e0b60ae8e9f10ff02e7f778b"
+    }
+  },
+  "sourceModuleCount": 30,
+  "defaultDistribution": "aiueos",
+  "unknownCLIRefusedBeforeOutput": true,
+  "unknownDirectCallRefusedBeforeOutput": true,
+  "architectureMismatchRefused": true,
+  "buildContainer": "81c0aac584c3e136c75a8da272f5d08e45e1f2ae00701fbce768f490dd22164b",
+  "compiler": {
+    "bytes": 3559936,
+    "sha256": "285c54f826d5f7f77db6827bc21c622c2c777cea252a1ba4816d8b01351807e1"
+  },
+  "sources": {
+    "os/aiueos/scripts/build-native-desktop.py": {
+      "bytes": 3452,
+      "sha256": "49c647c3b5655a556e0f47b70ebe536d1d697c03899e4d3b4e02f6a8e66770fb"
+    },
+    "os/aiueos/scripts/build-kotoba-native-desktop.sh": {
+      "bytes": 620,
+      "sha256": "90d36796cc9392d95686481316525fd38e0e229a1507222214c395a9b43e8135"
+    }
+  },
+  "installedPresetComponents": false,
+  "signedDistributionRelease": false,
+  "physicalHardware": false
+}
