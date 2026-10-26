@@ -339,6 +339,13 @@
              (= (bytes-at reply 4) 0))
       (bytes-slice reply 5 n) (bytes-empty))))
 
+(defn- file-present? [path :string] :bool
+  (let [request (string-concat "\u0000FS2\u0000F"
+                  (string-concat path "\u0000"))
+        metadata (typed-cap-call :fs/app-data :string :string request)]
+    (and (> (string-byte-length metadata) 5)
+         (= (string-substring metadata 0 5) "\u0000FS2\u0000"))))
+
 (defn- signed-release-shape? [receipt :document] :bool
   (let [signature (document-string-value (field receipt :signature-sha256))
         artifact (document-string-value (field receipt :receipt-sha256))
@@ -376,12 +383,34 @@
             (if (option-value-of [:option :bool] green false)
               (recur (+ i 1)) false)))))))
 
+(defn- serial-file-digest? [path :string expected :string] :bool
+  (if (not (file-present? path)) false
+    (let [data (read-file-bytes path)]
+      (and (> (bytes-count data) 0)
+           (string=? (sh-bytes (vector-i64-from-bytes data)) expected)))))
+
+(defn- serial-digest? [receipt :document path :string] :bool
+  (let [expected (document-string-value (field receipt :serial-sha256))
+        second (document-string-value (field receipt :serial1-sha256))
+        parent (string-substring path 0 (- (string-byte-length path) 11))
+        refused (string-contains? path "install-refused-qemu/")
+        first-name (if refused "boot4-serial.log" "kernel-serial.log")
+        second-name (if refused "install-serial.log" "kernel-serial.log.boot1")]
+    (and (option-some?-of [:option :string] expected)
+         (hex64? (option-value-of [:option :string] expected ""))
+         (serial-file-digest? (string-concat parent first-name)
+           (option-value-of [:option :string] expected ""))
+         (or (not (option-some?-of [:option :string] second))
+             (and (hex64? (option-value-of [:option :string] second ""))
+                  (serial-file-digest? (string-concat parent second-name)
+                    (option-value-of [:option :string] second "")))))))
+
 (defn- receipt-valid? [path :string] :bool
-  (if (or (< (string-byte-length path) 38)
+  (if (or (< (string-byte-length path) 44)
           (not= (string-substring path 0 33)
                 "os/aiueos/qualification/receipts/")
-          (not= (string-substring path (- (string-byte-length path) 4)
-                  (string-byte-length path)) ".edn")
+          (not= (string-substring path (- (string-byte-length path) 11)
+                  (string-byte-length path)) "receipt.edn")
           (string-contains? path "..")
           (>= (string-find-byte path 0 0) 0))
     false
@@ -405,8 +434,9 @@
               (and (option-some?-of [:option :string] commit)
                    (hex40? (option-value-of [:option :string] commit ""))
                    (green-verdicts? (field document :verdicts))
-                   (or (not (string=? path SIGNED-RELEASE-RECEIPT))
-                       (signed-release-shape? document))))))))))
+                   (if (string=? path SIGNED-RELEASE-RECEIPT)
+                     (signed-release-shape? document)
+                     (serial-digest? document path))))))))))
 
 (defn- release-receipt-reference? [entries :document] :bool
   (if (not= (document-kind entries) :vector) false

@@ -2,7 +2,8 @@
 """Build and exercise the native scorecard core on macOS without hosted runtimes.
 
 This is a schema/point-ledger probe with native qualification-release RSA
-verification. It does not qualify other evidence, freshness, or hardware.
+verification and referenced serial-log digest checks. It does not qualify
+other evidence, freshness, or hardware.
 """
 
 import argparse
@@ -35,8 +36,12 @@ NEGATIVES = {
 RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict',
                      'bad-release-signature-field', 'missing-release-verdict',
                      'tampered-release-json', 'tampered-release-signature',
-                     'rehashed-invalid-signature')
+                     'rehashed-invalid-signature', 'tampered-serial-log',
+                     'missing-serial-log', 'tampered-secondary-serial-log',
+                     'missing-secondary-serial-log')
 A1_RECEIPT = Path('os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn')
+SETTINGS_RECEIPT = Path(
+    'os/aiueos/qualification/receipts/vm-20261024/settings/receipt.edn')
 SIGNED_RELEASE_RECEIPT = Path(
     'os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn')
 SIGNED_RELEASE_JSON = SIGNED_RELEASE_RECEIPT.with_name(
@@ -186,8 +191,13 @@ def main():
                 else SIGNED_RELEASE_JSON if name == 'tampered-release-json'
                 else SIGNED_RELEASE_SIGNATURE if name in
                 ('tampered-release-signature', 'rehashed-invalid-signature')
+                else A1_RECEIPT.with_name('kernel-serial.log') if name in
+                ('tampered-serial-log', 'missing-serial-log')
+                else SETTINGS_RECEIPT.with_name('kernel-serial.log.boot1') if name in
+                ('tampered-secondary-serial-log', 'missing-secondary-serial-log')
                 else A1_RECEIPT)
-            if name == 'missing-receipt-file':
+            if name in ('missing-receipt-file', 'missing-serial-log',
+                        'missing-secondary-serial-log'):
                 target.unlink()
             elif name == 'bad-release-signature-field':
                 receipt_bytes = target.read_bytes()
@@ -204,7 +214,8 @@ def main():
                     raise ValueError('image-bound verdict anchor missing')
                 target.write_bytes(receipt_bytes.replace(
                     before, b'"image-unbound"', 1))
-            elif name in ('tampered-release-json', 'tampered-release-signature'):
+            elif name in ('tampered-release-json', 'tampered-release-signature',
+                          'tampered-serial-log', 'tampered-secondary-serial-log'):
                 artifact_bytes = target.read_bytes()
                 if not artifact_bytes:
                     raise ValueError('release artifact empty')
@@ -287,6 +298,7 @@ def main():
               'executableSha256': digest(executable),
               'observations': observations,
               'receiptFieldsVerified': True, 'evidenceArtifactsVerified': False,
+              'referencedReceiptSerialDigestsVerified': True,
               'signedReleaseReceiptFileDigestsVerified': True,
               'qualificationReleaseSignatureVerified': True,
               'releaseSignatureVerified': False,

@@ -49,17 +49,24 @@ PKCS#1 v1.5 SHA-256 encoding against the JSON bytes. It adapts the bounded
 calculation in `os/aiueos/kotoba/rsa2048.kotoba` to the Mac native vector ABI.
 The embedded modulus matches the checked-in qualification public key; no
 private key is read by this verifier. This is the v1 **qualification** key,
-not a production release key.
+not a production release key. The native probe also hashes the saved primary
+serial log for every referenced passing VM receipt and the secondary log where
+the receipt declares one. The `settings` secondary is
+`kernel-serial.log.boot1`; the install-refusal receipt uses
+`boot4-serial.log` and `install-serial.log`. Missing or modified logs fail the
+ledger admission. This verifies the declared log bytes, not the truth of every
+feature claim or screenshot digest in a receipt.
 The probe prints the recorded score of 48 and category weights, passes and
-gaps. Fourteen negative controls cover malformed schema, missing or red
+gaps. Eighteen negative controls cover malformed schema, missing or red
 receipts, missing signed-release reference, malformed digest fields, missing
 named verdicts, one-byte artifact changes, a modified signature with an
-updated matching digest, and a different public modulus. Each must return a
-nonzero native result; expected output is checked exactly.
+updated matching digest, a different public modulus, and missing or changed
+primary and secondary serial logs. Each must return a nonzero native result;
+expected output is checked exactly.
 
 This is a **core schema and qualification-release signature probe**. Other
-receipt marker text and artifact digests are not yet checked against the
-underlying log/image, and the production release signature is not qualified.
+receipt marker text and non-serial artifact digests are not yet checked against
+the underlying log/image, and the production release signature is not qualified.
 Receipt commit age and relevant-source freshness remain unqualified. The 48
 points describe the existing reference VM ledger; they do not qualify physical hardware or
 a release. The runner and receipt name keep `EVIDENCE_PENDING` until those
