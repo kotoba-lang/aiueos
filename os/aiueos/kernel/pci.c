@@ -367,8 +367,12 @@ extern uint64_t kotoba_aiueos_app_catalog_valid(
   const uint8_t *,uint64_t,uint64_t,const uint32_t[2],uint64_t);
 extern uint64_t kotoba_aiueos_rsa2048_sha256_verify(
   const uint8_t[256],const uint8_t[32],uint8_t*,uint64_t,uint64_t);
-static uint8_t sha256_workspace[512];
-static uint8_t rsa2048_workspace[1284];
+/* `.high_bss`: both are CPU-only scratch for the Kotoba hash/verify calls,
+   reached from the boot selftests after the section is zeroed; the low region
+   was one page over its 0x1f4000 budget once main and the scorecard branch
+   were merged (2026-10-26). */
+static uint8_t sha256_workspace[512] __attribute__((section(".high_bss")));
+static uint8_t rsa2048_workspace[1284] __attribute__((section(".high_bss")));
 static int catalog_policy_selftest_ok;
 int aiueos_catalog_policy_selftest_ok(void) { return catalog_policy_selftest_ok; }
 static int sha256(const uint8_t *bytes,uint64_t length,uint8_t digest[32]) {
@@ -4456,9 +4460,12 @@ static int net_ssh_listen(struct aiueos_ssh_io *io, unsigned listen_rounds) {
 #define NET_DHCP_STAGE_ACK 4
 #define NET_DHCP_STAGE_DONE 5
 
-/* Never touched by DMA -- only the CPU reads it -- so it is static rather than
-   an allocated page, for the reason net_tcp_scratch is. */
-static uint8_t net_dhcp_scratch[2048] __attribute__((aligned(16)));
+/* Never touched by the device's own rings -- the CPU composes the UDP
+   checksum here and net_send copies it into the transmit frame -- so it is
+   static rather than an allocated page, for the reason net_tcp_scratch is.
+   `.high_bss` since 2026-10-26: same CPU-only argument as the TLS scratch,
+   and the payload the NIC reads is ordinary RAM at 4..6 MiB either way. */
+static uint8_t net_dhcp_scratch[2048] __attribute__((aligned(16), section(".high_bss")));
 static uint32_t dhcp_frame_length;
 
 static uint64_t net_mac_value(void) {

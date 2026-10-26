@@ -236,6 +236,12 @@ case "$boot_transport" in
     ;;
 esac
 usb_args=
+# H1's second drive is attached from the branch below whichever medium boots,
+# so its argument list is initialised HERE: `set -u` reaches the QEMU line on
+# every route, and only the AIUEOS_DISK_IMAGE route assigned it (measured
+# 2026-10-26: the default ESP boot died with `update_drive_args: unbound
+# variable` before QEMU ever started).
+update_drive_args=
 # F5 USB storage (JUN-140): a UHCI host controller with a usb-storage disk
 # behind it. The guest probes the UHCI controller (class 0c/03/00); the disk
 # carries AIUEOS_USB_STORAGE as its raw contents.
@@ -273,7 +279,6 @@ elif [ -n "${AIUEOS_DISK_IMAGE:-}" ]; then
   fi
 # H1: an update volume attached as a second fixed drive (a FAT16 image the
 # loader's update scan looks for \\UPDATE.ID on).
-update_drive_args=""
 if [ -n "${AIUEOS_UPDATE_IMAGE:-}" ]; then
   [ -f "$AIUEOS_UPDATE_IMAGE" ] || {
     echo "error: AIUEOS_UPDATE_IMAGE does not exist: $AIUEOS_UPDATE_IMAGE" >&2
