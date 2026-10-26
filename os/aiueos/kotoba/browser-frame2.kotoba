@@ -470,10 +470,10 @@
       (put-rect s sb (sw s sb 417) (- (sw s sb 418) (sw s sb 2045)) (+ (* gw 65536) 16))
       (sput s sb 422 (ink s sb))))
 
-(defn emit-run [s sb f fb p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
+(defn emit-run [s sb f fb p0] (loop [s s sb sb f f fb fb p0 p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
   (if (>= i e) 0
     (do (place-body s sb f fb (+ (* (at s sb base i) 65536) i))
-        (emit-run s sb f fb (pk3 base (+ i 1) e))))))
+        (recur s sb f fb (pk3 base (+ i 1) e)))))))
 
 (defn put-word [s sb f fb p0] (let [base (u3a p0) i (u3b p0) e (u3c p0)]
   ;; the first word of a line goes whatever its width; a next one joins after
@@ -526,8 +526,8 @@
 (defn f-anchor [s sb id base]
   ;; the selection's anchor index, -1 for none or another window's
   (if (= (sw s sb 2036) id)
-    (let [a (sw s sb 2005) n (blen s sb base 0)]
-      (if (= a 0) -1 (if (> (- a 1) n) n (- a 1))))
+    (let [n (blen s sb base 0)]
+      (if (= (sw s sb 2005) 0) -1 (if (> (- (sw s sb 2005) 1) n) n (- (sw s sb 2005) 1))))
     -1))
 
 (defn sel-pack [s sb id base]
@@ -849,10 +849,8 @@
   ;; The shadow belongs to the outside edge only. A filled offset rectangle
   ;; hides the contents of every lower window it overlaps; these clipped
   ;; right and bottom strips keep the retained painter order intact.
-  (let [vw (sw s sb 3)
-        vh (sw s sb 4)
-        right-room (- vw (+ x w))
-        bottom-room (- vh (+ y h))
+  (let [right-room (- (sw s sb 3) (+ x w))
+        bottom-room (- (sw s sb 4) (+ y h))
         right-width (if (> right-room 3) 3 right-room)
         bottom-height (if (> bottom-room 3) 3 bottom-room)]
     (do (if (> right-width 0)
@@ -1064,31 +1062,29 @@
   (if (= s 0) -1
     (if (= f 0) -1
       (if (not (= sb 8192)) -1
-        (let [n (sw s sb 1)
-              vw (sw s sb 3)
-              vh (sw s sb 4)]
+        (let []
           (if (not (= (sw s sb 0) 1)) -2
-            (if (> n 4) -2
-                (if (= (ids-ok s sb n 0) 0) -7
-                  (if (= (focus-ok s sb n) 0) -3
-                    (if (= (rects-ok s sb n 0 (+ (* vw 65536) vh)) 0) -4
+            (if (> (sw s sb 1) 4) -2
+                (if (= (ids-ok s sb (sw s sb 1) 0) 0) -7
+                  (if (= (focus-ok s sb (sw s sb 1)) 0) -3
+                    (if (= (rects-ok s sb (sw s sb 1) 0 (+ (* (sw s sb 3) 65536) (sw s sb 4))) 0) -4
                       (if (> (sw s sb 433) 8) -8
                       (if (> (sw s sb 445) 32) -8
                       (if (> (sw s sb 31) 255) -9
-                      (if (= (pointer-ok s sb vw vh) 0) -10
+                      (if (= (pointer-ok s sb (sw s sb 3) (sw s sb 4)) 0) -10
                       (if (= (scroll-ok s sb 1) 0) -11
                       (if (= (font-ok s sb f fb) 0) -6
                         (do (sput s sb 416 0)
                             (sput s sb 427 0)
                             (if (= (sw s sb 2030) 1)
-                              (lock-screen s sb f fb (+ (* vw 65536) vh))
+                              (lock-screen s sb f fb (+ (* (sw s sb 3) 65536) (sw s sb 4)))
                               (do (sput s sb 422 (bg-rgb s sb))
-                                  (put-rect s sb 0 0 (+ (* vw 65536) vh))
-                                  (launcher s sb f fb vw)
+                                  (put-rect s sb 0 0 (+ (* (sw s sb 3) 65536) (sw s sb 4)))
+                                  (launcher s sb f fb (sw s sb 3))
                                   (emit s sb f fb 0)
-                                  (dock s sb f fb (+ (* vw 65536) vh))
-                                  (tray s sb f fb (pk3 1 0 vh))
-                                  (notify-layer s sb f fb vw)
+                                  (dock s sb f fb (+ (* (sw s sb 3) 65536) (sw s sb 4)))
+                                  (tray s sb f fb (pk3 1 0 (sw s sb 4)))
+                                  (notify-layer s sb f fb (sw s sb 3))
                                   (pointer s sb)))
                             (if (= (sw s sb 427) 1) -5 (sw s sb 416)))))))))))))))))))
 
