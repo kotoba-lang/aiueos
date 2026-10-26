@@ -172,8 +172,8 @@
 (defn top-visible [st sb k]
   (loop [j k]
     (if (< j 0) 0
-      (let [id (w-at st sb (+ 5 (* j 5)))]
-        (if (= (is-min st sb id) 1) (recur (- j 1)) id)))))
+      
+        (if (= (is-min st sb (w-at st sb (+ 5 (* j 5)))) 1) (recur (- j 1)) (w-at st sb (+ 5 (* j 5)))))))
 
 (defn inside [st sb k px py]
   (let [b (+ 5 (* k 5))
@@ -279,9 +279,9 @@
 ;; line for the readback; 2030 2031 the release point. The selection clears.
 ;; The body of window id: its words at 160 + 64(id-1), 0-terminated, at most 64.
 (defn body-len [st sb id]
-  (let [b (+ 160 (* (- id 1) 64))]
+  
     (loop [i 0]
-      (if (or (>= i 64) (= (w-at st sb (+ b i)) 0)) i (recur (+ i 1))))))
+      (if (or (>= i 64) (= (w-at st sb (+ (+ 160 (* (- id 1) 64)) i)) 0)) i (recur (+ i 1)))))
 
 ;; Move k code points from the source body's offset start to the target body's
 ;; offset line*1 (the drop's line start). The target keeps room: the move is
@@ -306,10 +306,10 @@
 
 ;; The window under the point: the topmost hit in stack order, 0 for a miss.
 (defn window-at [st sb px py]
-  (let [n (w-at st sb 1)]
-    (loop [k (- n 1)]
+  
+    (loop [k (- (w-at st sb 1) 1)]
       (if (< k 0) 0
-        (if (= (hit st sb k px py) 1) (w-at st sb (+ 5 (* k 5))) (recur (- k 1)))))))
+        (if (= (hit st sb k px py) 1) (w-at st sb (+ 5 (* k 5))) (recur (- k 1))))))
 
 (defn drop-content [st sb px py]
   (let [src (w-at st sb 2036) k (w-at st sb 2037)]
@@ -351,20 +351,20 @@
 
 ;; browser.surface scroll-window: (max 0 (+ offset delta)), delta +-20.
 (defn scroll-by [st sb id down]
-  (let [v (sc-at st sb id)]
+  
     (if (= down 1)
-      (if (> (+ v 20) 65535) -12
-        (do (sc-put st sb id (+ v 20)) id))
-      (do (sc-put st sb id (if (< v 20) 0 (- v 20))) id))))
+      (if (> (+ (sc-at st sb id) 20) 65535) -12
+        (do (sc-put st sb id (+ (sc-at st sb id) 20)) id))
+      (do (sc-put st sb id (if (< (sc-at st sb id) 20) 0 (- (sc-at st sb id) 20))) id)))
 
 ;; browser.input :pointer/wheel: the window under the pointer (k1 = stack
 ;; index + 1, 0 = a miss) scrolls; nothing is focused, raised or captured.
 (defn wheel [st sb k1 down]
   (if (not (= sb 8192)) -10
     (if (= k1 0) 0
-      (let [id (w-at st sb (+ 5 (* (- k1 1) 5)))]
-        (if (= (slot-ok id) 0) -11
-          (scroll-by st sb id down))))))
+      
+        (if (= (slot-ok (w-at st sb (+ 5 (* (- k1 1) 5)))) 0) -11
+          (scroll-by st sb (w-at st sb (+ 5 (* (- k1 1) 5))) down)))))
 
 ;; A closed window's offset goes with it (whole surface only).
 (defn drop-scroll [st sb id]
@@ -398,19 +398,19 @@
 ;; The press at (px, py) on stack index k is the second of a double press.
 (defn double-press [st sb k px py]
   (if (not (= sb 8192)) 0
-    (let [id (w-at st sb (+ 5 (* k 5)))]
-      (if (= (slot-ok id) 0) 0
-        (if (= (sv-at st sb 2028) id)
+    
+      (if (= (slot-ok (w-at st sb (+ 5 (* k 5)))) 0) 0
+        (if (= (sv-at st sb 2028) (w-at st sb (+ 5 (* k 5))))
           (if (> (- (sv-at st sb 2029) (sv-at st sb 2027)) 3) 0 1)
-          0)))))
+          0))))
 
 (defn note-title-press [st sb k]
   (if (not (= sb 8192)) 0
-    (let [id (w-at st sb (+ 5 (* k 5)))]
-      (if (= (slot-ok id) 0) 0
+    
+      (if (= (slot-ok (w-at st sb (+ 5 (* k 5)))) 0) 0
         (do (sv-put st sb 2027 (sv-at st sb 2029))
-            (sv-put st sb 2028 id)
-            0)))))
+            (sv-put st sb 2028 (w-at st sb (+ 5 (* k 5))))
+            0))))
 
 (defn toggle-max [st sb k]
   (let [b (+ 5 (* k 5))
@@ -435,24 +435,24 @@
         id)))
 
 (defn clear-rec [st sb k]
-  (let [b (+ 5 (* k 5))]
-    (do (w-put st sb b 0) (w-put st sb (+ b 1) 0) (w-put st sb (+ b 2) 0)
-        (w-put st sb (+ b 3) 0) (w-put st sb (+ b 4) 0))))
+  
+    (do (w-put st sb (+ 5 (* k 5)) 0) (w-put st sb (+ (+ 5 (* k 5)) 1) 0) (w-put st sb (+ (+ 5 (* k 5)) 2) 0)
+        (w-put st sb (+ (+ 5 (* k 5)) 3) 0) (w-put st sb (+ (+ 5 (* k 5)) 4) 0)))
 
 ;; browser.surface close-window: remove, and if it had the focus, focus the
 ;; window now on top.
 (defn close [st sb n k]
   (if (< (vis-count st sb n 0) 2) -8
-    (let [id (w-at st sb (+ 5 (* k 5)))]
-      (do (drop-scroll st sb id)
+    
+      (do (drop-scroll st sb (w-at st sb (+ 5 (* k 5))))
           (shift-down st sb k n)
           (clear-rec st sb (- n 1))
           (w-put st sb 1 (- n 1))
-          (if (= (w-at st sb 2) id)
+          (if (= (w-at st sb 2) (w-at st sb (+ 5 (* k 5))))
             (w-put st sb 2 (top-visible st sb (- n 2)))
             0)
           (release-all st sb)
-          (w-at st sb 2)))))
+          (w-at st sb 2))))
 
 (defn app-bit [k] (if (= k 1) 1 (if (= k 2) 2 (if (= k 3) 4 8))))
 
@@ -460,11 +460,11 @@
 ;; x 6 + 102(k-1) .. + 96, y 2 .. 26, inclusive, only if app k is registered.
 (defn button-at [st sb k px py]
   (if (> k 4) 0
-    (let [x (+ 6 (* 102 (- k 1)))]
-      (if (< px x) 0
-        (if (> px (+ x 96))
+    
+      (if (< px (+ 6 (* 102 (- k 1)))) 0
+        (if (> px (+ (+ 6 (* 102 (- k 1))) 96))
           (button-at st sb (+ k 1) px py)
-          (if (= (bit-and (w-at st sb 31) (app-bit k)) 0) 0 k))))))
+          (if (= (bit-and (w-at st sb 31) (app-bit k)) 0) 0 k)))))
 
 (defn on-launcher [st sb px py]
   (if (< py 2) 0
@@ -479,16 +479,16 @@
         (raise st sb (index-of st sb n 0 app) n))
     (if (> 600 (w-at st sb 3)) -9
       (if (> 440 (w-at st sb 4)) -9
-        (let [tb (+ 5 (* n 5))]
-          (do (w-put st sb tb app)
-              (w-put st sb (+ tb 1) 80)
-              (w-put st sb (+ tb 2) 80)
-              (w-put st sb (+ tb 3) 520)
-              (w-put st sb (+ tb 4) 360)
+        
+          (do (w-put st sb (+ 5 (* n 5)) app)
+              (w-put st sb (+ (+ 5 (* n 5)) 1) 80)
+              (w-put st sb (+ (+ 5 (* n 5)) 2) 80)
+              (w-put st sb (+ (+ 5 (* n 5)) 3) 520)
+              (w-put st sb (+ (+ 5 (* n 5)) 4) 360)
               (w-put st sb 1 (+ n 1))
               (w-put st sb 2 app)
               (release-all st sb)
-              app))))))
+              app)))))
 
 ;; ADR-0251: the maximize control of stack index k: x + w - 44 .. x + w - 28,
 ;; y + 6 .. y + 22, inclusive, on a window at least 160 wide (with a launcher).
@@ -517,11 +517,11 @@
 
 ;; Minimize the window raised to the top: its bit goes up, the focus to the topmost visible.
 (defn minimize [st sb n]
-  (let [id (w-at st sb (+ 5 (* (- n 1) 5)))]
-    (do (w-put st sb 31 (+ (w-at st sb 31) (min-bit id)))
+  
+    (do (w-put st sb 31 (+ (w-at st sb 31) (min-bit (w-at st sb (+ 5 (* (- n 1) 5))))))
         (release-all st sb)
         (w-put st sb 2 (top-visible st sb (- n 1)))
-        (w-at st sb 2))))
+        (w-at st sb 2)))
 
 ;; The dock icon of a minimized app under (px, py), or 0: x (vw - 184) / 2 + 8 + 44 (k - 1) ..
 ;; + 36, y vh - 46 .. + 36, inclusive.
@@ -566,42 +566,42 @@
 
 (defn press-miss [st sb n px py]
   (if (= (w-at st sb 31) 0) 0
-    (let [app (on-launcher st sb px py)]
-      (if (= app 0) 0 (launch st sb n app)))))
+    
+      (if (= (on-launcher st sb px py) 0) 0 (launch st sb n (on-launcher st sb px py)))))
 
 (defn press [st sb k1 px py]
-  (let [n (w-at st sb 1)]
-    (if (> (dock-at st sb 1 px py) 0) (restore st sb n (dock-at st sb 1 px py))
-    (if (> (tray-at st sb 1 0 (+ (* px 65536) py)) 0) (restore st sb n (tray-at st sb 1 0 (+ (* px 65536) py)))
-    (if (= k1 0) (press-miss st sb n px py)
+  
+    (if (> (dock-at st sb 1 px py) 0) (restore st sb (w-at st sb 1) (dock-at st sb 1 px py))
+    (if (> (tray-at st sb 1 0 (+ (* px 65536) py)) 0) (restore st sb (w-at st sb 1) (tray-at st sb 1 0 (+ (* px 65536) py)))
+    (if (= k1 0) (press-miss st sb (w-at st sb 1) px py)
       (if (= (w-at st sb 31) 0)
         (do (capture st sb (- k1 1) px py)
-            (raise st sb (- k1 1) n))
+            (raise st sb (- k1 1) (w-at st sb 1)))
         (if (= (in-close st sb (- k1 1) px py) 1)
-          (close st sb n (- k1 1))
+          (close st sb (w-at st sb 1) (- k1 1))
           (if (= (in-min st sb (- k1 1) px py) 1)
-            (do (raise st sb (- k1 1) n)
-                (minimize st sb n))
+            (do (raise st sb (- k1 1) (w-at st sb 1))
+                (minimize st sb (w-at st sb 1)))
           (if (= (max-press st sb (- k1 1) px py) 1)
-            (do (raise st sb (- k1 1) n)
-                (toggle-max st sb (- n 1)))
+            (do (raise st sb (- k1 1) (w-at st sb 1))
+                (toggle-max st sb (- (w-at st sb 1) 1)))
           (if (= (title-press st sb (- k1 1) px py) 1)
             (if (= (double-press st sb (- k1 1) px py) 1)
-              (do (raise st sb (- k1 1) n)
-                  (toggle-max st sb (- n 1)))
+              (do (raise st sb (- k1 1) (w-at st sb 1))
+                  (toggle-max st sb (- (w-at st sb 1) 1)))
               (do (note-title-press st sb (- k1 1))
                   (capture st sb (- k1 1) px py)
-                  (raise st sb (- k1 1) n)))
+                  (raise st sb (- k1 1) (w-at st sb 1))))
             (do (capture st sb (- k1 1) px py)
-                (raise st sb (- k1 1) n))))))))))))
+                (raise st sb (- k1 1) (w-at st sb 1))))))))))))
 
 (defn move-to [st sb k nx ny]
-  (let [b (+ 5 (* k 5))]
+  
     (if (< nx 0) -6
       (if (< ny 0) -6
-        (do (w-put st sb (+ b 1) nx)
-            (w-put st sb (+ b 2) ny)
-            (w-at st sb b))))))
+        (do (w-put st sb (+ (+ 5 (* k 5)) 1) nx)
+            (w-put st sb (+ (+ 5 (* k 5)) 2) ny)
+            (w-at st sb (+ 5 (* k 5)))))))
 
 ;; browser.input :resize: the size at the press plus the pointer's travel
 ;; from the press point, never below 120 x 80. Signed arithmetic: a travel
@@ -610,10 +610,10 @@
   (if (< v floor) floor v))
 
 (defn resize-to [st sb k px py]
-  (let [b (+ 5 (* k 5))]
-    (do (w-put st sb (+ b 3) (at-least (+ (w-at st sb 29) (- px (w-at st sb 27))) 120))
-        (w-put st sb (+ b 4) (at-least (+ (w-at st sb 30) (- py (w-at st sb 28))) 80))
-        (w-at st sb b))))
+  
+    (do (w-put st sb (+ (+ 5 (* k 5)) 3) (at-least (+ (w-at st sb 29) (- px (w-at st sb 27))) 120))
+        (w-put st sb (+ (+ 5 (* k 5)) 4) (at-least (+ (w-at st sb 30) (- py (w-at st sb 28))) 80))
+        (w-at st sb (+ 5 (* k 5)))))
 
 (defn drag [st sb n px py]
   (if (= (w-at st sb 25) 0) 0
