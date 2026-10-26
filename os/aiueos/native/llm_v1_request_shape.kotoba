@@ -1,5 +1,6 @@
 (ns aiueos.native.llm-v1-request-shape
-  (:require [aiueos.native.llm-v1-header :as header])
+  (:require [aiueos.native.llm-v1-header :as header]
+            [aiueos.native.llm-v1-utf8 :as utf8])
   (:export [aiueos-llm-v1-request-shape-valid]))
 
 ;; The caller must supply distinct, checked host/guest regions. The three
@@ -7,43 +8,6 @@
 ;; need not fit into one machine window. A matching selected-model region is
 ;; an input from host policy, not a guest grant. This function does not verify
 ;; grant authority or dispatch a provider.
-(defn- continuation? [value :i64] :bool
-  (and (>= value 128) (<= value 191)))
-
-;; Return the next byte boundary, or -1 for an invalid sequence. The bounds
-;; are checked before reading continuation bytes. E0/ED and F0/F4 rules
-;; reject overlong encodings, surrogates, and values above U+10FFFF.
-(defn- utf8-next [source :i64 source-bytes :i64 index :i64] :i64
-  (let [lead (kernel-load-u8-64k source source-bytes index)]
-    (cond
-      (< lead 128) (+ index 1)
-      (and (>= lead 194) (<= lead 223) (<= (+ index 2) source-bytes))
-        (let [second (kernel-load-u8-64k source source-bytes (+ index 1))]
-          (if (continuation? second) (+ index 2) -1))
-      (and (>= lead 224) (<= lead 239) (<= (+ index 3) source-bytes))
-        (let [second (kernel-load-u8-64k source source-bytes (+ index 1))
-              third (kernel-load-u8-64k source source-bytes (+ index 2))]
-          (if (and (continuation? third)
-                   (cond (= lead 224) (and (>= second 160) (<= second 191))
-                         (= lead 237) (and (>= second 128) (<= second 159))
-                         :else (continuation? second)))
-            (+ index 3) -1))
-      (and (>= lead 240) (<= lead 244) (<= (+ index 4) source-bytes))
-        (let [second (kernel-load-u8-64k source source-bytes (+ index 1))
-              third (kernel-load-u8-64k source source-bytes (+ index 2))
-              fourth (kernel-load-u8-64k source source-bytes (+ index 3))]
-          (if (and (continuation? third) (continuation? fourth)
-                   (cond (= lead 240) (and (>= second 144) (<= second 191))
-                         (= lead 244) (and (>= second 128) (<= second 143))
-                         :else (continuation? second)))
-            (+ index 4) -1))
-      :else -1)))
-
-(defn- valid-utf8? [source :i64 source-bytes :i64] :bool
-  (loop [index 0]
-    (if (= index source-bytes) true
-      (let [next (utf8-next source source-bytes index)]
-        (if (< next 0) false (recur next))))))
 (defn aiueos-llm-v1-request-shape-valid
   [wire-header :i64 wire-header-bytes :i64
    model :i64 model-bytes :i64
@@ -66,9 +30,9 @@
                (= (+ model-bytes system-bytes prompt-bytes) declared-payload)
                (= selected-model-bytes model-bytes)
                (= result-bytes declared-result)
-               (valid-utf8? model model-bytes)
-               (valid-utf8? system system-bytes)
-               (valid-utf8? prompt prompt-bytes))
+               (utf8/aiueos-llm-v1-utf8-valid model model-bytes)
+               (utf8/aiueos-llm-v1-utf8-valid system system-bytes)
+               (utf8/aiueos-llm-v1-utf8-valid prompt prompt-bytes))
         (loop [index 0]
           (if (= index model-bytes) 1
             (if (= (kernel-load-u8-64k model model-bytes index)

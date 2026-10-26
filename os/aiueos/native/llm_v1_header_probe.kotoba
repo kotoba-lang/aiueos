@@ -1,11 +1,13 @@
 (ns aiueos.native.llm-v1-header-probe
   (:require [aiueos.native.kernel :as kernel]
             [aiueos.native.llm-v1-header :as llm]
-            [aiueos.native.llm-v1-request-shape :as request])
+            [aiueos.native.llm-v1-request-shape :as request]
+            [aiueos.native.llm-v1-result-shape :as completion])
   (:export [main aiueos-isr-6]))
 
 ;; Runs the real header validator in a C-free AIUEOS kernel image. Page 0 is
-;; the host-owned test header and page 1 is a 21-word guest receipt. This
+;; the host-owned test header, page 1 is a 21-word request receipt and page 12
+;; is a six-word result receipt. This
 ;; neither dispatches wire 11 nor executes a model.
 (defn- retain-kernel [] :i64 (kernel/main))
 (defn aiueos-isr-6 [vector :i64 error :i64 rip :i64 rsp :i64] :i64
@@ -34,6 +36,41 @@
        (put-byte prompt 0 104) (put-byte prompt 1 101)
        (put-byte prompt 2 108) (put-byte prompt 3 108)
        (put-byte prompt 4 111)))
+
+(defn- initialize-result [header :i64 text :i64 finish :i64] :bool
+  (and (clear-words header 0 64)
+       (put-word header 0 827477067)
+       (put-word header 4 1)
+       (put-word header 8 11)
+       (put-word header 12 1)
+       (put-word header 16 2)
+       (put-word header 20 4)
+       (put-word header 24 0)
+       (put-word header 28 0)
+       (put-word header 32 7)
+       (put-word header 40 1)
+       (put-word header 48 0)
+       (put-word header 52 6)
+       (put-byte text 0 111) (put-byte text 1 107)
+       (put-byte finish 0 115) (put-byte finish 1 116)
+       (put-byte finish 2 111) (put-byte finish 3 112)))
+
+(defn- initialize-error [header :i64 code :i64 message :i64] :bool
+  (and (put-word header 12 2)
+       (put-word header 16 0)
+       (put-word header 20 0)
+       (put-word header 24 7)
+       (put-word header 28 4)
+       (put-word header 32 0)
+       (put-word header 40 0)
+       (put-word header 48 1)
+       (put-word header 52 11)
+       (put-byte code 0 116) (put-byte code 1 105)
+       (put-byte code 2 109) (put-byte code 3 101)
+       (put-byte code 4 111) (put-byte code 5 117)
+       (put-byte code 6 116)
+       (put-byte message 0 98) (put-byte message 1 117)
+       (put-byte message 2 115) (put-byte message 3 121)))
 
 (defn- initialize-header [header :i64] :bool
   (and (clear-words header 0 64)
@@ -68,10 +105,18 @@
         selected (kernel-owned-page 3)
         result (kernel-owned-page 4)
         system (kernel-owned-page 5)
-        prompt (kernel-owned-page 6)]
+        prompt (kernel-owned-page 6)
+        result-header (kernel-owned-page 7)
+        result-text (kernel-owned-page 8)
+        finish (kernel-owned-page 9)
+        code (kernel-owned-page 10)
+        message (kernel-owned-page 11)
+        result-receipt (kernel-owned-page 12)]
     (if (and (initialize-header header)
              (clear-words receipt 0 168)
+             (clear-words result-receipt 0 48)
              (initialize-model model selected prompt)
+             (initialize-result result-header result-text finish)
              (record-check receipt 0 (= (header-valid header) 1))
              (bad-field header receipt 1 0 0 827149387)
              (bad-field header receipt 2 8 12 11)
@@ -171,5 +216,64 @@
                     (kernel-subregion result 4096 0 64) 64) 0))
              (put-byte prompt 0 104) (put-byte prompt 1 101)
              (put-byte prompt 2 108) (put-byte prompt 3 108)
-             (put-byte prompt 4 111))
+             (put-byte prompt 4 111)
+             ;; A bounded completion is accepted; unknown tag, excessive
+             ;; usage and malformed text are refused before user copy-back.
+             (record-check result-receipt 0
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 2) 2
+                  (kernel-subregion finish 4096 0 4) 4
+                  (kernel-subregion code 4096 0 0) 0
+                  (kernel-subregion message 4096 0 0) 0) 1))
+             (put-word result-header 12 3)
+             (record-check result-receipt 1
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 2) 2
+                  (kernel-subregion finish 4096 0 4) 4
+                  (kernel-subregion code 4096 0 0) 0
+                  (kernel-subregion message 4096 0 0) 0) 0))
+             (put-word result-header 12 1)
+             (put-word result-header 40 17)
+             (record-check result-receipt 2
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 2) 2
+                  (kernel-subregion finish 4096 0 4) 4
+                  (kernel-subregion code 4096 0 0) 0
+                  (kernel-subregion message 4096 0 0) 0) 0))
+             (put-word result-header 40 1)
+             (put-byte result-text 0 192)
+             (record-check result-receipt 3
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 2) 2
+                  (kernel-subregion finish 4096 0 4) 4
+                  (kernel-subregion code 4096 0 0) 0
+                  (kernel-subregion message 4096 0 0) 0) 0))
+             (put-byte result-text 0 111)
+             (initialize-error result-header code message)
+             (record-check result-receipt 4
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 0) 0
+                  (kernel-subregion finish 4096 0 0) 0
+                  (kernel-subregion code 4096 0 7) 7
+                  (kernel-subregion message 4096 0 4) 4) 1))
+             (put-word result-header 48 2)
+             (record-check result-receipt 5
+               (= (completion/aiueos-llm-v1-result-shape-valid
+                  (kernel-subregion result-header 4096 0 64) 64
+                  (kernel-subregion header 4096 0 64) 64
+                  (kernel-subregion result-text 4096 0 0) 0
+                  (kernel-subregion finish 4096 0 0) 0
+                  (kernel-subregion code 4096 0 7) 7
+                  (kernel-subregion message 4096 0 4) 4) 0))
+             (initialize-result result-header result-text finish))
       42 0)))
