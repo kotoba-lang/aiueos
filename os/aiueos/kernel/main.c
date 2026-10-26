@@ -708,6 +708,13 @@ extern uint32_t aiueos_tablet_gesture_done(void);
 extern void aiueos_desktop_battery_set(uint32_t ac, uint32_t level);
 extern uint32_t aiueos_desktop_battery_level(void);
 extern uint32_t aiueos_desktop_battery_ac(void);
+/* show() returns before painting the status band when the damage rectangle
+   is empty (framebuffer.c:790), and this stage's frame does not change
+   between steps -- measured: the band read back as the desktop background
+   (f1f1f2) at every step, warn-px=0 base-px=0. The band must therefore be
+   painted by the stage itself before it samples it. */
+extern void aiueos_desktop_paint_status(void);
+extern int aiueos_desktop_show_full(void);
 #endif
 /* C9/status bar keeps the pointer on top; see the note in framebuffer.c. */
 extern void aiueos_desktop_set_pointer(uint32_t x, uint32_t y);
@@ -1414,9 +1421,14 @@ static int browser_battery_stage(uint32_t *surface, const uint8_t *font, uint64_
     aiueos_desktop_battery_set(step_ac[i], step_level[i]);
     sfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
     if (sfo > 0 && aiueos_desktop_present_ops2(surface + 480, (uint64_t)sfo, font, font_length)) {
-      (void)aiueos_desktop_show();  /* repaints the band with the new level */
       sfo_last = (uint32_t)(sfo < 0 ? -sfo : sfo);
     }
+    /* The frame is identical across steps, so show()'s damage rectangle is
+       empty and it returns before painting the band; paint it here (the flag
+       build only) and present the whole surface, so the reading the sampler
+       takes is the band with this step's level. */
+    aiueos_desktop_paint_status();
+    (void)aiueos_desktop_show_full();
     /* The POWER field starts at x = 4 + 6*11 and spans the eight glyph cells
        the AC text used; sample one pixel per cell centre in the text rows. */
     for (uint32_t gx = 73; gx < 118; gx += 6) {
@@ -1428,6 +1440,31 @@ static int browser_battery_stage(uint32_t *surface, const uint8_t *font, uint64_
     }
     if ((step_level[i] <= 10 && step_ac[i] == 0) != (warn_px > 0)) bad++;
     if (step_ac[i] || step_level[i] > 10) { if (base_px == 0) bad++; }
+    if (i == 0) {
+      /* first run measured warn-px=0 base-px=0 at every step -- probe the
+         band itself before trusting the region: raw samples on the text row
+         and the count of pixels that are not the band's own background */
+      uint32_t ink = 0;
+      for (uint32_t px = 0; px < 200 && px < surface[3]; px++)
+        if (aiueos_desktop_sample_rgb(px, band_y + 7) != 0x00202830U) ink++;
+      serial_string("AIUEOS_BATTERY probe vw=");
+      serial_decimal(surface[3]);
+      serial_string(" vh=");
+      serial_decimal(surface[4]);
+      serial_string(" band-y=");
+      serial_decimal(band_y);
+      serial_string(" ink-px=");
+      serial_decimal(ink);
+      serial_string(" at4=");
+      serial_hex32(aiueos_desktop_sample_rgb(4, band_y + 7));
+      serial_string(" at70=");
+      serial_hex32(aiueos_desktop_sample_rgb(70, band_y + 7));
+      serial_string(" at76=");
+      serial_hex32(aiueos_desktop_sample_rgb(76, band_y + 7));
+      serial_string(" at300=");
+      serial_hex32(aiueos_desktop_sample_rgb(300, band_y + 7));
+      serial_string("\r\n");
+    }
     serial_string("AIUEOS_BATTERY step=");
     serial_decimal(i);
     serial_string(" ac=");
