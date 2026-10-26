@@ -26,6 +26,7 @@
    "guest-browser-window-maximize" "guest-browser-maximize-control"
    "guest-browser-cursor-shape" "guest-browser-pressed-state"
    "guest-browser-minimize" "guest-browser-screen-lock" "guest-browser-sign-out"
+   "guest-touchpad-gestures"
    "guest-browser-settings" "guest-browser-ui-scale" "guest-browser-keyboard-only" "guest-browser-text-edit" "guest-browser-clock" "guest-browser-layout" "guest-browser-notify" "guest-browser-passkey" "guest-browser-backup" "guest-browser-audio" "guest-browser-suspend"])
 
 (defn gate-cmd
@@ -1582,6 +1583,45 @@
   (let [[x y w h] (mapv parse-long (str/split win #","))]
     (and (<= 0 x) (<= 0 y) (<= (+ x w) vw) (<= (+ y h) vh))))
 
+;; D3 (scorecard row: touchpad gestures). The kernel's gesture stage replays
+;; what pci.c scripted -- kind 8 pinch (steps 0,1,2 at 640,0/640,1/640,2),
+;; kind 9 three-finger swipe (steps 0,1), kind 10 two-finger tap at 512,400 --
+;; and prints one FRAME line per event plus GESTURE_OK when all six arrived in
+;; order at those coordinates with a frame drawn for each. Green also needs the
+;; scroll gate green on the same serial (it runs immediately before), because
+;; a chain that broke at scroll never reached the gesture stage. Leftover keeps
+;; the limit visible: these gestures are scripted by the kernel because
+;; virtio-tablet has no multi-touch to carry them, so :device evidence for a
+;; real touchpad stays open.
+(declare guest-browser-scroll-result)
+
+(def ^:private gesture-frames-want
+  [[1 8 640 0] [2 8 640 1] [3 8 640 2] [4 9 640 0] [5 9 640 1] [6 10 512 400]])
+
+(defn guest-touchpad-gestures-result
+  [{:keys [serial qemu-unmeasured?] :as opts}]
+  (let [scroll (guest-browser-scroll-result opts)
+        go (re-find #"(?m)^AIUEOS_GUEST_BROWSER_GESTURE_GO events=6" (or serial ""))
+        missing (for [[n src x y] gesture-frames-want
+                      :when (not (re-find (re-pattern (str "GESTURE_FRAME n=" n " src=" src " at=" x "," y))
+                                          (or serial "")))]
+                  {:n n :src src :at (str x "," y)})]
+    (cond
+      qemu-unmeasured? {:green? false :exit 3 :reason :unmeasured :leftover [:unmeasured]}
+      (not (:green? scroll))
+      (assoc (dissoc scroll :green?) :exit 1 :reason :no-scroll
+             :leftover (into [:no-scroll] (:leftover scroll)))
+      (not go) {:green? false :exit 1 :reason :guest-touchpad-gestures-absent
+                :leftover [:guest-touchpad-gestures-absent]}
+      (not (re-find #"(?m)^AIUEOS_GUEST_BROWSER_GESTURE_OK events=6 frames=6" (or serial "")))
+      {:green? false :exit 1 :reason :gesture-ok-missing :leftover [:gesture-ok-missing]}
+      (seq missing) {:green? false :exit 1 :reason :gesture-frames-differ-from-model
+                     :leftover (into [:gesture-frames-differ-from-model] (map :n missing))
+                     :missing missing}
+      :else
+      {:green? true :exit 0 :reason :guest-touchpad-gestures
+       :leftover [:scripted-gestures-not-a-real-touchpad :pinch-swipe-synthetic :device-evidence-open]})))
+
 (defn guest-browser-ui-scale-result
   [{:keys [serial qemu-unmeasured?] :as opts}]
   (let [ls (scale-lines serial)
@@ -2671,6 +2711,12 @@
     "guest-browser-settings" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_TEST_NET" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
+    ;; D3 (scorecard row: touchpad gestures): the scripted gesture source in
+    ;; pci.c exists only in this build; see the note there for why the host
+    ;; cannot deliver these events at all.
+    "guest-touchpad-gestures" {"AIUEOS_GUEST_BROWSER" "1"
+                               "AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC" "1"
+                               "AIUEOS_QEMU_TIMEOUT" "6000"}
     ;; ADR-0261: the scale keys come after the sign-out stage.
     "guest-browser-ui-scale" {"AIUEOS_GUEST_BROWSER" "1"
                               "AIUEOS_QEMU_TIMEOUT" "6000"}
@@ -2756,6 +2802,7 @@
     "guest-browser-screen-lock" (guest-browser-screen-lock-result opts)
     "guest-browser-sign-out" (guest-browser-sign-out-result opts)
     "guest-browser-settings" (guest-browser-settings-result opts)
+    "guest-touchpad-gestures" (guest-touchpad-gestures-result opts)
     "guest-browser-ui-scale" (guest-browser-ui-scale-result opts)
     "guest-browser-keyboard-only" (guest-browser-keyboard-only-result opts)
     "guest-browser-text-edit" (guest-browser-text-edit-result opts)
@@ -2812,6 +2859,7 @@
     "guest-browser-screen-lock" "AIUEOS_GUEST_BROWSER_LOCK"
     "guest-browser-sign-out" "AIUEOS_GUEST_BROWSER_SIGNOUT"
     "guest-browser-settings" "AIUEOS_GUEST_BROWSER_SETTINGS"
+    "guest-touchpad-gestures" "AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC"
     "guest-browser-ui-scale" "AIUEOS_GUEST_BROWSER_SCALE"
     "guest-browser-keyboard-only" "AIUEOS_GUEST_BROWSER_RING"
     "guest-browser-text-edit" "AIUEOS_GUEST_BROWSER_EDIT"
@@ -2868,6 +2916,7 @@
     "guest-browser-screen-lock" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SCREEN_LOCK_OK"
     "guest-browser-sign-out" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SIGN_OUT_OK"
     "guest-browser-settings" "AIUEOS_COMPOSITOR_GUEST_BROWSER_SETTINGS_OK"
+    "guest-touchpad-gestures" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TOUCHPAD_GESTURES_OK"
     "guest-browser-ui-scale" "AIUEOS_COMPOSITOR_GUEST_BROWSER_UI_SCALE_OK"
     "guest-browser-keyboard-only" "AIUEOS_COMPOSITOR_GUEST_BROWSER_KEYBOARD_ONLY_OK"
     "guest-browser-text-edit" "AIUEOS_COMPOSITOR_GUEST_BROWSER_TEXT_EDIT_OK"
