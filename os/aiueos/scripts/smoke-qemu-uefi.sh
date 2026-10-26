@@ -1310,7 +1310,7 @@ PY
     -drive if=none,id=aiueosblk,format=raw,file="$blk_image" \
     -device virtio-blk-pci,drive=aiueosblk,disable-legacy=on \
     $kbd_args \
-    -device virtio-vga,disable-legacy=on,max_outputs=2 \
+    -device virtio-vga,id=aiueosvga,disable-legacy=on,max_outputs=2 \
     $qmp_args \
     -display "$display_opt" -serial "file:$serial_log" -monitor none -no-reboot &
   qemu_pid=$!
