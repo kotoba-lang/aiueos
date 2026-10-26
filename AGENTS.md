@@ -20,6 +20,12 @@ For the user-v2 Goal ELF, run the private-QMP CPL3 gate in
 `docs/evidence/aiueos-user-v2-goal-20261026/README.md` instead of asking for
 a Screen Sharing key press. Its `a b` Goal is a fixed boot fixture; live UI
 ingress, approval and durable Itonami execution remain separate work.
+For the subsequent live UI handoff, use the three-boot private-QMP gate in
+`docs/evidence/aiueos-user-v2-live-goal-20261026/README.md`. It types two
+different Goals through the actual native desktop and checks a CPL3 read plus
+an empty-Goal refusal. Its compiled user bytes are pinned inline because the
+current EFI has one payload slot, occupied by the desktop font. It does not
+qualify signed app admission, approval, model/tool effects or durable turns.
 
 ## Shared Browser native progress (JUN-93)
 
