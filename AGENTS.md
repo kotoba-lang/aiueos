@@ -40,6 +40,17 @@ guest key press or network. Never treat injected test keys as trusted approval
 for a model, tool or other external operation. See
 `docs/evidence/aiueos-durable-user-v2-unattended-20261026/README.md`.
 
+The next local-model diagnostic profile is exercised by
+`os/aiueos/scripts/debug-native-local-model-confirm-qemu.py`. It cold-restores
+the Goal, displays an AIUEOS-owned Y/N choice, verifies denial leaves the
+user pages untouched, runs the native bigram model only after the fresh
+choice, and checks the one-token result in CPL3. The builder's `--user-source`
+route regenerates user ELF, slot, kernel and EFI with one native Amu compiler.
+Private-QMP injected Y/N keys prove the guest branching logic, not that a
+human approved an external operation. This profile is a local model proof,
+not a general `:llm/generate` provider or Itonami agent loop. See
+`docs/evidence/aiueos-local-model-confirm-20261026/README.md`.
+
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native

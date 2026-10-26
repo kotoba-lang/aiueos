@@ -78,8 +78,14 @@ def main(args):
         raise ValueError("boot payload requires both path and SHA-256 pin")
     if bool(args.font) != bool(args.font_sha256) or bool(args.user_slot) != bool(args.user_slot_sha256):
         raise ValueError("font and user slot each require a path and SHA-256 pin")
-    if (args.font or args.user_slot) and (not args.font or not args.user_slot or args.payload):
-        raise ValueError("dual payload requires font and user slot without legacy payload")
+    if (bool(args.user_source) != bool(args.user_source_sha256)
+            or bool(args.user_source) != bool(args.user_elf_sha256)):
+        raise ValueError("user source requires source and expected ELF SHA-256 pins")
+    if args.user_source and args.user_slot:
+        raise ValueError("choose generated user source or an existing user slot")
+    if ((args.font or args.user_slot or args.user_source)
+            and (not args.font or not (args.user_slot or args.user_source) or args.payload)):
+        raise ValueError("dual payload requires font and one user payload without legacy payload")
     if args.payload and args.payload.is_symlink():
         raise ValueError("boot payload must not be a symlink")
     payload = args.payload.resolve(strict=True) if args.payload else None
@@ -93,8 +99,14 @@ def main(args):
             raise ValueError(name + " requires a regular pinned 512 KiB file")
     font = args.font.resolve(strict=True) if args.font else None
     user_slot = args.user_slot.resolve(strict=True) if args.user_slot else None
+    if args.user_source and args.user_source.is_symlink():
+        raise ValueError("user source must not be a symlink")
+    user_source = args.user_source.resolve(strict=True) if args.user_source else None
+    if user_source and (not user_source.is_relative_to(OS / "native")
+                        or pin(user_source)["sha256"] != args.user_source_sha256):
+        raise ValueError("user source must be a pinned AIUEOS native source")
     output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    output.mkdir(parents=True, exist_ok=False, mode=0o700)
     stage = output / "source"
     stage.mkdir()
     state = {"schema": "aiueos.macos-native-kernel-candidate.v1", "state": "STAGING",
@@ -104,7 +116,9 @@ def main(args):
              "kernelEntry": entry, "fuel": args.fuel,
              "bootPayload": pin(payload) if payload else None,
              "bootFont": pin(font) if font else None,
-             "bootUserSlot": pin(user_slot) if user_slot else None, "calls": []}
+             "bootUserSlot": pin(user_slot) if user_slot else None,
+             "bootUserSource": pin(user_source) if user_source else None,
+             "bootUserElf": None, "calls": []}
 
     def save():
         (output / "build-state.json").write_text(json.dumps(state, indent=2) + "\n")
@@ -140,7 +154,10 @@ def main(args):
             stage_file(payload, stage / "boot-payload.bin", args.payload_sha256)
         if font:
             stage_file(font, stage / "boot-font.bin", args.font_sha256)
-            stage_file(user_slot, stage / "boot-user-slot.bin", args.user_slot_sha256)
+            if user_slot:
+                stage_file(user_slot, stage / "boot-user-slot.bin", args.user_slot_sha256)
+        if user_source:
+            stage_file(user_source, stage / "boot-user-source.kotoba", args.user_source_sha256)
         roots = ["/os", "/os/aiueos", "/os/aiueos/kotoba"]
         roots += ["/owners/" + dep["repo"] + "/kotoba" for dep in owner_manifest["dependencies"]]
         source_args = [part for root in roots for part in ("--source-path", root)]
@@ -168,6 +185,33 @@ def main(args):
             return result.stdout
 
         try:
+            if user_source:
+                user_images = []
+                for name in ("boot-user.elf", "boot-user.reproduced.elf"):
+                    run("compile-" + name, ["compile", "boot-user-source.kotoba",
+                        "--target", "x86_64-aiueos-user-v2", "--output", name])
+                    image = stage / name
+                    if not image.is_file() or pin(image)["bytes"] != 8280:
+                        raise ValueError("native compiler omitted the expected user-v2 ELF")
+                    user_images.append(pin(image))
+                if (user_images[0] != user_images[1]
+                        or user_images[0]["sha256"] != args.user_elf_sha256):
+                    raise ValueError("user-v2 ELF reproduction or expected digest differs")
+                slots = []
+                for name in ("boot-user-slot.bin", "boot-user-slot.reproduced.bin"):
+                    run("package-" + name, ["package-aiueos-user-payload",
+                        "boot-user.elf", "--output", name, "--version", "v2"])
+                    slot = stage / name
+                    if not slot.is_file() or pin(slot)["bytes"] != 524288:
+                        raise ValueError("native compiler omitted the user-v2 slot")
+                    slots.append(pin(slot))
+                if slots[0] != slots[1]:
+                    raise ValueError("user-v2 slot reproduction differed")
+                user_slot = stage / "boot-user-slot.bin"
+                shutil.copyfile(stage / "boot-user.elf", output / "boot-user.elf")
+                state.update(bootUserSlot=slots[0], bootUserElf=user_images[0],
+                             userSlotReproduced=slots[1])
+                save()
             discovered = run("discover", ["modules", entry, *source_args]).decode("ascii")
             modules = {}
             for line in discovered.splitlines():
@@ -235,6 +279,12 @@ def main(args):
                          or pin(stage / "boot-user-slot.bin") != state["bootUserSlot"]
                          or pin(user_slot) != state["bootUserSlot"]):
                 raise ValueError("font or user slot changed during build")
+            if user_source and (pin(user_source) != state["bootUserSource"]
+                                or pin(stage / "boot-user-source.kotoba") != state["bootUserSource"]
+                                or pin(stage / "boot-user.elf") != state["bootUserElf"]
+                                or pin(output / "boot-user.elf") != state["bootUserElf"]
+                                or pin(output / "source/boot-user-slot.bin") != state["bootUserSlot"]):
+                raise ValueError("generated user source or ELF changed during build")
             if any(pin(stage / virtual[1:]) != sources[virtual] for virtual in modules):
                 raise ValueError("module bytes changed during build")
             state.update(state="MACOS_NATIVE_IMAGE_CANDIDATE", kernel=images[0], efi=efi_images[0],
@@ -265,4 +315,7 @@ if __name__ == "__main__":
     parser.add_argument("--font-sha256")
     parser.add_argument("--user-slot", type=Path)
     parser.add_argument("--user-slot-sha256")
+    parser.add_argument("--user-source", type=Path)
+    parser.add_argument("--user-source-sha256")
+    parser.add_argument("--user-elf-sha256")
     main(parser.parse_args())
