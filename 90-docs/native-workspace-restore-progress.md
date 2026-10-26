@@ -55,7 +55,7 @@ sequence was not admitted. Negative values are read as signed u32 in QMP.
 |---|---|---|
 | AWAI-30, `kotoba-lang` / `osaho` | D2 `world-root × code-environment × open-leases`, canonical bytes, CID-before-decode, published vectors | Hosted `.cljk` codec/vectors exist. No qualified native D2 consumer is used by this root. Do not substitute `document-print` or this draft record. |
 | JUN-93, shared Browser/CSSOM | Real shared surface/input/event loop, typed string/document/f64 runtime | The diagnostic still uses Browser-frame2. Saving its text does not qualify the shared Browser. |
-| JUN-414, Amu user target | Registered Itonami artifact, CPL3 execution and declared operations | Amu #1574 is open; AIUEOS #505 is draft at the audited heads below. Capability-free result 42 is separate from an Itonami turn. |
+| JUN-414, Amu user target | Registered Itonami artifact, CPL3 execution and declared operations | Amu #1574 is merged as of 2026-10-26; AIUEOS #505 remains draft. This probe still uses the separately pinned compiler below. Capability-free result 42 is separate from an Itonami turn. |
 | AWAI-86, release contracts | Immutable app release/source/interface/profile identity and fresh target admission | This kernel probe has no app release manifest or promotion/rollback claim. |
 | JUN-296/300/299/372 | Cell identity, verified state head/sequence, signer, state/effect/receipt | A local unsigned counter is not a verified Cell head or cross-node state. |
 | JUN-145 | Itonami → Kaikei, real commit, empty-runtime restart restore | Remains open until the actual app path uses the above contracts. |
@@ -84,6 +84,22 @@ Amu main `5f829f10c5835cfd347a76d92b6baba1a67edf2a`,
 [AIUEOS #505](https://github.com/kotoba-lang/aiueos/pull/505)
 `de09efe452c1db0695ee5d73a83772504ac96a6d`.
 
+## Distribution integration (2026-10-26)
+
+AIUEOS #520 is merged in main at
+`45e3ae8d32f92c04f7a356b051bf9a2346b0d255`. This branch merges that main
+without replacing either selection axis. `--distribution aiueos|awai` stages
+and pins the static descriptor; `--profile desktop|local-draft` selects the
+native root. Both default to `aiueos` / `desktop`. Unknown values refuse
+before creating output, including direct builder calls. AWAI metadata alone
+does not enable persistence or install/admit any app.
+
+The user-target status was read back on 2026-10-26: Amu #1574 merged head
+`e3144da1aa48f160cea8fb6d453befd2b1df52b1`, merge commit
+`4dc300b30402222a1881a76253a6e5e0c2db73f0`; AIUEOS #505 is still draft at
+`de09efe452c1db0695ee5d73a83772504ac96a6d`. These refs update the dependency
+inventory, not the compiler used by this diagnostic or its acceptance claims.
+
 ## Reproduce the component gates
 
 Use the pinned native compiler and owner roots described in
@@ -95,7 +111,7 @@ workspace disk.
 ```sh
 python3 "$AMU/scripts/seed/native_build_queue.py" -- \
   python3 os/aiueos/scripts/build-native-desktop.py \
-    --amu-source "$AMU" --profile local-draft --output "$OUT"
+    --amu-source "$AMU" --distribution awai --profile local-draft --output "$OUT"
 
 python3 "$AMU/scripts/seed/native_build_queue.py" -- \
   python3 os/aiueos/scripts/check-native-draft-restart-qemu.py \

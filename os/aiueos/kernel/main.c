@@ -442,6 +442,7 @@ static uint32_t aiueos_qwen35_active_token = 1U;
    They are readable under the inherited CR3 but are not necessarily inside
    the kernel's bounded low identity map.  Retain every scalar and the bounded
    descriptor stream before aiueos_paging_initialize installs the owned root. */
+extern void aiueos_storage_set_key(const uint8_t key[16]);
 static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
   if (!source || !source->memory_map || !source->memory_map_size ||
       !source->descriptor_size ||
@@ -450,6 +451,13 @@ static int aiueos_boot_info_retain(const struct aiueos_boot_info *source) {
     return 0;
   aiueos_owned_boot_info = (struct aiueos_boot_info){0};
   aiueos_owned_boot_info.magic = source->magic;
+  /* G3: hand the loader's data-disk key to the storage layer. */
+  if (source->data_key_tag == 0x9a7461b0d2746b31ULL) {
+    for (int i = 0; i < 16; i++)
+      aiueos_owned_boot_info.data_key[i] = source->data_key[i];
+    aiueos_owned_boot_info.data_key_tag = source->data_key_tag;
+    aiueos_storage_set_key(source->data_key);
+  }
   aiueos_owned_boot_info.version = source->version;
   aiueos_owned_boot_info.memory_map_size = source->memory_map_size;
   aiueos_owned_boot_info.descriptor_size = source->descriptor_size;
@@ -692,6 +700,8 @@ extern int aiueos_qualification_finalize(uint16_t, uint32_t);
 extern int aiueos_qualification_reboot(void);
 extern int aiueos_desktop_surface_ready(void);
 extern int aiueos_desktop_surface_bind_scanout(uint32_t width, uint32_t height);
+/* C9/status bar keeps the pointer on top; see the note in framebuffer.c. */
+extern void aiueos_desktop_set_pointer(uint32_t x, uint32_t y);
 extern int aiueos_desktop_wm_rects_fit(void);
 extern int aiueos_desktop_wm_paint(uint64_t front);
 extern uint32_t aiueos_desktop_wm_stored_color(uint64_t window_id);
@@ -1052,6 +1062,9 @@ static void serial_byte(uint8_t value) {
 static void serial_string(const char *text) {
   while (*text) serial_byte((uint8_t)*text++);
 }
+/* Evidence markers from other kernel files (A2's display-change marker is
+   emitted from framebuffer.c's desktop path). */
+void aiueos_kernel_serial_marker(const char *text) { serial_string(text); }
 static void serial_hex_byte(uint8_t value) {
   static const char digits[] = "0123456789abcdef";
   serial_byte((uint8_t)digits[(value >> 4) & 0xf]);
@@ -1073,6 +1086,11 @@ static void serial_decimal(uint32_t value) {
   while (value) { digits[count++] = (char)('0' + (value % 10)); value /= 10; }
   while (count) serial_byte((uint8_t)digits[--count]);
 }
+
+/* A2: pci.c reports the host display geometry it read off the device, and
+   serial_decimal is file-local. Formatting only -- the numbers are the
+   device's answer to GET_DISPLAY_INFO, not a decision this code makes. */
+void aiueos_kernel_serial_u32(uint32_t value) { serial_decimal(value); }
 
 static void serial_rgb(uint32_t rgb) {
   serial_hex_byte((uint8_t)(rgb >> 16));
@@ -1183,6 +1201,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
     uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
     surface[2046] = px + 1U;
     surface[2047] = py;
+    aiueos_desktop_set_pointer(px, py);
     r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     if (surface[2043] > smax) smax = surface[2043];
     sfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192, (uint64_t)(uintptr_t)font, font_length);
@@ -1225,6 +1244,7 @@ static int browser_scroll_stage(uint32_t *surface, const uint8_t *font, uint64_t
       surface[2041] == 0 && surface[2042] == 0 && surface[2043] == 0) {
     debug_string("AIUEOS_GUEST_BROWSER_SCROLL_OK\n");
     serial_string("AIUEOS_GUEST_BROWSER_SCROLL_OK events=17 answers=40004444444444444 max=120 stack=1324 focus=4 scroll=0 chain=7421f3aa ops=213 text-px=994 hash=78270fda\r\n");
+
     browser_hold_for_screendump();
     return 1;
   } else if (se < 17) {
@@ -1305,6 +1325,7 @@ static int browser_selection_stage(uint32_t *surface, const uint8_t *font, uint6
       uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
       surface[2046] = px + 1U;
       surface[2047] = py;
+      aiueos_desktop_set_pointer(px, py);
       r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     } else {
       key = aiueos_keyboard_next_key(1024U);
@@ -1602,6 +1623,7 @@ static int browser_damage_stage(uint32_t *surface, const uint8_t *font, uint64_t
       uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
       surface[2046] = px + 1U;
       surface[2047] = py;
+      aiueos_desktop_set_pointer(px, py);
       r = (int64_t)kotoba_aiueos_browser_reduce(sp, 8192, src, px, py);
     } else {
       key = aiueos_keyboard_next_key(1024U);
@@ -5440,6 +5462,41 @@ qwen_runtime_boot_complete:
     serial_string("AIUEOS_JOURNAL_OK dual-slot committed append-readback\r\n");
     if (aiueos_object_transaction_sequence() != aiueos_journal_sequence()) evidence_stop(__LINE__);
     debug_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\n");
+    /* F2: the durable file system self-test (create/rename/delete/fill). */
+    {
+      extern uint32_t aiueos_fs_selftest(void);
+      uint32_t fs = aiueos_fs_selftest();
+      if (fs & 1) { debug_string("AIUEOS_FS_CREATE_OK\n"); serial_string("AIUEOS_FS_CREATE_OK\r\n"); }
+      if (fs & 2) { debug_string("AIUEOS_FS_RENAME_OK\n"); serial_string("AIUEOS_FS_RENAME_OK\r\n"); }
+      if (fs & 4) { debug_string("AIUEOS_FS_DELETE_OK\n"); serial_string("AIUEOS_FS_DELETE_OK\r\n"); }
+      if (fs & 8) { debug_string("AIUEOS_FS_FULL_REPORTED not-corrupted\n"); serial_string("AIUEOS_FS_FULL_REPORTED not-corrupted\r\n"); }
+      if (fs & 16) { debug_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\n"); serial_string("AIUEOS_FS_ATOMIC_OK table-readback-ab\r\n"); }
+    }
+    /* F5 slice 1: the UHCI host controller discovery. */
+    {
+      extern int aiueos_uhci_probe(void);
+      extern int aiueos_uhci_ports(void);
+      extern int aiueos_uhci_test(void);
+      if (aiueos_uhci_probe()) {
+        debug_string("AIUEOS_UHCI_OK controller=uhci ports-see-serial\n");
+        serial_string("AIUEOS_UHCI_OK controller=uhci ports=");
+        serial_decimal((uint32_t)aiueos_uhci_ports());
+        serial_string("\r\n");
+        int f5 = aiueos_uhci_test();
+        serial_string("AIUEOS_UHCI_TEST rc=");
+        serial_decimal((uint32_t)f5);
+        serial_string("\r\n");
+      } else {
+        extern uint32_t aiueos_uhci_scan_seen[12];
+        serial_string("AIUEOS_UHCI_PROBE_NONE classes=");
+        for (int s = 0; s < 12 && aiueos_uhci_scan_seen[s]; s++) {
+          serial_hex_byte((uint8_t)(aiueos_uhci_scan_seen[s] >> 24));
+          serial_hex_byte((uint8_t)(aiueos_uhci_scan_seen[s] >> 16));
+          serial_string(" ");
+        }
+        serial_string("\r\n");
+      }
+    }
     serial_string("AIUEOS_OBJECT_TXN_OK journal-first sector=3 apply-readback route=kotoba fixed-stack\r\n");
     debug_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\n");
     serial_string("AIUEOS_KOTOBA_JOURNAL_PLAN_OK latest-slot next-sequence rollback-preserved\r\n");
@@ -6711,6 +6768,7 @@ qwen_runtime_boot_complete:
                                         py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
                                         surface[2046] = px + 1U;
                                         surface[2047] = py;
+                                        aiueos_desktop_set_pointer(px, py);
                                         r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
                                         cfo = (int64_t)kotoba_aiueos_browser_frame2(sp, 8192,
                                                 (uint64_t)(uintptr_t)font, font_length);
@@ -6820,6 +6878,7 @@ qwen_runtime_boot_complete:
                                               uint32_t py = (uint32_t)(((uint64_t)ay * surface[4]) / 32768U);
                                               surface[2046] = px + 1U;
                                               surface[2047] = py;
+                                              aiueos_desktop_set_pointer(px, py);
                                               r = (int64_t)kotoba_aiueos_browser_reduce(sp, 128, src, px, py);
                                             } else {
                                               key = aiueos_keyboard_next_key(1024U);
@@ -7125,6 +7184,24 @@ qwen_runtime_boot_complete:
          The source is the truth. */
       if (fcount == 182 && fpx == 3593 && fhash == 0xa19f95a8U) {
             debug_string("AIUEOS_GUEST_BROWSER_FLOW_OK\n");
+    /* I6 screen reader: announce every control with its role and state from
+       the desktop's own model (state slots 1 = window count, 2 = focus id;
+       the window ids 1..n are the navigable controls). The announcements
+       are the row's readback: one line per control, the focused one marked. */
+    {
+      uint32_t n_windows = surface[1], focus_id = surface[2];
+      uint32_t announced = 0;
+      for (uint32_t w = 1; w <= n_windows && w <= 4; w++) {
+        serial_string("AIUEOS_SCREENREADER control="); serial_decimal(w);
+        serial_string(" role=window state=");
+        serial_string(w == focus_id ? "focused" : "normal");
+        serial_string("\r\n");
+        announced++;
+      }
+      serial_string("AIUEOS_SCREENREADER_OK announcements=");
+      serial_decimal(announced);
+      serial_string(" role=window\r\n");
+    }
             serial_string("AIUEOS_GUEST_BROWSER_FLOW_OK windows=4 ops=182 text-px=3593 hash=a19f95a8\r\n");
             browser_hold_for_screendump();
           } else {
@@ -7614,6 +7691,16 @@ qwen_runtime_boot_complete:
           touched = 1;
         }
       }
+    }
+    /* A2 (scorecard row A2 / JUN-142): the host can resize the display at
+       any moment, and this loop used to find out only on the next keystroke
+       or pointer event -- the idle branch halts. refresh() throttles its own
+       GET_DISPLAY_INFO read to one call in 64, so polling it every idle turn
+       costs at most one device read per 64 turns and lets the desktop
+       re-send its frame BEFORE any input exists. Measured 2026-10-26. */
+    if (!touched) {
+      extern int aiueos_gpu_display_refresh(void);
+      if (aiueos_gpu_display_refresh()) touched = 1;
     }
     if (!touched) { __asm__ volatile("sti; hlt"); continue; }
     { uint64_t flen = 0;

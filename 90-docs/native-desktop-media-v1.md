@@ -5,6 +5,14 @@ entry to an agent-first workspace; an Awai Node Console would own node setup,
 resources and observation. Murakumo names the dedicated hardware that can host
 an Awai Node. These UI and node roles do not require a Linux guest.
 
+AIUEOS is the common OS foundation; **AWAI OS is its Awai distribution in
+this same repository**. `build-native-desktop.py --distribution awai` (or
+`AIUEOS_DISTRIBUTION=awai` in the shell wrapper) stages and digest-binds the
+[distribution descriptor](../distributions/README.md). Both selections use
+identical core producers. This candidate metadata does not install the
+intended app/node components, change runtime/assurance profiles, or qualify
+a distribution release. See [ADR0274](adr/0274-awai-os-is-an-aiueos-distribution.md).
+
 The native closure follows this order (lower layers supply the upper ones):
 
 ```mermaid
@@ -55,7 +63,9 @@ This is a native AIUEOS UI entry with no Linux guest or host text service.
 
 An explicit `build-native-desktop.py --profile local-draft` candidate enables
 bounded native disk commit/cold restore for that diagnostic text. The default
-profile retains RAM-only behavior. The extra locked module is the draft store;
+profile retains RAM-only behavior. Distribution and profile are independent:
+`--distribution awai --profile local-draft` selects AWAI metadata and the
+same opt-in draft candidate; selecting AWAI alone keeps the desktop RAM-only. The extra locked module is the draft store;
 it uses reserved desktop-context scratch rather than DMA/snapshot pages. See
 [AWAI-90 progress](native-workspace-restore-progress.md) for the source-bound
 receipt and the still-open D2 image, shared Browser, user-target and release

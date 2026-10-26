@@ -83,12 +83,31 @@ def verify(receipt_path, signature_path, public_key_path):
         raise ValueError("release signature does not verify")
 
 
+def key_fingerprint(public_key_path):
+    """SHA-256 over the DER public-key bytes; the revocation list names these."""
+    return hashlib.sha256(Path(public_key_path).read_bytes()).hexdigest()
+
+
+def check_revoked(public_key_path, revoked_path):
+    """Refuse a signer whose fingerprint is listed in the revocation file."""
+    if revoked_path is None:
+        return
+    fingerprint = key_fingerprint(public_key_path)
+    for line in Path(revoked_path).read_text().splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if entry and entry.lower() == fingerprint.lower():
+            raise ValueError("release signer is revoked: %s" % fingerprint)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--receipt", required=True)
     parser.add_argument("--signature", required=True)
     parser.add_argument("--public-key", required=True)
+    parser.add_argument("--revoked-keys", default=None,
+                        help="file of revoked key fingerprints (SHA-256 of the DER public key, one per line)")
     args = parser.parse_args()
+    check_revoked(args.public_key, args.revoked_keys)
     verify(args.receipt, args.signature, args.public_key)
     print("AIUEOS_RELEASE_SIGNATURE_OK rsa2048-pkcs1-sha256")
 
