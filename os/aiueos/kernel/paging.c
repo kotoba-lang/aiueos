@@ -72,7 +72,7 @@ static uint32_t pci_directory_owner[PCI_DIRECTORY_SLOTS];
  * while each process owns the complete low-2MiB page-table path. */
 struct process_address_space {
   uint64_t *pml5, *pml4, *pdpt, *directory, *low;
-  uint8_t *private_page, *user_text_page, *user_data_page;
+  uint8_t *private_page, *user_text_page, *user_text_page2, *user_data_page;
   uint16_t generation;
   uint8_t active, claimed;
 };
@@ -377,6 +377,7 @@ int aiueos_paging_initialize(const struct aiueos_boot_info *boot) {
 static void release_process_space(struct process_address_space *space) {
   if (space->private_page) aiueos_free_physical_page(space->private_page);
   if (space->user_text_page) aiueos_free_physical_page(space->user_text_page);
+  if (space->user_text_page2) aiueos_free_physical_page(space->user_text_page2);
   if (space->user_data_page) aiueos_free_physical_page(space->user_data_page);
   if (space->low) aiueos_free_physical_page(space->low);
   if (space->directory) aiueos_free_physical_page(space->directory);
@@ -503,26 +504,45 @@ void *aiueos_address_space_private_backing(unsigned process) {
     process_spaces[process].private_page : 0;
 }
 int aiueos_address_space_map_user_image(unsigned process,const uint8_t *text,
-    uint64_t text_size,const uint8_t *data,uint64_t data_size) {
+    uint64_t text_size,const uint8_t *data,uint64_t data_size,uint64_t data_va) {
   if (process>=PROCESS_SLOT_COUNT || !text || !data) return 0;
+  /* JUN-145 ④: text takes one or two pages, data one. The plan admits text
+     up to 8 KiB and names the base page (481); how many pages that is for a
+     given text_size is arithmetic, not a second decision. Fail closed past
+     the two pages the validator admits, and past one page for data (every
+     shipped user context segment is the 88-byte record). The pairing of a
+     two-page text with a data VA outside those text pages is proved by
+     aiueos-user-elf-valid's contiguity rule before mapping runs, so the
+     data map below can never land on top of a text page. */
+  if (text_size>2*PAGE_SIZE || data_size>PAGE_SIZE) return 0;
   struct process_address_space *space=&process_spaces[process];
   uint64_t existing=space->user_text_page || space->user_data_page;
   uint64_t text_plan=kotoba_aiueos_page_mapping_plan(process,2,text_size,
     space->active,existing);
-  uint64_t data_plan=kotoba_aiueos_page_mapping_plan(process,3,data_size,
+  uint64_t data_plan=kotoba_aiueos_page_mapping_plan(process,3,data_va,
     space->active,existing);
   if (!text_plan || !data_plan) return 0;
+  uint64_t text_pages=(text_size+PAGE_SIZE-1)/PAGE_SIZE;
   space->user_text_page=aiueos_allocate_physical_page();
+  if (text_pages==2) space->user_text_page2=aiueos_allocate_physical_page();
   space->user_data_page=aiueos_allocate_physical_page();
-  if (!space->user_text_page || !space->user_data_page) {
+  if (!space->user_text_page || !space->user_data_page ||
+      (text_pages==2 && !space->user_text_page2)) {
     if (space->user_text_page) aiueos_free_physical_page(space->user_text_page);
+    if (space->user_text_page2) aiueos_free_physical_page(space->user_text_page2);
     if (space->user_data_page) aiueos_free_physical_page(space->user_data_page);
-    space->user_text_page=space->user_data_page=0; return 0;
+    space->user_text_page=space->user_text_page2=space->user_data_page=0;
+    return 0;
   }
-  for (uint64_t i=0;i<text_size;i++) space->user_text_page[i]=text[i];
+  for (uint64_t i=0;i<text_size;i++)
+    (i<PAGE_SIZE ? space->user_text_page : space->user_text_page2)[i%PAGE_SIZE]
+      =text[i];
   for (uint64_t i=0;i<data_size;i++) space->user_data_page[i]=data[i];
   space->low[text_plan>>2]=encrypted_ram_address(space->user_text_page)|
     user_mapping_flags(text_plan&3U);
+  if (text_pages==2)
+    space->low[(text_plan>>2)+1]=encrypted_ram_address(space->user_text_page2)|
+      user_mapping_flags(text_plan&3U);
   space->low[data_plan>>2]=encrypted_ram_address(space->user_data_page)|
     user_mapping_flags(data_plan&3U);
   return 1;

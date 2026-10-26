@@ -7,7 +7,8 @@
 
 extern int aiueos_kotoba_app_object(const uint8_t id[16],const uint8_t **data,uint64_t *length);
 extern int aiueos_address_space_map_user_image(unsigned process,
-  const uint8_t *text,uint64_t text_size,const uint8_t *data,uint64_t data_size);
+  const uint8_t *text,uint64_t text_size,const uint8_t *data,uint64_t data_size,
+  uint64_t data_va);
 extern void *aiueos_address_space_user_data_backing(unsigned process);
 extern uint64_t kotoba_aiueos_user_elf_valid(const uint8_t *image,uint64_t length);
 extern uint64_t kotoba_aiueos_sha256(const uint8_t *,uint64_t,uint8_t *,uint8_t *,uint64_t);
@@ -30,7 +31,7 @@ static int load_kotoba_process(unsigned process,const uint8_t *image,uint64_t si
   uint64_t phoff=load_u32(image+32)|(load_u32(image+36)<<32);
   uint64_t phentsize=load_u32(image+54)&0xffff;
   uint64_t phnum=(load_u32(image+54)>>16)&0xffff;
-  uint64_t text_off=0,text_size=0,data_off=0,entry_va=0;
+  uint64_t text_off=0,text_size=0,data_off=0,data_va=0,entry_va=0;
   if (phentsize<56 || phoff+phnum*phentsize>size) return 0;
   for (uint64_t i=0;i<phnum;i++) {
     const uint8_t *ph=image+phoff+i*phentsize;
@@ -39,11 +40,15 @@ static int load_kotoba_process(unsigned process,const uint8_t *image,uint64_t si
     uint64_t vaddr=load_u32(ph+16)|(load_u32(ph+20)<<32);
     uint64_t filesz=load_u32(ph+32)|(load_u32(ph+36)<<32);
     if (flags==0x5 && filesz) { text_off=off; text_size=filesz; entry_va=vaddr; }
-    if (flags==0x6) data_off=off;
+    if (flags==0x6) { data_off=off; data_va=vaddr; }
   }
-  if (!text_size || !data_off || text_off+text_size>size) return 0;
+  if (!text_size || !data_off || !data_va || text_off+text_size>size) return 0;
+  /* Kind 3 now receives the data segment's p_vaddr, not its byte count
+     (JUN-145 ③): the mapping plan maps the page the program header names, so
+     the old 8 KiB-data layout maps 0x1e2000 and the current packager's 64 KiB
+     one maps 0x1f0000 out of the same call. */
   if (!aiueos_address_space_map_user_image(process,image+text_off,text_size,
-        image+data_off,88)) return 0;
+        image+data_off,88,data_va)) return 0;
   *entry=entry_va?entry_va:ELF_TEXT_VA;
   *result=aiueos_address_space_user_data_backing(process);
   loader_evidence=*result!=0;
@@ -86,9 +91,15 @@ int aiueos_load_embedded_plc_process(unsigned process,uint64_t *entry,uint64_t *
   if (!kotoba_aiueos_user_elf_valid(aiueos_plc_elf_start,size)) return 0;
   aiueos_plc_loader_stage=6;
   uint64_t text_size=load_u32(aiueos_plc_elf_start+96);
+  /* p_vaddr of the data phdr at the position the PLC validator admits
+     (phoff 64 + phentsize 56): the mapping plan is given the address the
+     program header names, never a byte count. */
+  uint64_t data_va=load_u32(aiueos_plc_elf_start+136)|
+    (load_u32(aiueos_plc_elf_start+140)<<32);
+  if (!data_va) return 0;
   if (!aiueos_address_space_map_user_image(process,
       aiueos_plc_elf_start+ELF_TEXT_OFFSET,text_size,
-      aiueos_plc_elf_start+ELF_DATA_OFFSET,88)) return 0;
+      aiueos_plc_elf_start+ELF_DATA_OFFSET,88,data_va)) return 0;
   aiueos_plc_loader_stage=7;
   *entry=ELF_TEXT_VA;
   *result=aiueos_address_space_user_data_backing(process);
