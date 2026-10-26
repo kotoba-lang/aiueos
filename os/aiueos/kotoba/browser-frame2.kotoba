@@ -1015,12 +1015,11 @@
         gw (glyph-width s sb f fb gi)]
     (do (put-glyph s sb x y (+ (* gi 65536) gw)) (+ x gw)))))
 
-(defn note-text [s sb f fb p0] (let [base (lo16 p0) i (hi16 p0) x (sw s sb 436) y (sw s sb 437)]
+(defn note-text [s sb f fb p0] (loop [p0 p0] (let [base (lo16 p0) i (hi16 p0) x (sw s sb 436) y (sw s sb 437)]
   (if (>= i 7) 0
-    
       (if (= (sw s sb (+ base (+ i 1))) 0) 0
         (let [x2 (note-glyph s sb f fb (pk3 (sw s sb (+ base (+ i 1))) x y))]
-          (do (sput s sb 436 x2) (sput s sb 437 y) (note-text s sb f fb (+ (* base 65536) (+ i 1)))))))))
+          (do (sput s sb 436 x2) (sput s sb 437 y) (recur (+ (* base 65536) (+ i 1))))))))))
 
 (defn toast [s sb f fb p0] (let [vw (u3a p0) slot (u3b p0) base (u3c p0)]
   (do (sput s sb 422 16774084)
@@ -1037,8 +1036,9 @@
         (recur (pk3 vw (+ k 1) slot))))))))
 
 (defn panel-count [s sb k]
-  (if (>= k 4) 0
-    (+ (if (= (sw s sb (+ 1971 (* 8 k))) 0) 0 1) (panel-count s sb (+ k 1)))))
+  (loop [j k acc 0]
+    (if (>= j 4) acc
+      (recur (+ j 1) (+ acc (if (= (sw s sb (+ 1971 (* 8 j))) 0) 0 1))))))
 
 (defn panel-rows [s sb f fb p0] (loop [p0 p0] (let [vw (u3a p0) k (u3b p0) row (u3c p0)]
   (if (>= k 4) 0
