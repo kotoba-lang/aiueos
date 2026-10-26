@@ -86,6 +86,144 @@
           (recur (+ start 64) (sh-accumulate (sh-rounds (sh-working (sh-expand (sh-load state bytes start total))) constants))))))))
 (defn- sh-text [text :string] :string (sh-bytes (vector-i64-from-bytes (string-to-utf8 text))))
 
+;; Pure vector RSA-2048 PKCS#1 v1.5 verifier for the v1 qualification key.
+;; Adapted from os/aiueos/kotoba/rsa2048.kotoba; public modulus only.
+(def MODULUS "B2F3956BA41F54CEC48B46455907F7AA37C05CA1ED3AF997670663FC9DEA41A4D30C34C821A0726B7BEE8058DD32E579588FC71435D0A5F6C932487648724A452BF50E4FCCB2D04500DE2774D0930B25963BAAB1E74F7E4604B1067614A72175CC8C78C7B70E8FE34F4FA20594F9FAD05456A93ACFCBA3A2CD1031E87EBD6FDCA2E0E13B340843111E364EDCA7BCADF00E54BA3B31DC2DFA640966A086BD52852668127E1B45BE4513C12F682D0E90A57EB644032B3EF8B1135ED8F70DA5B2D6C44F135656AAD32783A8BF41A3DBFDAEE215705CACBB4B86D93C06485A4D7BB916FDBBCFAF6A8E73ADD57033F55F8BA1CC0F955140E5F10FCE439DA41BA72C3F")
+(def MASK 4294967295)
+
+(defn- hex-digit [c :i64] :i64
+  (if (and (>= c 48) (<= c 57)) (- c 48)
+    (if (and (>= c 65) (<= c 70)) (- c 55)
+      (if (and (>= c 97) (<= c 102)) (- c 87) -1))))
+
+(defn- modulus-word [i :i64] :i64
+  (let [start (- 512 (* (+ i 1) 8))
+        b (string-to-utf8 MODULUS)]
+    (loop [j 0 value 0]
+      (if (= j 8) value
+        (recur (+ j 1) (+ (* value 16) (hex-digit (bytes-at b (+ start j)))))))))
+
+(defn- word [w :vector-i64 region :i64 i :i64] :i64
+  (vector-at w (+ region i)))
+(defn- store [w :vector-i64 region :i64 i :i64 value :i64] :vector-i64
+  (vector-assoc! w (+ region i) (bit-and value MASK)))
+
+(defn- init-modulus [w :vector-i64] :vector-i64
+  (loop [i 0 out w]
+    (if (= i 64) out
+      (recur (+ i 1) (store out 320 i (modulus-word i))))))
+
+(defn- load-signature [w :vector-i64 sig :bytes] :vector-i64
+  (loop [i 0 out w]
+    (if (= i 64) out
+      (let [offset (- 252 (* i 4))
+            value (+ (* (bytes-at sig offset) 16777216)
+                     (+ (* (bytes-at sig (+ offset 1)) 65536)
+                        (+ (* (bytes-at sig (+ offset 2)) 256)
+                           (bytes-at sig (+ offset 3)))))]
+        (recur (+ i 1) (store out 64 i value))))))
+
+(defn- compare-modulus [w :vector-i64 region :i64] :i64
+  (loop [i 63]
+    (if (< i 0) 0
+      (let [value (word w region i)
+            modulus (word w 320 i)]
+        (if (> value modulus) 1
+          (if (< value modulus) -1 (recur (- i 1))))))))
+
+(defn- subtract-modulus [w :vector-i64 region :i64] :vector-i64
+  (loop [i 0 borrow 0 out w]
+    (if (= i 64) out
+      (let [before (word out region i)
+            sub-total (+ (word out 320 i) borrow)
+            sub (bit-and sub-total MASK)
+            next-borrow (if (> sub-total MASK) 1 (if (< before sub) 1 0))
+            next (store out region i (- before sub))]
+        (recur (+ i 1) next-borrow next)))))
+
+(defn- add-mod [w :vector-i64 target :i64 source :i64] :vector-i64
+  (loop [i 0 carry 0 out w]
+    (if (= i 64)
+      (if (or (> carry 0) (>= (compare-modulus out target) 0))
+        (subtract-modulus out target) out)
+      (let [sum (+ (word out target i) (+ (word out source i) carry))
+            next (store out target i sum)]
+        (recur (+ i 1) (quot sum 4294967296) next)))))
+
+(defn- clear-region [w :vector-i64 region :i64] :vector-i64
+  (loop [i 0 out w]
+    (if (= i 64) out
+      (recur (+ i 1) (store out region i 0)))))
+
+(defn- copy-region [w :vector-i64 destination :i64 source :i64] :vector-i64
+  (loop [i 0 out w]
+    (if (= i 64) out
+      (recur (+ i 1) (store out destination i (word out source i))))))
+
+(defn- source-bit [w :vector-i64 region :i64 bit :i64] :i64
+  (let [index (quot bit 32)
+        within (- bit (* index 32))]
+    (bit-and (u64-shift-right (word w region index) within) 1)))
+
+(defn- multiply-mod [w :vector-i64 output :i64 left :i64 right :i64] :vector-i64
+  (let [cleared (clear-region w 192)
+        initial (copy-region cleared 256 left)]
+    (loop [bit 0 out initial]
+      (if (= bit 2048) (copy-region out output 192)
+        (let [added (if (= (source-bit out right bit) 1)
+                      (add-mod out 192 256) out)
+              doubled (add-mod added 256 256)]
+          (recur (+ bit 1) doubled))))))
+
+(defn- exponentiate [w :vector-i64] :vector-i64
+  (loop [bit 16 out w]
+    (if (< bit 0) out
+      (let [squared (multiply-mod out 128 0 0)
+            state (copy-region squared 0 128)
+            next (if (or (= bit 16) (= bit 0))
+                   (copy-region (multiply-mod state 128 0 64) 0 128)
+                   state)]
+        (recur (- bit 1) next)))))
+
+(defn- encoded-byte [w :vector-i64 position :i64] :i64
+  (let [reverse (- 255 position)
+        index (quot reverse 4)
+        within (- reverse (* index 4))]
+    (bit-and (u64-shift-right (word w 0 index) (* within 8)) 255)))
+
+(defn- prefix-byte [i :i64] :i64
+  (vector-at [48 49 48 13 6 9 96 134 72 1 101 3 4 2 1 5 0 4 32] i))
+
+(defn- digest-byte [digest :bytes i :i64] :i64
+  (+ (* 16 (hex-digit (bytes-at digest (* i 2))))
+     (hex-digit (bytes-at digest (+ (* i 2) 1)))))
+
+(defn- expected-byte [digest :bytes position :i64] :i64
+  (if (= position 0) 0
+    (if (= position 1) 1
+      (if (< position 204) 255
+        (if (= position 204) 0
+          (if (< position 224) (prefix-byte (- position 205))
+            (digest-byte digest (- position 224))))))))
+
+(defn- compare-encoding [w :vector-i64 digest :bytes] :i64
+  (loop [position 0 difference 0]
+    (if (= position 256) difference
+      (recur (+ position 1)
+        (bit-or difference
+          (bit-xor (encoded-byte w position)
+                   (expected-byte digest position)))))))
+
+(defn- rsa-verify [signature :bytes digest-hex :string] :bool
+  (if (or (not= (bytes-count signature) 256)
+          (not= (string-byte-length digest-hex) 64)) false
+    (let [w (init-modulus (vector-alloc 384))
+          loaded (load-signature w signature)]
+      (if (>= (compare-modulus loaded 64) 0) false
+        (let [one (store (clear-region loaded 0) 0 0 1)
+              powered (exponentiate one)]
+          (= (compare-encoding powered (string-to-utf8 digest-hex)) 0))))))
+
 (defn- blank? [c :i64] :bool
   (or (= c 32) (= c 9) (= c 10) (= c 13) (= c 44)))
 
@@ -190,23 +328,27 @@
          "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
          "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")))
 
-(defn- file-sha256? [path :string expected :string] :bool
+(defn- read-file-bytes [path :string] :bytes
   (let [request (string-concat "\u0000FS2\u0000A"
                   (string-concat path "\u0000"))
         reply (typed-cap-call :fs/app-data :string :bytes request)
         n (bytes-count reply)]
-    (and (> n 5)
-         (= (bytes-at reply 0) 0) (= (bytes-at reply 1) 70)
-         (= (bytes-at reply 2) 83) (= (bytes-at reply 3) 50)
-         (= (bytes-at reply 4) 0)
-         (string=? (sh-bytes
-                     (vector-i64-from-bytes (bytes-slice reply 5 n)))
-                   expected))))
+    (if (and (> n 5)
+             (= (bytes-at reply 0) 0) (= (bytes-at reply 1) 70)
+             (= (bytes-at reply 2) 83) (= (bytes-at reply 3) 50)
+             (= (bytes-at reply 4) 0))
+      (bytes-slice reply 5 n) (bytes-empty))))
 
 (defn- signed-release-shape? [receipt :document] :bool
   (let [signature (document-string-value (field receipt :signature-sha256))
         artifact (document-string-value (field receipt :receipt-sha256))
-        verdicts (field receipt :verdicts)]
+        verdicts (field receipt :verdicts)
+        json-bytes (read-file-bytes
+                     "os/aiueos/qualification/receipts/vm-20261025/signed-release/aiueos-x86_64-build-receipt.json")
+        signature-bytes (read-file-bytes
+                          "os/aiueos/qualification/receipts/vm-20261025/signed-release/aiueos-x86_64-build-receipt.sig")
+        json-digest (sh-bytes (vector-i64-from-bytes json-bytes))
+        signature-digest (sh-bytes (vector-i64-from-bytes signature-bytes))]
     (and (option-some?-of [:option :string] signature)
          (hex64? (option-value-of [:option :string] signature ""))
          (option-some?-of [:option :string] artifact)
@@ -214,12 +356,12 @@
          (green-named-verdict? verdicts "release-signature")
          (green-named-verdict? verdicts "tamper-refused")
          (green-named-verdict? verdicts "image-bound")
-         (file-sha256?
-           "os/aiueos/qualification/receipts/vm-20261025/signed-release/aiueos-x86_64-build-receipt.json"
-           (option-value-of [:option :string] artifact ""))
-         (file-sha256?
-           "os/aiueos/qualification/receipts/vm-20261025/signed-release/aiueos-x86_64-build-receipt.sig"
-           (option-value-of [:option :string] signature "")))))
+         (> (bytes-count json-bytes) 0)
+         (= (bytes-count signature-bytes) 256)
+         (string=? json-digest (option-value-of [:option :string] artifact ""))
+         (string=? signature-digest
+                   (option-value-of [:option :string] signature ""))
+         (rsa-verify signature-bytes json-digest))))
 
 (defn- green-verdicts? [verdicts :document] :bool
   (if (not= (document-kind verdicts) :map) false

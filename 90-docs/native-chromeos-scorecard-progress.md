@@ -44,21 +44,24 @@ fields. This uses the pure SHA-256 source copied from Amu
 `seed/03-source-sha256.kotoba` at commit `392118c8` (source SHA-256
 `40be511b6879d1c4c6a4b443b796ec1ef5cbe561d5c69c6ae52b8e62a96393d1`).
 Known empty, `abc`, and multiblock vectors run in the native executable.
-Matching the signature file's digest is not RSA signature verification.
+The native verifier then checks RSA-2048 exponent 65537 and the complete
+PKCS#1 v1.5 SHA-256 encoding against the JSON bytes. It adapts the bounded
+calculation in `os/aiueos/kotoba/rsa2048.kotoba` to the Mac native vector ABI.
+The embedded modulus matches the checked-in qualification public key; no
+private key is read by this verifier. This is the v1 **qualification** key,
+not a production release key.
 The probe prints the recorded score of 48 and category weights, passes and
-gaps. Twelve negative controls change the required weight, duplicate an ID,
-remove a receipt reference, clear owner confirmation, introduce an unknown
-category, remove a receipt file, turn one receipt verdict red, remove the
-signed-release reference, damage its signature digest field, remove its
-named image-bound verdict, or alter one byte in either release file. All must
-produce a nonzero native result. The positive and negative outputs are checked
-exactly.
+gaps. Fourteen negative controls cover malformed schema, missing or red
+receipts, missing signed-release reference, malformed digest fields, missing
+named verdicts, one-byte artifact changes, a modified signature with an
+updated matching digest, and a different public modulus. Each must return a
+nonzero native result; expected output is checked exactly.
 
-This is a **core schema and release-file digest probe**. Other receipt marker
-text and artifact digests are not yet checked against the underlying log/image,
-and the RSA release signature is not verified by this native route. Receipt
-commit age and relevant-source freshness remain unqualified. The 48 points describe
-the existing reference VM ledger; they do not qualify physical hardware or
+This is a **core schema and qualification-release signature probe**. Other
+receipt marker text and artifact digests are not yet checked against the
+underlying log/image, and the production release signature is not qualified.
+Receipt commit age and relevant-source freshness remain unqualified. The 48
+points describe the existing reference VM ledger; they do not qualify physical hardware or
 a release. The runner and receipt name keep `EVIDENCE_PENDING` until those
 gates pass. The legacy checker stays historical and must not be used for
 current native qualification.

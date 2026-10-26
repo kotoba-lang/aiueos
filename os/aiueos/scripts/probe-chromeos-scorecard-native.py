@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build and exercise the native scorecard core on macOS without hosted runtimes.
 
-This is a schema/point-ledger probe with native release-receipt file hashing.
-It does not verify the RSA signature, other evidence, freshness, or hardware.
+This is a schema/point-ledger probe with native qualification-release RSA
+verification. It does not qualify other evidence, freshness, or hardware.
 """
 
 import argparse
@@ -34,7 +34,8 @@ NEGATIVES = {
 }
 RECEIPT_NEGATIVES = ('missing-receipt-file', 'red-verdict',
                      'bad-release-signature-field', 'missing-release-verdict',
-                     'tampered-release-json', 'tampered-release-signature')
+                     'tampered-release-json', 'tampered-release-signature',
+                     'rehashed-invalid-signature')
 A1_RECEIPT = Path('os/aiueos/qualification/receipts/vm-20261024/a1-qmp60/receipt.edn')
 SIGNED_RELEASE_RECEIPT = Path(
     'os/aiueos/qualification/receipts/vm-20261025/signed-release/receipt.edn')
@@ -183,7 +184,8 @@ def main():
                 SIGNED_RELEASE_RECEIPT if name in
                 ('bad-release-signature-field', 'missing-release-verdict')
                 else SIGNED_RELEASE_JSON if name == 'tampered-release-json'
-                else SIGNED_RELEASE_SIGNATURE if name == 'tampered-release-signature'
+                else SIGNED_RELEASE_SIGNATURE if name in
+                ('tampered-release-signature', 'rehashed-invalid-signature')
                 else A1_RECEIPT)
             if name == 'missing-receipt-file':
                 target.unlink()
@@ -207,6 +209,20 @@ def main():
                 if not artifact_bytes:
                     raise ValueError('release artifact empty')
                 target.write_bytes(bytes([artifact_bytes[0] ^ 1]) + artifact_bytes[1:])
+            elif name == 'rehashed-invalid-signature':
+                artifact_bytes = target.read_bytes()
+                if len(artifact_bytes) != 256:
+                    raise ValueError('release signature size changed')
+                mutated = artifact_bytes[:-1] + bytes([artifact_bytes[-1] ^ 1])
+                target.write_bytes(mutated)
+                receipt = directory/SIGNED_RELEASE_RECEIPT
+                updated, count = re.subn(
+                    rb':signature-sha256 "[0-9a-f]{64}"',
+                    b':signature-sha256 "' + hashlib.sha256(mutated).hexdigest().encode()
+                    + b'"', receipt.read_bytes(), count=1)
+                if count != 1:
+                    raise ValueError('release signature digest anchor missing')
+                receipt.write_bytes(updated)
             else:
                 receipt_bytes = target.read_bytes()
                 if b':green? true' not in receipt_bytes:
@@ -222,6 +238,46 @@ def main():
                 or result.stderr):
             raise ValueError(f'native scorecard {name} mismatch: {observations[name]}')
 
+    # A different public modulus must reject the same intact receipt and
+    # signature. This checks that the native RSA path actually binds the key.
+    wrong_dir = output/'wrong-public-modulus'
+    wrong_dir.mkdir(mode=0o700)
+    original = source.read_bytes()
+    key = re.search(rb'\(def MODULUS "([0-9A-F]{512})"\)', original)
+    if key is None:
+        raise ValueError('native qualification modulus anchor missing')
+    modulus = key.group(1)
+    altered = modulus[:1] + (b'3' if modulus[1:2] != b'3' else b'2') + modulus[2:]
+    wrong_source = wrong_dir/'scorecard-wrong-key.kotoba'
+    wrong_source.write_bytes(original.replace(modulus, altered, 1))
+    require_native(run(compiler, wrong_dir, 'compile', wrong_source.name,
+                       '--target', 'aarch64-macos', '--output', 'wrong.kseed'),
+                   'wrong-key compile')
+    extraction = require_native(run(compiler, wrong_dir, 'extract-native',
+                                    'wrong.kseed', '--symbol', 'main',
+                                    '--output', 'wrong.raw'), 'wrong-key extract')
+    match = re.search(rb':offset (\d+), :length (\d+)', extraction)
+    if match is None or int(match.group(2)) != (wrong_dir/'wrong.raw').stat().st_size:
+        raise ValueError('wrong-key entry extraction mismatch')
+    require_native(run(packager, wrong_dir, 'wrong-unsigned.macho', 'wrong.raw',
+                       'fs2-cli-stdio-general', match.group(1).decode()),
+                   'wrong-key package')
+    wrong_image = wrong_dir/'wrong.macho'
+    shutil.copyfile(wrong_dir/'wrong-unsigned.macho', wrong_image)
+    wrong_image.chmod(0o755)
+    signed = subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-',
+                             str(wrong_image)], capture_output=True, timeout=30)
+    if signed.returncode:
+        raise ValueError('wrong-key output signing failed')
+    result = run(wrong_image, output/'positive')
+    observations['wrong-public-modulus'] = {
+        'exit': result.returncode,
+        'stdout': result.stdout.decode(errors='replace'),
+        'sourceSha256': digest(wrong_source)}
+    if (result.returncode != 1 or result.stdout != b'AIUEOS_SCORE -1\n'
+            or result.stderr):
+        raise ValueError('native wrong-key refusal mismatch')
+
     report = {'schema': 'aiueos.native-scorecard-core-probe.v1',
               'status': 'CORE_SCHEMA_PASS_EVIDENCE_PENDING',
               'sourceCommit': commit, 'sourceAtCommit': source_at_commit,
@@ -232,6 +288,7 @@ def main():
               'observations': observations,
               'receiptFieldsVerified': True, 'evidenceArtifactsVerified': False,
               'signedReleaseReceiptFileDigestsVerified': True,
+              'qualificationReleaseSignatureVerified': True,
               'releaseSignatureVerified': False,
               'evidenceFreshnessVerified': False, 'physicalHardwareQualified': False,
               'linuxJvmNodeExecuted': False}
