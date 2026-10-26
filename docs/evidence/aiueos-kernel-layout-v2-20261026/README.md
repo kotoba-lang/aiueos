@@ -19,6 +19,13 @@ user code. Acceptance reached CPL3 and returned token `i` (105) through the
 user-originated syscall. A one-byte changed slot was refused before CPL3.
 QMP used private stdio, with no VNC listener, password or NIC.
 
+After the selected Amu core and CDCI pins were repaired, the new signed Mac
+compiler independently rebuilt the same 35-module AIUEOS source. Its kernel
+ELF, user ELF, slot and EFI matched the QEMU-tested image byte for byte; the
+[reproduction receipt](core-repin-reproduction.json) records the new compiler
+identity and four output hashes. This establishes byte identity with the
+earlier VM observation, without claiming another QEMU or hardware run.
+
 The versioned packager accepted kernel-v1 with slot-v2 and kernel-v2 with
 slot-v3. It refused both mixed pairs, a changed user-v4 ELF entry, and a
 kernel-v2 RW address changed to 0x301000, and a shortened RW segment. On the
