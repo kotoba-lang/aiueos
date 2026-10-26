@@ -28,8 +28,21 @@ model. The draft disk was unchanged by the inference and refusal boots.
 Run the headless gate on a matching Mac native build:
 
 ```sh
-python3 os/aiueos/scripts/debug-native-local-model-confirm-qemu.py "$BUILD"
+python3 os/aiueos/scripts/debug-native-itonami.py "$BUILD"
 ```
+
+This entry selects the source-bound gate from the build receipt and writes a
+top-level run receipt plus logs, including on failure. The direct
+`debug-native-local-model-confirm-qemu.py` gate remains available for detailed
+guest work.
+
+The unified entry passed against the local-model build (three QEMU boots,
+including restored Goal and changed-slot refusal) and the older durable-Goal
+build (two boots). A negative control using `/usr/bin/false` as the QEMU
+executable returned `FAIL` and exit 1, while preserving `debug-run.json` and
+the QMP traceback in `stderr.log`. The successful local-model run printed both
+guest screenshot paths. These runs required no Screen Sharing login, password
+or manual guest input.
 
 The builder now accepts a pinned local `--user-source`,
 `--user-source-sha256` and `--user-elf-sha256` in place of an existing

@@ -16,6 +16,25 @@ shared interactive session; QMP does not require disabling it.
 
 ## One-shot Itonami UI debug (no listener or login)
 
+For a completed Mac native user-v2 build, use one command. It reads the
+`kernelEntry` in `build-state.json` and selects the matching live Goal, durable
+Goal or local-model gate. It boots new isolated QEMU guests and saves the gate
+receipt, standard output, standard error, screenshots when available, and a
+top-level `debug-run.json` even when a guest check fails:
+
+```sh
+python3 os/aiueos/scripts/debug-native-itonami.py "$BUILD"
+```
+
+Use `--goal 'a b'` for live or durable Goal builds. The local-model gate has a
+fixed fixture and rejects `--goal`. The command prints the receipt path and
+returns nonzero on failure. Read `stderr.log`, `guest/boot-2/last-state.json`
+when present, and the QEMU logs under `guest/`. It uses private QMP standard
+I/O, no VNC, no network and no password. QMP's synthetic Y/N keys only test
+the guest's branch behavior; they are not human consent for a real external
+operation. Use a fresh user choice at the trusted operation boundary in a
+product run.
+
 For a Mac native dual-payload user-v2 build, give its build directory to the
 unattended user debugger. It validates the build receipt, extracts the pinned
 ELF from the staged user slot, boots fresh isolated QEMU guests, types the

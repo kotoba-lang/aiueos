@@ -3,9 +3,12 @@
 ## Native desktop debug without a human login
 
 For routine QEMU Itonami debugging, run
-`os/aiueos/scripts/debug-native-desktop-unattended.py` on a workspace build,
-adding `--verify-restore` to check the isolated save and cold reboot, or use
-the headless save/restart gate in
+`os/aiueos/scripts/debug-native-itonami.py` on a completed native user-v2
+build. It selects the matching live-Goal, durable-Goal or local-model gate from
+the build receipt, launches isolated QEMU boots and writes a run receipt plus
+logs even when the guest gate fails. For the older local-draft desktop profile,
+run `os/aiueos/scripts/debug-native-desktop-unattended.py`, adding
+`--verify-restore` for save and cold reboot. See
 `90-docs/native-desktop-headless-debug.md`.
 Read guest state, send test keys, and capture the framebuffer there before
 asking a person to reconnect Screen Sharing, enter a VNC password, or press
