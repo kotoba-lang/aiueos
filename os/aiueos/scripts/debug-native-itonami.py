@@ -31,6 +31,9 @@ GATES = {
     "/os/aiueos/native/user-elf-v3-local-model-entry.kotoba":
         ("debug-native-local-model-confirm-qemu.py",
          "PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE", True),
+    "/os/aiueos/native/user-elf-v4-local-model-entry.kotoba":
+        ("debug-native-local-model-confirm-qemu.py",
+         "PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE", True),
 }
 
 

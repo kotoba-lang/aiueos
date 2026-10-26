@@ -23,6 +23,8 @@ ENTRY = "/os/aiueos/native/user-elf-v2-local-model-entry.kotoba"
 ELF_SHA256 = "6d5ec74da6197788a5e778b8903cc40f001602c4c19cb4701d2620a948208e6d"
 USER_ENTRY = "/os/aiueos/native/user-elf-v3-local-model-entry.kotoba"
 USER_ELF_SHA256 = "108174e896008ac4b523450acd57d16b2b37ba3eb31f6b21d3ad3874344ca4ec"
+USER_V4_ENTRY = "/os/aiueos/native/user-elf-v4-local-model-entry.kotoba"
+USER_V4_ELF_SHA256 = "68ccbb8fee87c9bc25d46765f34b825003c7d49eecd07ea75ffbffad2c46632a"
 PROMPT_TITLE = "AIUEOS local model Goal? y/n"
 if not __debug__:
     raise RuntimeError("the QEMU assertion gate must not run with Python -O")
@@ -174,11 +176,13 @@ def main():
         parser.error("build_dir requires build-state.json")
     built = json.loads(receipt.read_text())
     entry = built.get("kernelEntry")
-    user_call = entry == USER_ENTRY
-    if built.get("state") != "MACOS_NATIVE_IMAGE_CANDIDATE" or entry not in (ENTRY, USER_ENTRY):
+    user_call = entry in (USER_ENTRY, USER_V4_ENTRY)
+    layout_v2 = entry == USER_V4_ENTRY
+    if built.get("state") != "MACOS_NATIVE_IMAGE_CANDIDATE" or entry not in (ENTRY, USER_ENTRY, USER_V4_ENTRY):
         parser.error("build is not the local-model confirmation candidate")
-    if user_call and built.get("bootUserTarget") != "x86_64-aiueos-user-v3":
-        parser.error("user syscall candidate requires the Amu user-v3 target")
+    if user_call and built.get("bootUserTarget") != (
+            "x86_64-aiueos-user-v4" if layout_v2 else "x86_64-aiueos-user-v3"):
+        parser.error("user syscall candidate requires its matching Amu user target")
     args.kernel, args.efi = build / "KERNEL.ELF", build / "BOOTX64.EFI"
     font, slot = build / "source/boot-font.bin", build / "source/boot-user-slot.bin"
     for name, path, expected in (("kernel", args.kernel, built["kernel"]),
@@ -188,7 +192,8 @@ def main():
         if path.is_symlink() or not path.is_file() or base.pin(path) != expected:
             parser.error(f"{name} differs from build receipt")
     graph = built.get("sourceGraph", {})
-    for relative in ("native/user-elf-v3-local-model-entry.kotoba" if user_call
+    for relative in ("native/user-elf-v4-local-model-entry.kotoba" if layout_v2 else
+                     "native/user-elf-v3-local-model-entry.kotoba" if user_call
                      else "native/user-elf-v2-local-model-entry.kotoba",
                      "native/desktop.kotoba", "native/draft_store.kotoba",
                      "native/micro_infer.kotoba"):
@@ -208,11 +213,11 @@ def main():
     elf_size = struct.unpack_from("<Q", slot_bytes, 16)[0]
     elf = slot_bytes[64:64 + elf_size]
     if (len(slot_bytes) != 524288 or struct.unpack_from("<QQ", slot_bytes) !=
-            (0x0031444c50554941, 2) or elf_size != 8280
+            (0x0031444c50554941, 3 if layout_v2 else 2) or elf_size != 8280
             or any(slot_bytes[64 + elf_size:])
             or base.pin(slot)["sha256"] != built["bootUserSlot"]["sha256"]
             or base.hashlib.sha256(elf).hexdigest() !=
-            (USER_ELF_SHA256 if user_call else ELF_SHA256)
+            (USER_V4_ELF_SHA256 if layout_v2 else USER_ELF_SHA256 if user_call else ELF_SHA256)
             or elf != user_elf.read_bytes()
             or efi.count(kernel) != 1 or efi.count(slot_bytes) != 1
             or efi.count(font.read_bytes()) != 1):
@@ -227,7 +232,8 @@ def main():
     args.boot_media = media
     media_pin = base.pin(media) if media is not None else None
     header = struct.unpack_from("<IIQQQQQQ", kernel, 120)
-    if header[:4] != (1, 6, 1048576, 0x200000):
+    if header[:4] != (1, 6, 2097152 if layout_v2 else 1048576,
+                       0x300000 if layout_v2 else 0x200000):
         parser.error("unexpected native context layout")
     context, code, request = header[3], header[3] + 0x20000, header[3] + 0x21000
     qemu_name = args.qemu or shutil.which("qemu-system-x86_64")
@@ -378,7 +384,7 @@ def main():
               "userSource": base.pin(user_source), "userElf": base.pin(user_elf),
               "qemu": base.pin(args.qemu), "firmware": base.pin(args.firmware),
               "observer": base.pin(Path(__file__)),
-              "userElfSha256": USER_ELF_SHA256 if user_call else ELF_SHA256,
+              "userElfSha256": USER_V4_ELF_SHA256 if layout_v2 else USER_ELF_SHA256 if user_call else ELF_SHA256,
               "goal": goal, "expectedToken": expected_token,
               "modelContract": base.pin(matrix_path), "boots": boots,
               "modifiedSlotRefusal": modified,
