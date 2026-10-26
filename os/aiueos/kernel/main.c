@@ -1085,6 +1085,11 @@ static void serial_decimal(uint32_t value) {
   while (count) serial_byte((uint8_t)digits[--count]);
 }
 
+/* A2: pci.c reports the host display geometry it read off the device, and
+   serial_decimal is file-local. Formatting only -- the numbers are the
+   device's answer to GET_DISPLAY_INFO, not a decision this code makes. */
+void aiueos_kernel_serial_u32(uint32_t value) { serial_decimal(value); }
+
 static void serial_rgb(uint32_t rgb) {
   serial_hex_byte((uint8_t)(rgb >> 16));
   serial_hex_byte((uint8_t)(rgb >> 8));
@@ -7679,6 +7684,16 @@ qwen_runtime_boot_complete:
           touched = 1;
         }
       }
+    }
+    /* A2 (scorecard row A2 / JUN-142): the host can resize the display at
+       any moment, and this loop used to find out only on the next keystroke
+       or pointer event -- the idle branch halts. refresh() throttles its own
+       GET_DISPLAY_INFO read to one call in 64, so polling it every idle turn
+       costs at most one device read per 64 turns and lets the desktop
+       re-send its frame BEFORE any input exists. Measured 2026-10-26. */
+    if (!touched) {
+      extern int aiueos_gpu_display_refresh(void);
+      if (aiueos_gpu_display_refresh()) touched = 1;
     }
     if (!touched) { __asm__ volatile("sti; hlt"); continue; }
     { uint64_t flen = 0;
