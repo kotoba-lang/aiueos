@@ -1,14 +1,14 @@
 (ns aiueos.native.user-elf-v2-live-goal-entry
   (:require [aiueos.native.kernel :as kernel]
             [aiueos.native.desktop :as desktop]
-            [aiueos.native.user-v2-inline :as user]
             [aiueos.value-runtime-entry :as runtime]
             [aiueos.value-runtime-syscall-plan :as syscall]
             [aiueos.value-runtime-domain :as domain]
             [aiueos.value-runtime-capability-table :as capability]
             [aiueos.value-runtime-provider-policy :as provider]
             [aiueos.value-runtime-provider-transport :as transport]
-            [aiueos.value-runtime-cas-verify :as cas])
+            [aiueos.value-runtime-cas-verify :as cas]
+            [aiueos.sha256 :as sha])
   (:export [main aiueos-value-runtime-entry aiueos-value-runtime-syscall-plan
             aiueos-value-runtime-publish-domain
             aiueos-value-runtime-provider-status
@@ -64,9 +64,27 @@
   (cas/aiueos-value-runtime-cas-verify
    block block-length expected output workspace))
 
-;; The compiler-generated user bytes are pinned in user-v2-inline. EFI has
-;; only one 512 KiB payload, which the native desktop uses for its font.
-;; This diagnostic copy is source-bound but is not signed app admission.
+;; The dual-payload EFI keeps the font in its first 512 KiB and the user-v2
+;; slot in its second. The compiler-provided region root is limited to the
+;; second half; whole-ELF SHA-256 and exact segment layout are checked here.
+;; This is still fixed-image admission, not a signed app catalogue.
+(defn- digest-ok [payload :i64 length :i64] :bool
+  (let [page (kernel-owned-page 0)
+        workspace (kernel-subregion page 4096 0 352)
+        digest (kernel-subregion page 4096 512 32)
+        hashed (sha/aiueos-sha256 payload length digest workspace 352)]
+    (and (= hashed 1)
+         (= (kernel-load-u64 digest 32 0) -788753088536654383)
+         (= (kernel-load-u64 digest 32 8) -3309982736564656337)
+         (= (kernel-load-u64 digest 32 16) -3153155177890565472)
+         (= (kernel-load-u64 digest 32 24) 5193484683037063314))))
+(defn- copy-segment [payload :i64 length :i64 target :i64 target-length :i64
+                     file-offset :i64 count :i64 index :i64] :bool
+  (if (= index count) true
+    (let [value (kernel-load-u8-16k payload length (+ file-offset index))
+          written (kernel-store-u8-4k target target-length index value)]
+      (and (= (kernel-load-u8-4k target target-length index) value)
+           (copy-segment payload length target target-length file-offset count (+ index 1))))))
 (defn- surface-word [surface :i64 index :i64] :i64
   (kernel-load-u32 (kernel-subregion surface 8192 (* index 4) 4) 4 0))
 (defn- clear-goal [request :i64 index :i64] :bool
@@ -90,6 +108,23 @@
             (and (= (kernel-load-u32-4k request 4096 256) goal-length)
                  (copy-goal surface request goal-length 0)))
         false))))
+(defn- stage-elf [code :i64 code-length :i64 request :i64 request-length :i64
+                 surface :i64] :bool
+  (let [slot (kernel-user-slot)
+        header (kernel-subregion slot 524288 0 64)
+        image (kernel-subregion slot 524288 64 8280)]
+    (if (and (= (kernel-load-u64 header 64 0) 0x0031444c50554941)
+             (= (kernel-load-u64 header 64 8) 2)
+             (= (kernel-load-u64 header 64 16) 8280)
+             (= (kernel-load-u64-16k image 8280 0) 0x00010102464c457f)
+             (= (kernel-load-u64-16k image 8280 24) code)
+             (= (kernel-load-u64-16k image 8280 80) code)
+             (= (kernel-load-u64-16k image 8280 136) request)
+             (digest-ok image 8280))
+      (and (copy-segment image 8280 code code-length 4096 330 0)
+           (copy-segment image 8280 request request-length 8192 88 0)
+           (write-goal surface request))
+      false)))
 (defn main [] :i64
   (let [published (kernel-value-runtime-invoke 2 73 0 0 0 0)
         submitted (if (= published 73) (desktop/goal-main) 0)
@@ -98,6 +133,6 @@
         stack (kernel-value-domain-stack-page 73)
         surface (kernel-browser-surface)
         staged (if (and (= submitted 1) (> code 0) (> request code) (> stack request))
-                 (and (user/stage code request) (write-goal surface request)) false)
+                 (stage-elf code 4096 request 4096 surface) false)
         enabled (if staged (kernel-value-enable-user) 0)]
     (if (= enabled 1) (kernel-value-enter-user 73) 0)))

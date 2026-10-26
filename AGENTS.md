@@ -23,9 +23,13 @@ ingress, approval and durable Itonami execution remain separate work.
 For the subsequent live UI handoff, use the three-boot private-QMP gate in
 `docs/evidence/aiueos-user-v2-live-goal-20261026/README.md`. It types two
 different Goals through the actual native desktop and checks a CPL3 read plus
-an empty-Goal refusal. Its compiled user bytes are pinned inline because the
-current EFI has one payload slot, occupied by the desktop font. It does not
-qualify signed app admission, approval, model/tool effects or durable turns.
+an empty-Goal refusal. The earlier inline bridge used the sole font payload
+slot. The dual-payload candidate keeps the font and user ELF in separate
+slots; run `os/aiueos/scripts/debug-native-user-v2-unattended.py` on its
+Mac native build directory to type a chosen Goal, check CPL3, take a guest
+screenshot and exercise empty/tampered-slot refusals without a password or
+human key press. It does not qualify signed app admission, approval,
+model/tool effects or durable turns.
 
 ## Shared Browser native progress (JUN-93)
 

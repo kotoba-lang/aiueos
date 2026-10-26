@@ -16,6 +16,27 @@ shared interactive session; QMP does not require disabling it.
 
 ## One-shot Itonami UI debug (no listener or login)
 
+For a Mac native dual-payload user-v2 build, give its build directory to the
+unattended user debugger. It validates the build receipt, extracts the pinned
+ELF from the staged user slot, boots fresh isolated QEMU guests, types the
+chosen Goal and a distinct control Goal into the real Itonami desktop, and
+checks the CPL3 endpoint, empty Goal refusal and changed-slot refusal:
+
+```sh
+python3 os/aiueos/scripts/debug-native-user-v2-unattended.py "$DUAL_BUILD" \
+  --goal 'debug run'
+```
+
+The command creates a mode 0700 observation directory beside the build and
+prints `debug-summary.json`, the full QMP receipt, and the first guest
+screenshot path. QMP uses private standard I/O. This path opens no VNC or
+network listener and never asks for a password or manual key press. It does
+not write to a live user VM; each boot uses a fresh test EFI under the
+observation directory. `--output` selects a new private directory. This is
+a diagnostic CPL3 length-result program, not a model/tool turn or a durable
+user workspace. Native per-operation consent remains a separate acceptance
+gate; this debugger does not grant it.
+
 For the routine check, give one complete `local-draft` build directory to the
 unattended entry. It creates a new private observation directory beside that
 build, types a lowercase Goal through private QMP, asserts the guest state and

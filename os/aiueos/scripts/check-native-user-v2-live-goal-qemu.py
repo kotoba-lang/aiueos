@@ -59,11 +59,12 @@ def key(qmp, code):
                           "hold-time": 60})
 
 
-def run_boot(qmp_type, args, output, context, code, request, elf_bytes, goal, font_bytes):
+def run_boot(qmp_type, args, output, context, code, request, elf_bytes, goal,
+             font_bytes, efi_image, tampered=False):
     output.mkdir(mode=0o700)
     esp = output / "esp/EFI/BOOT"
     esp.mkdir(parents=True)
-    (esp / "BOOTX64.EFI").write_bytes(args.efi.read_bytes())
+    (esp / "BOOTX64.EFI").write_bytes(efi_image)
     command = [str(args.qemu), "-machine", "q35,accel=tcg", "-cpu", "max",
                "-m", "128M", "-smp", "1",
                "-drive", f"if=pflash,format=raw,readonly=on,file={args.firmware}",
@@ -111,6 +112,34 @@ def run_boot(qmp_type, args, output, context, code, request, elf_bytes, goal, fo
             assert all(item["inkPixels"] > 0 for character, item in zip(goal, ink)
                        if character != " ")
             key(qmp, "ret")
+            if tampered:
+                samples = 0
+                last_rip = None
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        raise RuntimeError(f"QEMU exited before refusal: {process.returncode}")
+                    registers = qmp.hmp("info registers")
+                    rip_match = re.search(r"\bRIP=([0-9a-f]+)", registers, re.I)
+                    cpl_match = re.search(r"\bCPL=([0-3])", registers)
+                    if rip_match and cpl_match:
+                        rip, cpl = int(rip_match.group(1), 16), int(cpl_match.group(1))
+                        assert cpl != 3, "modified user ELF reached CPL3"
+                        data = qmp.dump(request, 4096, "request-refusal.bin", output)
+                        user_code = qmp.dump(code, 4096, "code-refusal.bin", output)
+                        if (cpl == 0 and 0x100000 <= rip < 0x200000
+                                and data[:320] == bytes(320)
+                                and user_code[:330] == bytes(330)):
+                            samples = samples + 1 if rip == last_rip else 1
+                            last_rip = rip
+                            if samples >= 12:
+                                return {"goal": goal, "cpl": 0, "lastRip": rip,
+                                        "refusalSamples": samples,
+                                        "userPagesUnchanged": True}
+                        else:
+                            samples = 0
+                    time.sleep(.2)
+                raise AssertionError("modified user slot refusal endpoint unavailable")
             endpoint = None
             deadline = time.monotonic() + 35
             while time.monotonic() < deadline:
@@ -160,7 +189,15 @@ def run_boot(qmp_type, args, output, context, code, request, elf_bytes, goal, fo
 
 
 def main(args):
-    files = [args.kernel, args.efi, args.elf, args.font, args.source, args.inline]
+    if (not args.goals or len(args.goals) > 2
+            or any(not re.fullmatch(r"[a-z ]{1,51}", goal) or not goal.strip()
+                   for goal in args.goals)
+            or len(set(args.goals)) != len(args.goals)):
+        raise ValueError("--goals requires one or two distinct nonempty lowercase Goals")
+    if (args.inline is None) == (args.slot is None):
+        raise ValueError("choose exactly one of --inline or --slot")
+    files = [args.kernel, args.efi, args.elf, args.font, args.source,
+             args.inline if args.inline else args.slot]
     if any(p.is_symlink() or not p.is_file() for p in files):
         raise ValueError("all source and artifact files must be regular, not symlinks")
     if args.output.exists():
@@ -168,12 +205,22 @@ def main(args):
     elf = args.elf.read_bytes()
     if hashlib.sha256(elf).hexdigest() != ELF_SHA256:
         raise ValueError("Amu user-v2 ELF pin mismatch")
-    generator = import_file("inline_generator", "generate-native-v2-inline.py")
-    if args.inline.read_text() != generator.render(elf):
-        raise ValueError("inline source does not match the pinned ELF")
     kernel, efi, font = (p.read_bytes() for p in (args.kernel, args.efi, args.font))
     if efi.count(kernel) != 1 or efi.count(font) != 1:
         raise ValueError("EFI must contain the exact kernel and font once")
+    slot = None
+    if args.inline:
+        generator = import_file("inline_generator", "generate-native-v2-inline.py")
+        if args.inline.read_text() != generator.render(elf):
+            raise ValueError("inline source does not match the pinned ELF")
+    else:
+        slot = args.slot.read_bytes()
+        if (len(slot) != 524288
+                or struct.unpack_from("<QQQ", slot) != (0x0031444c50554941, 2, len(elf))
+                or slot[64:64+len(elf)] != elf or any(slot[64+len(elf):])
+                or efi.count(slot) != 1
+                or efi.index(slot) != efi.index(font) + 524288):
+            raise ValueError("dual EFI user slot is not the pinned Amu ELF after the font")
     header = struct.unpack_from("<IIQQQQQQ", kernel, 120)
     if header[:3] != (1, 6, 1048576) or header[3] != 0x200000:
         raise ValueError("unexpected native context layout")
@@ -186,20 +233,32 @@ def main(args):
     args.output.mkdir(mode=0o700)
     qmp_type = import_file("scalar_qmp", "check-native-user-scalar-qemu.py").QMP
     boots = [run_boot(qmp_type, args, args.output / f"goal-{index}", context,
-                      code, request, elf, goal, font)
-             for index, goal in enumerate(("a b", "hello"), 1)]
+                      code, request, elf, goal, font, efi)
+             for index, goal in enumerate(args.goals, 1)]
     empty = run_boot(qmp_type, args, args.output / "empty-goal", context,
-                     code, request, elf, "", font)
-    report = {"schema": "aiueos.native-user-v2-live-goal-qemu.v1",
-              "status": "PASS_NATIVE_ITONAMI_GOAL_TO_USER_V2_CPL3_AND_EMPTY_REFUSAL",
+                     code, request, elf, "", font, efi)
+    modified = None
+    if slot is not None:
+        changed = bytearray(efi)
+        changed[efi.index(slot) + 64 + 4096 + 20] ^= 1
+        if sum(a != b for a, b in zip(efi, changed)) != 1:
+            raise ValueError("expected one changed user ELF code byte")
+        modified = run_boot(qmp_type, args, args.output / "modified-slot", context,
+                            code, request, elf, "a b", font, bytes(changed), tampered=True)
+    report = {"schema": "aiueos.native-user-v2-live-goal-qemu.v2",
+              "status": ("PASS_NATIVE_DUAL_PAYLOAD_ITONAMI_GOAL_CPL3_AND_REFUSALS"
+                         if slot is not None else
+                         "PASS_NATIVE_ITONAMI_GOAL_TO_USER_V2_CPL3_AND_EMPTY_REFUSAL"),
               "kernel": pin(args.kernel), "efi": pin(args.efi), "elf": pin(args.elf),
               "font": pin(args.font), "source": pin(args.source),
-              "inline": pin(args.inline),
-              "generator": pin(HERE / "generate-native-v2-inline.py"),
+              "inline": pin(args.inline) if args.inline else None,
+              "generator": pin(HERE / "generate-native-v2-inline.py") if args.inline else None,
+              "userSlot": pin(args.slot) if args.slot else None,
               "observer": pin(Path(__file__)),
               "qemu": pin(args.qemu), "firmware": pin(args.firmware),
               "context": context, "codePage": code, "requestPage": request,
               "boots": boots, "emptyGoalRefusal": empty,
+              "modifiedSlotRefusal": modified,
               "qmpTransport": "private-stdio", "vncUsed": False,
               "networkUsed": False, "guestSignatureAdmission": False,
               "modelOrToolOperation": False, "durableTurn": False,
@@ -211,6 +270,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("kernel", "efi", "elf", "font", "source", "inline", "qemu", "firmware", "output"):
+    for name in ("kernel", "efi", "elf", "font", "source", "qemu", "firmware", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--inline", type=Path)
+    parser.add_argument("--slot", type=Path)
+    parser.add_argument("--goals", nargs="+", default=["a b", "hello"])
     main(parser.parse_args())

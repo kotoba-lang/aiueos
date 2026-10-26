@@ -76,12 +76,23 @@ def main(args):
         raise ValueError("fuel must be a positive i64")
     if bool(args.payload) != bool(args.payload_sha256):
         raise ValueError("boot payload requires both path and SHA-256 pin")
+    if bool(args.font) != bool(args.font_sha256) or bool(args.user_slot) != bool(args.user_slot_sha256):
+        raise ValueError("font and user slot each require a path and SHA-256 pin")
+    if (args.font or args.user_slot) and (not args.font or not args.user_slot or args.payload):
+        raise ValueError("dual payload requires font and user slot without legacy payload")
     if args.payload and args.payload.is_symlink():
         raise ValueError("boot payload must not be a symlink")
     payload = args.payload.resolve(strict=True) if args.payload else None
     if payload and (pin(payload)["sha256"] != args.payload_sha256
                     or pin(payload)["bytes"] > 524288):
         raise ValueError("boot payload pin or size mismatch")
+    for source, expected, name in ((args.font, args.font_sha256, "font"),
+                                   (args.user_slot, args.user_slot_sha256, "user slot")):
+        if source and (source.is_symlink() or pin(source)["sha256"] != expected
+                       or pin(source)["bytes"] != 524288):
+            raise ValueError(name + " requires a regular pinned 512 KiB file")
+    font = args.font.resolve(strict=True) if args.font else None
+    user_slot = args.user_slot.resolve(strict=True) if args.user_slot else None
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     stage = output / "source"
@@ -91,7 +102,9 @@ def main(args):
              "linuxJVMNodeOrCCompiler": False, "bootQualified": False,
              "desktopInputQualified": False, "physicalHardwareQualified": False,
              "kernelEntry": entry, "fuel": args.fuel,
-             "bootPayload": pin(payload) if payload else None, "calls": []}
+             "bootPayload": pin(payload) if payload else None,
+             "bootFont": pin(font) if font else None,
+             "bootUserSlot": pin(user_slot) if user_slot else None, "calls": []}
 
     def save():
         (output / "build-state.json").write_text(json.dumps(state, indent=2) + "\n")
@@ -125,6 +138,9 @@ def main(args):
                 sources[virtual] = identity
         if payload:
             stage_file(payload, stage / "boot-payload.bin", args.payload_sha256)
+        if font:
+            stage_file(font, stage / "boot-font.bin", args.font_sha256)
+            stage_file(user_slot, stage / "boot-user-slot.bin", args.user_slot_sha256)
         roots = ["/os", "/os/aiueos", "/os/aiueos/kotoba"]
         roots += ["/owners/" + dep["repo"] + "/kotoba" for dep in owner_manifest["dependencies"]]
         source_args = [part for root in roots for part in ("--source-path", root)]
@@ -191,10 +207,17 @@ def main(args):
             for name in ("BOOTX64.EFI", "BOOTX64.reproduced.EFI"):
                 run("package-" + name, ["package-aiueos-boot", "KERNEL.ELF", "--output", name,
                     *(["--payload", "boot-payload.bin"] if payload else []),
+                    *(["--font", "boot-font.bin", "--user-slot", "boot-user-slot.bin"] if font else []),
                     "--pci-resources", "v1"])
                 path = stage / name
                 if not path.is_file() or path.read_bytes().count((stage / "KERNEL.ELF").read_bytes()) != 1:
                     raise ValueError("EFI does not embed exact kernel once")
+                if font:
+                    raw = path.read_bytes()
+                    font_bytes = (stage / "boot-font.bin").read_bytes()
+                    slot_bytes = (stage / "boot-user-slot.bin").read_bytes()
+                    if raw.count(font_bytes) != 1 or raw.count(slot_bytes) != 1 or raw.index(slot_bytes) != raw.index(font_bytes) + 524288:
+                        raise ValueError("EFI font/user slot placement mismatch")
                 efi_images.append(pin(path))
                 shutil.copyfile(path, output / name)
                 if pin(output / name) != efi_images[-1]:
@@ -207,6 +230,11 @@ def main(args):
             if payload and (pin(stage / "boot-payload.bin") != state["bootPayload"]
                             or pin(payload) != state["bootPayload"]):
                 raise ValueError("boot payload changed during build")
+            if font and (pin(stage / "boot-font.bin") != state["bootFont"]
+                         or pin(font) != state["bootFont"]
+                         or pin(stage / "boot-user-slot.bin") != state["bootUserSlot"]
+                         or pin(user_slot) != state["bootUserSlot"]):
+                raise ValueError("font or user slot changed during build")
             if any(pin(stage / virtual[1:]) != sources[virtual] for virtual in modules):
                 raise ValueError("module bytes changed during build")
             state.update(state="MACOS_NATIVE_IMAGE_CANDIDATE", kernel=images[0], efi=efi_images[0],
@@ -233,4 +261,8 @@ if __name__ == "__main__":
     parser.add_argument("--fuel", type=int, default=FUEL)
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--payload-sha256")
+    parser.add_argument("--font", type=Path)
+    parser.add_argument("--font-sha256")
+    parser.add_argument("--user-slot", type=Path)
+    parser.add_argument("--user-slot-sha256")
     main(parser.parse_args())
