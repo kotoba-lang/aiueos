@@ -1,5 +1,14 @@
 # AGENTS.md — aiueos
 
+## Common OS and distributions
+
+AIUEOS is the common OS foundation. AWAI OS is the Awai distribution in this
+same repository (`distributions/awai`), using the same kernel/ABI/build path.
+Keep generic OS mechanisms in the common core and Awai composition/branding
+in distribution configuration. Distribution metadata neither grants authority
+nor changes component qualification. See `distributions/README.md` and
+`90-docs/adr/0274-awai-os-is-an-aiueos-distribution.md`.
+
 ## Native desktop debug without a human login
 
 For routine QEMU Itonami debugging, run
@@ -65,7 +74,6 @@ modified-slot refusal. See
 `docs/evidence/aiueos-user-v3-local-model-20261026/README.md`. The synthetic
 QMP choice does not count as human consent, and the fixed one-token model is
 not a general agent loop.
-
 ## Shared Browser native progress (JUN-93)
 
 See `90-docs/shared-browser-native-progress.md` and the source-bound native

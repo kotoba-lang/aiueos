@@ -116,6 +116,8 @@ def repository_bootstrap(amu, args):
 def main(args):
     if platform.system() != "Darwin" or platform.machine() not in ("arm64", "aarch64"):
         raise ValueError("the integrated Mac gate requires Apple Silicon")
+    descriptor = HERE.parents[2] / "distributions" / args.distribution / "distribution.json"
+    distribution_pin = verified_file(descriptor)
     if args.amu_source.is_symlink() or args.owner_repo_root.is_symlink():
         raise ValueError("source roots must not be symlinks")
     amu = args.amu_source.resolve(strict=True)
@@ -156,6 +158,7 @@ def main(args):
     owner_manifest = verified_file(OS / "native/source-dependencies.json")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    (output / "distribution.json").write_bytes(descriptor.read_bytes())
     # QEMU's snapshot overlay uses the host temporary directory. Keep it
     # inside this private task output so no global /var/tmp grant is needed.
     env["TMPDIR"] = str(output)
@@ -164,6 +167,8 @@ def main(args):
     state = {
         "schema": "aiueos.macos-native-desktop-qemu-candidate.v1",
         "state": "STAGING", "profile": args.profile,
+        "distribution": {"id": args.distribution,
+                         "descriptor": {"path": "distribution.json", **distribution_pin}},
         "host": [platform.system(), platform.machine()],
         "compiler": compiler_pin, "packager": packager_pin,
         "amuBootstrapRoot": descriptor_pin,
@@ -291,6 +296,7 @@ def main(args):
                     (descriptor_pin, bootstrap_source_pin))
                 or pin(qemu) != qemu_pin or pin(firmware) != firmware_pin
                 or pin(font_source) != font_pin
+                or pin(descriptor) != distribution_pin
                 or pin(OS / "native/source-dependencies.json") != owner_manifest
                 or any(pin(scripts[name]) != identity for name, identity in script_pins.items())):
             raise ValueError("tool or source changed during integrated build")
@@ -331,4 +337,5 @@ if __name__ == "__main__":
     parser.add_argument("--firmware-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", choices=("desktop", "local-draft"), default="desktop")
+    parser.add_argument("--distribution", choices=("aiueos", "awai"), default="aiueos")
     main(parser.parse_args())

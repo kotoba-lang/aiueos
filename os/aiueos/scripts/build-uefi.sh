@@ -423,6 +423,11 @@ input_smoke_cflags=
 if [ "${AIUEOS_INPUT_SMOKE_SYNTHETIC:-0}" = 1 ]; then
   input_smoke_cflags=-DAIUEOS_INPUT_SMOKE_SYNTHETIC=1
 fi
+# D3: scripted touchpad gestures (pinch / three-finger swipe / two-finger tap).
+# virtio-tablet has no multi-touch to carry them; see the note in pci.c.
+if [ "${AIUEOS_TOUCHPAD_GESTURE_SYNTHETIC:-0}" = 1 ]; then
+  input_smoke_cflags="$input_smoke_cflags -DAIUEOS_TOUCHPAD_GESTURE_SYNTHETIC=1"
+fi
 if [ "${AIUEOS_CATALOG_POLICY_SELFTEST:-0}" = 1 ]; then
   input_smoke_cflags="$input_smoke_cflags -DAIUEOS_CATALOG_POLICY_SELFTEST=1"
 fi
