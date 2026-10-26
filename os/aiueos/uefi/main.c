@@ -124,9 +124,13 @@ struct efi_file;
 typedef efi_status(EFIAPI *efi_file_open)(struct efi_file *, struct efi_file **, const char16 *, uint64_t, uint64_t);
 typedef efi_status(EFIAPI *efi_file_close)(struct efi_file *);
 typedef efi_status(EFIAPI *efi_file_read)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_write)(struct efi_file *, uint64_t *, void *);
+typedef efi_status(EFIAPI *efi_file_set_position)(struct efi_file *, uint64_t);
+typedef efi_status(EFIAPI *efi_file_delete)(struct efi_file *);
 struct efi_file {
   uint64_t revision; efi_file_open open; efi_file_close close;
-  void *delete_file; efi_file_read read; void *write, *get_position, *set_position;
+  efi_file_delete delete_file; efi_file_read read; efi_file_write write;
+  void *get_position; efi_file_set_position set_position;
   void *get_info, *set_info, *flush;
 };
 struct efi_simple_file_system {
@@ -450,6 +454,10 @@ static void sha256(const uint8_t *input, uint64_t size, uint8_t output[32]) {
 }
 static inline void debug_byte(uint8_t value) { __asm__ volatile("outb %0, $0xe9" : : "a"(value)); }
 static void debug_string(const char *text) { while (*text) debug_byte((uint8_t)*text++); }
+static void debug_hex32(uint32_t value) {
+  static const char digits[] = "0123456789ABCDEF";
+  for (int shift = 28; shift >= 0; shift -= 4) debug_byte((uint8_t)digits[(value >> shift) & 0xf]);
+}
 static inline void fail_exit(void) { __asm__ volatile("outl %0, $0xf4" : : "a"(0x7f)); }
 static struct efi_simple_text_output *loader_console;
 static struct efi_runtime_services *loader_runtime;
@@ -558,6 +566,469 @@ static efi_status fail(uint32_t code, const char *message) {
 #endif
 #endif
   return EFI_INVALID_PARAMETER;
+}
+
+/* ---- H3 recovery reinstall (JUN-140) -------------------------------------
+   Booting the recovery volume (RECOVERY.ID present on the loaded volume) or
+   falling back to an alternate volume for the kernel means the system
+   volume's boot chain is gone or suspect. The recovery volume carries the
+   three boot-chain files; restore them file-by-file to the system ESP so
+   the system boots on its own again. The data partition is not touched.
+   The copy is bounded: one file at a time through a staging buffer, each
+   write followed by a read-back comparison. */
+#define REINSTALL_MAX_FILE (8U * 1024U * 1024U)
+static uint8_t *reinstall_stage;
+
+static int recovery_marker_present(struct efi_file *root) {
+  struct efi_file *file = 0;
+  if (root->open(root, &file, u"\\RECOVERY.ID", 1, 0) != EFI_SUCCESS || !file) return 0;
+  file->close(file);
+  return 1;
+}
+
+static int reinstall_copy(struct efi_file *src_root, struct efi_file *dst_root,
+                          const char16 *path, struct efi_boot_services *bs,
+                          const char *step) {
+  struct efi_file *src = 0, *dst = 0;
+  uint64_t size = 0;
+  if (src_root->open(src_root, &src, path, 1, 0) != EFI_SUCCESS || !src) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL src "); debug_string(step); debug_string("\n");
+    return 0;
+  }
+  size = REINSTALL_MAX_FILE;
+  if (src->read(src, &size, reinstall_stage) != EFI_SUCCESS || size == 0 ||
+      size > REINSTALL_MAX_FILE) { src->close(src); return 0; }
+  src->close(src);
+  /* Replace semantics: an existing dest file keeps its old size on write
+     (no truncate through Open), so delete it first — measured 2026-10-25
+     when a smaller update file failed the read-back compare against the
+     larger file it replaced. */
+  {
+    struct efi_file *old = 0;
+    if (dst_root->open(dst_root, &old, path, 3, 0) == EFI_SUCCESS && old) {
+      old->delete_file(old);
+    }
+  }
+  /* Measured 2026-10-25: FatPkg returns EFI_INVALID_PARAMETER for
+     WRITE|CREATE (status 2) and accepts READ|WRITE|CREATE with ARCHIVE
+     attributes — the form used here and proven by the reinstall run. */
+  efi_status create_status = dst_root->open(dst_root, &dst, path,
+      3 | 0x8000000000000000ULL, 0x20);
+  if (create_status != EFI_SUCCESS || !dst) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL create "); debug_string(step);
+    debug_string(" status="); debug_hex32((uint32_t)create_status); debug_string("\n");
+    return 0;
+  }
+  uint64_t written = size;
+  if (dst->write(dst, &written, reinstall_stage) != EFI_SUCCESS || written != size) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL write "); debug_string(step); debug_string("\n");
+    dst->close(dst); return 0;
+  }
+  dst->close(dst);
+  /* read back and compare */
+  struct efi_file *chk = 0;
+  uint64_t back = 0;
+  if (dst_root->open(dst_root, &chk, path, 1, 0) != EFI_SUCCESS || !chk) {
+    debug_string("AIUEOS_RECOVERY_COPY_FAIL reopen "); debug_string(step); debug_string("\n");
+    return 0;
+  }
+  back = REINSTALL_MAX_FILE;
+  int same = (chk->read(chk, &back, reinstall_stage + REINSTALL_MAX_FILE) == EFI_SUCCESS &&
+              back == size);
+  chk->close(chk);
+  if (same) {
+    for (uint64_t k = 0; k < size; k++) {
+      if (reinstall_stage[k] != reinstall_stage[REINSTALL_MAX_FILE + k]) { same = 0; break; }
+    }
+  }
+  return same;
+}
+
+/* Restore the boot chain to the system ESP (the first non-own FAT volume
+   that has an EFI\AIUEOS directory). Returns 1 when a restore ran. */
+/* ---- H1 signed update (JUN-140) -----------------------------------------
+   An update volume carries UPDATE.ID, UPDATE.MANIFEST (ascii lines
+   "<64-hex-sha256> <KERNEL.ELF|INITRD.IMG|BOOTX64.EFI>"), the three files at
+   their normal paths, and UPDATE.MANIFEST.SIG (RSASSA-PKCS1-v1_5-SHA256
+   over the manifest under the release key; the matching private key is held
+   by the signing pipeline in qualification/release-key/). The loader
+   verifies the manifest signature against the baked release public key and
+   each file against the manifest, then applies the files to its own volume
+   (the system ESP) with the H3 copy path. A missing or bad signature is
+   AIUEOS_UPDATE_REFUSED_unsigned with no writes. */
+static const uint8_t update_modulus[256] = {
+  0xb2, 0xf3, 0x95, 0x6b, 0xa4, 0x1f, 0x54, 0xce, 0xc4, 0x8b, 0x46, 0x45,
+  0x59, 0x07, 0xf7, 0xaa, 0x37, 0xc0, 0x5c, 0xa1, 0xed, 0x3a, 0xf9, 0x97,
+  0x67, 0x06, 0x63, 0xfc, 0x9d, 0xea, 0x41, 0xa4, 0xd3, 0x0c, 0x34, 0xc8,
+  0x21, 0xa0, 0x72, 0x6b, 0x7b, 0xee, 0x80, 0x58, 0xdd, 0x32, 0xe5, 0x79,
+  0x58, 0x8f, 0xc7, 0x14, 0x35, 0xd0, 0xa5, 0xf6, 0xc9, 0x32, 0x48, 0x76,
+  0x48, 0x72, 0x4a, 0x45, 0x2b, 0xf5, 0x0e, 0x4f, 0xcc, 0xb2, 0xd0, 0x45,
+  0x00, 0xde, 0x27, 0x74, 0xd0, 0x93, 0x0b, 0x25, 0x96, 0x3b, 0xaa, 0xb1,
+  0xe7, 0x4f, 0x7e, 0x46, 0x04, 0xb1, 0x06, 0x76, 0x14, 0xa7, 0x21, 0x75,
+  0xcc, 0x8c, 0x78, 0xc7, 0xb7, 0x0e, 0x8f, 0xe3, 0x4f, 0x4f, 0xa2, 0x05,
+  0x94, 0xf9, 0xfa, 0xd0, 0x54, 0x56, 0xa9, 0x3a, 0xcf, 0xcb, 0xa3, 0xa2,
+  0xcd, 0x10, 0x31, 0xe8, 0x7e, 0xbd, 0x6f, 0xdc, 0xa2, 0xe0, 0xe1, 0x3b,
+  0x34, 0x08, 0x43, 0x11, 0x1e, 0x36, 0x4e, 0xdc, 0xa7, 0xbc, 0xad, 0xf0,
+  0x0e, 0x54, 0xba, 0x3b, 0x31, 0xdc, 0x2d, 0xfa, 0x64, 0x09, 0x66, 0xa0,
+  0x86, 0xbd, 0x52, 0x85, 0x26, 0x68, 0x12, 0x7e, 0x1b, 0x45, 0xbe, 0x45,
+  0x13, 0xc1, 0x2f, 0x68, 0x2d, 0x0e, 0x90, 0xa5, 0x7e, 0xb6, 0x44, 0x03,
+  0x2b, 0x3e, 0xf8, 0xb1, 0x13, 0x5e, 0xd8, 0xf7, 0x0d, 0xa5, 0xb2, 0xd6,
+  0xc4, 0x4f, 0x13, 0x56, 0x56, 0xaa, 0xd3, 0x27, 0x83, 0xa8, 0xbf, 0x41,
+  0xa3, 0xdb, 0xfd, 0xae, 0xe2, 0x15, 0x70, 0x5c, 0xac, 0xbb, 0x4b, 0x86,
+  0xd9, 0x3c, 0x06, 0x48, 0x5a, 0x4d, 0x7b, 0xb9, 0x16, 0xfd, 0xbb, 0xcf,
+  0xaf, 0x6a, 0x8e, 0x73, 0xad, 0xd5, 0x70, 0x33, 0xf5, 0x5f, 0x8b, 0xa1,
+  0xcc, 0x0f, 0x95, 0x51, 0x40, 0xe5, 0xf1, 0x0f, 0xce, 0x43, 0x9d, 0xa4,
+  0x1b, 0xa7, 0x2c, 0x3f,
+};
+/* 32-bit limbs, little-endian order, 64 limbs to a 2048-bit number. */
+static void update_to_limbs(const uint8_t be[256], uint32_t out[64]) {
+  for (int i = 0; i < 64; i++) {
+    int o = 255 - (i * 4) - 3;
+    out[i] = ((uint32_t)be[o] << 24) | ((uint32_t)be[o + 1] << 16) |
+             ((uint32_t)be[o + 2] << 8) | (uint32_t)be[o + 3];
+  }
+}
+static void update_from_limbs(const uint32_t in[64], uint8_t be[256]) {
+  for (int i = 0; i < 64; i++) {
+    int o = 255 - (i * 4) - 3;
+    be[o] = (uint8_t)(in[i] >> 24); be[o + 1] = (uint8_t)(in[i] >> 16);
+    be[o + 2] = (uint8_t)(in[i] >> 8); be[o + 3] = (uint8_t)in[i];
+  }
+}
+/* out = (a * b) mod n, all 2048-bit. Schoolbook product, then the proven
+   shift-subtract reduction (the same algorithm cross-checked against
+   openssl's pow in the H1 design work): for bit 2048..0 subtract n << bit
+   whenever the running value is at least it. */
+static uint32_t update_slimb(const uint32_t n[64], int word, int shift, int i) {
+  uint64_t v = 0;
+  int j = i - word;
+  if (j >= 0 && j < 64) v = (uint64_t)n[j] << shift;
+  if (shift && j - 1 >= 0 && j - 1 < 64) v |= (uint64_t)n[j - 1] >> (32 - shift);
+  return (uint32_t)v;
+}
+static void update_modmul(const uint32_t a[64], const uint32_t b[64],
+                          const uint32_t n[64], uint32_t out[64]) {
+  uint32_t prod[128];
+  for (int i = 0; i < 128; i++) prod[i] = 0;
+  for (int i = 0; i < 64; i++) {
+    uint64_t carry = 0;
+    for (int j = 0; j < 64; j++) {
+      uint64_t v = (uint64_t)prod[i + j] + (uint64_t)a[i] * b[j] + carry;
+      prod[i + j] = (uint32_t)v; carry = v >> 32;
+    }
+    uint64_t v = (uint64_t)prod[i + 64] + carry;
+    prod[i + 64] = (uint32_t)v;
+    uint64_t c2 = v >> 32;
+    for (int k = i + 65; k < 128 && c2; k++) {
+      uint64_t w = (uint64_t)prod[k] + c2;
+      prod[k] = (uint32_t)w;
+      c2 = w >> 32;
+    }
+  }
+  uint32_t r[129];
+  for (int i = 0; i < 128; i++) r[i] = prod[i];
+  r[128] = 0;
+  for (int bit = 2048; bit >= 0; bit--) {
+    int word = bit / 32, shift = bit % 32;
+    int ge = 0;
+    for (int i = 128; i >= 0; i--) {
+      uint32_t nl = update_slimb(n, word, shift, i);
+      if (r[i] > nl) { ge = 1; break; }
+      if (r[i] < nl) { ge = 0; break; }
+    }
+    if (ge) {
+      long long borrow = 0;
+      for (int i = 0; i <= 128; i++) {
+        uint32_t nl = update_slimb(n, word, shift, i);
+        long long diff = (long long)r[i] - nl - borrow;
+        r[i] = (uint32_t)diff;
+        borrow = diff < 0 ? 1 : 0;
+      }
+    }
+  }
+  for (int i = 0; i < 64; i++) out[i] = r[i];
+}
+
+static int update_sig_verify(const uint8_t sig[256], const uint8_t digest[32]) {
+  uint32_t n[64], base[64], acc[64];
+  update_to_limbs(update_modulus, n);
+  update_to_limbs(sig, base);
+  for (int i = 0; i < 64; i++) acc[i] = base[i];
+  for (int i = 0; i < 16; i++) update_modmul(acc, acc, n, acc); /* in^(2^16) */
+  update_modmul(acc, base, n, acc);                              /* * in   */
+  uint8_t em[256];
+  update_from_limbs(acc, em);
+  /* EM = 00 01 FF x 202 00 || DigestInfo(SHA-256) || H */
+  static const uint8_t digestinfo[19] = {
+    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+    0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+  if (em[0] != 0x00 || em[1] != 0x01) return 0;
+  int i = 2;
+  while (i < 256 && em[i] == 0xff) i++;
+  if (i != 204 || em[i] != 0x00) return 0;
+  i++;
+  for (int k = 0; k < 19; k++) if (em[i + k] != digestinfo[k]) return 0;
+  i += 19;
+  for (int k = 0; k < 32; k++) if (em[i + k] != digest[k]) return 0;
+  return 1;
+}
+
+static int update_apply(struct efi_boot_services *bs, efi_handle own_device) {
+  static const char16 update_id[] = u"\\UPDATE.ID";
+  static const char16 manifest_path[] = u"\\UPDATE.MNF";
+  static const char16 signature_path[] = u"\\UPDATE.SIG";
+  static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
+  static const char16 initramfs_path[] = u"\\EFI\\AIUEOS\\INITRD.IMG";
+  static const char16 boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
+  efi_handle handles[16];
+  uint64_t handle_bytes = sizeof(handles);
+  struct efi_file *src_root = 0, *dst_root = 0;
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *probe = 0;
+  uint8_t *pool = 0;
+  if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) return 0;
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count && !src_root; i++) {
+    if (bs->handle_protocol(handles[i], &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) continue;
+    if (fs->open_volume(fs, &probe) != EFI_SUCCESS || !probe) continue;
+    struct efi_file *id = 0;
+    if (probe->open(probe, &id, update_id, 1, 0) == EFI_SUCCESS && id) {
+      id->close(id);
+      src_root = probe;
+    } else {
+      probe->close(probe);
+    }
+  }
+  if (!src_root) return 0;
+  if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs ||
+      fs->open_volume(fs, &dst_root) != EFI_SUCCESS || !dst_root) {
+    src_root->close(src_root); return 0;
+  }
+  if (bs->allocate_pool(2, 2 * 1024 * 1024, (void **)&pool) != EFI_SUCCESS) {
+    src_root->close(src_root); dst_root->close(dst_root); return 0;
+  }
+  struct efi_file *mf = 0, *sg = 0;
+  uint64_t msize = 0, ssize = 0;
+  int ok = 0;
+  if (src_root->open(src_root, &mf, manifest_path, 1, 0) == EFI_SUCCESS && mf) {
+    msize = 4096;
+    if (mf->read(mf, &msize, pool) == EFI_SUCCESS && msize > 0 && msize <= 4096) ok = 1;
+    mf->close(mf);
+  }
+  if (ok) ok = (src_root->open(src_root, &sg, signature_path, 1, 0) == EFI_SUCCESS && sg);
+  if (ok) {
+    ssize = 256;
+    ok = (sg->read(sg, &ssize, pool + 8192) == EFI_SUCCESS && ssize == 256);
+    sg->close(sg);
+  }
+  if (!ok) {
+    debug_string("AIUEOS_UPDATE_REFUSED_unsigned\n");
+    goto done;
+  }
+  {
+    uint8_t digest[32];
+    sha256(pool, msize, digest);
+    if (!update_sig_verify(pool + 8192, digest)) {
+      debug_string("AIUEOS_UPDATE_REFUSED_unsigned\n");
+      goto done;
+    }
+    /* manifest lines: "<64-hex> <NAME>"; each file verified then copied */
+    static const char16 *paths[3] = { kernel_path, initramfs_path, boot_path };
+    const char *names[3] = { "KERNEL.ELF", "INITRD.IMG", "BOOTX64.EFI" };
+    int seen = 0;
+    uint64_t pos = 0;
+    while (pos < msize && seen < 3) {
+      uint64_t line_start = pos;
+      while (pos < msize && pool[pos] != '\n') pos++;
+      uint64_t line_len = pos - line_start;
+      pos++;
+      if (line_len < 66) continue;
+      const char *name = (const char *)(pool + line_start + 65);
+      uint64_t name_len = line_len - 65;
+      for (int f = 0; f < 3; f++) {
+        int match = 1;
+        if (name_len != 0) {
+          uint64_t k = 0;
+          while (k < name_len && names[f][k] && names[f][k] == name[k]) k++;
+          match = (k == name_len && names[f][k] == 0);
+        }
+        if (!match) continue;
+        struct efi_file *in = 0;
+        if (src_root->open(src_root, &in, paths[f], 1, 0) != EFI_SUCCESS || !in) { ok = 0; break; }
+        uint64_t fsz = 1024 * 1024;
+        if (in->read(in, &fsz, pool + 16384) != EFI_SUCCESS || fsz == 0 || fsz > 1024 * 1024) {
+          in->close(in); ok = 0; break;
+        }
+        in->close(in);
+        uint8_t got[32];
+        sha256(pool + 16384, fsz, got);
+        for (int b = 0; b < 32; b++) {
+          int hi = pool[line_start + b * 2], lo = pool[line_start + b * 2 + 1];
+          int hv = (hi >= 'a') ? hi - 'a' + 10 : hi - '0';
+          int lv = (lo >= 'a') ? lo - 'a' + 10 : lo - '0';
+          if (got[b] != (uint8_t)((hv << 4) | lv)) { ok = 0; }
+        }
+        if (!ok) break;
+        seen++;
+        break;
+      }
+      if (!ok) break;
+    }
+    if (!ok || seen != 3) {
+      debug_string("AIUEOS_UPDATE_REFUSED_digest\n");
+      goto done;
+    }
+    if (!reinstall_copy(src_root, dst_root, kernel_path, bs, "update-kernel") ||
+        !reinstall_copy(src_root, dst_root, initramfs_path, bs, "update-initrd") ||
+        !reinstall_copy(src_root, dst_root, boot_path, bs, "update-bootx")) {
+      debug_string("AIUEOS_UPDATE_FAIL copy\n");
+      goto done;
+    }
+    debug_string("AIUEOS_UPDATE_APPLIED manifest-signed copies-verified\n");
+  }
+done:
+  bs->free_pool(pool);
+  src_root->close(src_root);
+  dst_root->close(dst_root);
+  return 1;
+}
+
+/* ---- A5 first-run setup (JUN-140) ---------------------------------------
+   On a clean install the loader looks for a setup volume (SETUP.ID +
+   SETUP.INI: three lines "name=", "device=", "account="), stores SETUP.INI
+   on the system ESP and prints the applied marker; on every later boot the
+   stored choices are read back and printed. The QEMU test delivers the
+   choices on the setup volume (the physical-machine story is a first-run UI
+   writing the same file); the readback marker is the row's evidence. */
+static int setup_flow(struct efi_boot_services *bs, efi_handle own_device) {
+  static const char16 setup_id[] = u"\\SETUP.ID";
+  static const char16 setup_ini[] = u"\\SETUP.INI";
+  efi_handle handles[16];
+  uint64_t handle_bytes = sizeof(handles);
+  struct efi_simple_file_system *fs = 0;
+  struct efi_file *own = 0, *src = 0, *f = 0;
+  uint8_t *buf = 0;
+  uint64_t size = 0;
+  if (bs->allocate_pool(2, 4096, (void **)&buf) != EFI_SUCCESS) return 0;
+  /* 1. the stored choices read back first: they are the evidence on every
+     boot after the setup completed. */
+  if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&fs) == EFI_SUCCESS &&
+      fs && fs->open_volume(fs, &own) == EFI_SUCCESS && own) {
+    if (own->open(own, &f, setup_ini, 1, 0) == EFI_SUCCESS && f) {
+      size = 4095;
+      if (f->read(f, &size, buf) == EFI_SUCCESS && size > 0) {
+        buf[size] = 0;
+        debug_string("AIUEOS_SETUP_LOADED ");
+        debug_string((const char *)buf);
+        if (((const char *)buf)[size - 1] != '\n') debug_string("\n");
+      }
+      f->close(f);
+      bs->free_pool(buf);
+      own->close(own);
+      return 1;
+    }
+    own->close(own);
+    own = 0;
+  }
+  /* 2. first run: take the choices from a setup volume */
+  if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) {
+    bs->free_pool(buf); return 0;
+  }
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count; i++) {
+    struct efi_file *probe = 0, *id = 0;
+    if (handles[i] == own_device) continue;
+    if (bs->handle_protocol(handles[i], &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs) continue;
+    if (fs->open_volume(fs, &probe) != EFI_SUCCESS || !probe) continue;
+    if (probe->open(probe, &id, setup_id, 1, 0) == EFI_SUCCESS && id) {
+      id->close(id);
+      src = probe;
+      break;
+    }
+    probe->close(probe);
+  }
+  if (!src) { bs->free_pool(buf); return 0; }
+  int applied = 0;
+  if (src->open(src, &f, setup_ini, 1, 0) == EFI_SUCCESS && f) {
+    size = 4095;
+    if (f->read(f, &size, buf) == EFI_SUCCESS && size > 0 && size < 2048) {
+      buf[size] = 0;
+      if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&fs) == EFI_SUCCESS &&
+          fs && fs->open_volume(fs, &own) == EFI_SUCCESS && own) {
+        struct efi_file *out = 0;
+        if (own->open(own, &out, setup_ini, 3 | 0x8000000000000000ULL, 0x20) == EFI_SUCCESS && out) {
+          uint64_t written = size;
+          if (out->write(out, &written, buf) == EFI_SUCCESS && written == size) applied = 1;
+          out->close(out);
+        }
+        own->close(own);
+      }
+      if (applied) {
+        debug_string("AIUEOS_SETUP_APPLIED ");
+        debug_string((const char *)buf);
+        if (((const char *)buf)[size - 1] != '\n') debug_string("\n");
+      }
+    }
+    f->close(f);
+  }
+  src->close(src);
+  bs->free_pool(buf);
+  return applied;
+}
+
+static int recovery_reinstall(struct efi_boot_services *bs, efi_handle own_device) {
+  debug_string("ZZQQ_UNIQUE_PROBE_12345\n");
+  static const char16 kernel_path[] = u"\\EFI\\AIUEOS\\KERNEL.ELF";
+  static const char16 initramfs_path[] = u"\\EFI\\AIUEOS\\INITRD.IMG";
+  static const char16 boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
+  static const char16 marker_dir[] = u"\\EFI\\AIUEOS";
+  efi_handle handles[16];
+  uint64_t handle_bytes = sizeof(handles);
+  int ran = 0;
+  struct efi_simple_file_system *own_fs = 0;
+  struct efi_file *own_root = 0;
+  if (bs->handle_protocol(own_device, &simple_fs_guid, (void **)&own_fs) != EFI_SUCCESS ||
+      !own_fs || own_fs->open_volume(own_fs, &own_root) != EFI_SUCCESS || !own_root)
+    return 0;
+  if (!recovery_marker_present(own_root)) {
+    debug_string("AIUEOS_RECOVERY_ID_ABSENT\n");
+    own_root->close(own_root); return 0;
+  }
+  debug_string("AIUEOS_RECOVERY_ID_OK\n");
+  if (bs->allocate_pool(2, 2 * REINSTALL_MAX_FILE, (void **)&reinstall_stage) != EFI_SUCCESS)
+    return 0;
+  if (bs->locate_handle(2, &simple_fs_guid, 0, &handle_bytes, handles) != EFI_SUCCESS) {
+    own_root->close(own_root); return 0;
+  }
+  uint64_t count = handle_bytes / sizeof(efi_handle);
+  for (uint64_t i = 0; i < count; i++) {
+    struct efi_simple_file_system *fs = 0;
+    struct efi_file *root = 0;
+    struct efi_file *probe = 0;
+    if (handles[i] == own_device) continue;
+    if (bs->handle_protocol(handles[i], &simple_fs_guid, (void **)&fs) != EFI_SUCCESS || !fs)
+      continue;
+    if (fs->open_volume(fs, &root) != EFI_SUCCESS || !root) continue;
+    if (root->open(root, &probe, marker_dir, 1, 0) != EFI_SUCCESS || !probe) {
+      root->close(root); continue;
+    }
+    probe->close(probe);
+    debug_string("AIUEOS_RECOVERY_TARGET_FOUND\n");
+    int ok = reinstall_copy(own_root, root, kernel_path, bs, "kernel") &&
+             reinstall_copy(own_root, root, initramfs_path, bs, "initrd") &&
+             reinstall_copy(own_root, root, boot_path, bs, "bootx");
+    root->close(root);
+    if (ok) {
+      debug_string("AIUEOS_RECOVERY_REINSTALL_OK boot-chain-restored\n");
+      ran = 1;
+    } else {
+      debug_string("AIUEOS_RECOVERY_REINSTALL_FAIL copy\n");
+    }
+    break;
+  }
+  if (!ran) debug_string("AIUEOS_RECOVERY_NOTARGET\n");
+  own_root->close(own_root);
+  return ran;
 }
 
 static efi_status read_verified_file(struct efi_file *root, const char16 *path,
@@ -1087,9 +1558,58 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
     if (admitted != EFI_SUCCESS)
       return fail(105,"AIUEOS_LOADER_FAIL kernel-admission-exhausted");
     debug_string("AIUEOS_LOADER_RECOVERY_OK kernel-from-alternate-volume sha256-v1\n");
+    /* H2 rollback (JUN-140): the system chain failed admission — the boot
+       that just failed was an applied update. The alternate volume that
+       admitted the kernel carries the previous boot chain; restore it over
+       the system ESP (the H3 copy path, read-back compared) so the machine
+       returns to the previous version by itself. */
+    {
+      static const char16 rb_boot_path[] = u"\\EFI\\BOOT\\BOOTX64.EFI";
+      efi_handle rollback_src = 0;
+      efi_handle rb_handles[16];
+      uint64_t rb_bytes = sizeof(rb_handles);
+      if (bs->locate_handle(2, &simple_fs_guid, 0, &rb_bytes, rb_handles) == EFI_SUCCESS) {
+        /* the admitting volume is the first non-own one whose kernel passed;
+           re-find it by admission order: try each non-own volume again */
+        uint64_t rb_count = rb_bytes / sizeof(efi_handle);
+        struct efi_simple_file_system *rfs = 0;
+        struct efi_file *rsrc = 0, *rdst = 0;
+        for (uint64_t r = 0; r < rb_count && !rollback_src; r++) {
+          if (rb_handles[r] == loaded->device_handle) continue;
+          if (bs->handle_protocol(rb_handles[r], &simple_fs_guid, (void **)&rfs) != EFI_SUCCESS || !rfs)
+            continue;
+          if (rfs->open_volume(rfs, &rsrc) != EFI_SUCCESS || !rsrc) continue;
+          struct efi_file *rp = 0;
+          if (rsrc->open(rsrc, &rp, kernel_path, 1, 0) == EFI_SUCCESS && rp) {
+            rp->close(rp);
+            rollback_src = rb_handles[r];
+          } else {
+            rsrc->close(rsrc);
+            rsrc = 0;
+          }
+        }
+        if (rollback_src &&
+            bs->handle_protocol(loaded->device_handle, &simple_fs_guid, (void **)&rfs) == EFI_SUCCESS &&
+            rfs && rfs->open_volume(rfs, &rdst) == EFI_SUCCESS && rdst) {
+          int restored = reinstall_copy(rsrc, rdst, kernel_path, bs, "rb-kernel") &&
+                         reinstall_copy(rsrc, rdst, initramfs_path, bs, "rb-initrd") &&
+                         reinstall_copy(rsrc, rdst, rb_boot_path, bs, "rb-bootx");
+          rdst->close(rdst);
+          if (restored) debug_string("AIUEOS_UPDATE_ROLLED_BACK previous-version-restored\n");
+          else debug_string("AIUEOS_UPDATE_ROLLBACK_FAIL copy\n");
+        }
+        if (rsrc) rsrc->close(rsrc);
+      }
+    }
   }
 #endif
   debug_string("AIUEOS_LOADER_INTEGRITY_OK sha256-v1\n");
+  progress(212, "AIUEOS_LOADER_PROGRESS recovery-reinstall");
+  recovery_reinstall(bs, loaded->device_handle);
+  progress(213, "AIUEOS_LOADER_PROGRESS update-apply");
+  update_apply(bs, loaded->device_handle);
+  progress(214, "AIUEOS_LOADER_PROGRESS first-run-setup");
+  setup_flow(bs, loaded->device_handle);
 #ifdef AIUEOS_MODEL_NVME_SLOTS
   progress(211,"AIUEOS_LOADER_PROGRESS model-usb-to-nvme-ab");
   if (stage_model_to_nvme(bs, loaded->device_handle) != EFI_SUCCESS)
@@ -1148,6 +1668,47 @@ efi_status EFIAPI efi_main(efi_handle image, struct efi_system_table *system) {
 #endif
   info.initramfs_base = (uint64_t)(uintptr_t)initramfs_file;
   info.initramfs_size = initramfs_size;
+  /* G3: the data-disk at-rest key. Read \EFI\AIUEOS\DATA.KEY from this
+     volume (the system ESP); when absent, generate one from the TSC (the
+     qualification entropy source, documented as weak) and write it back so
+     the key survives reboots. The data disk it protects is a different
+     disk, so reading the data disk alone shows ciphertext. */
+  {
+    static const char16 data_key_path[] = u"\\EFI\\AIUEOS\\DATA.KEY";
+    struct efi_simple_file_system *kfs = 0;
+    struct efi_file *kroot = 0, *kfile = 0;
+    uint64_t ksize = 0;
+    int have_key = 0;
+    if (bs->handle_protocol(loaded->device_handle, &simple_fs_guid, (void **)&kfs) == EFI_SUCCESS &&
+        kfs && kfs->open_volume(kfs, &kroot) == EFI_SUCCESS && kroot) {
+      if (kroot->open(kroot, &kfile, data_key_path, 1, 0) == EFI_SUCCESS && kfile) {
+        ksize = 16;
+        if (kfile->read(kfile, &ksize, info.data_key) == EFI_SUCCESS && ksize == 16) have_key = 1;
+        kfile->close(kfile);
+      }
+      if (!have_key) {
+        uint64_t tsc_a, tsc_b;
+        __asm__ volatile("rdtsc" : "=a"(tsc_a), "=d"(tsc_b));
+        for (int i = 0; i < 16; i++) {
+          tsc_a = tsc_a * 6364136223846793005ULL + 1442695040888963407ULL;
+          __asm__ volatile("rdtsc" : "=a"(tsc_a), "=d"(tsc_b));
+          info.data_key[i] = (uint8_t)((tsc_a >> ((i % 8) * 8)) & 0xff);
+        }
+        if (kroot->open(kroot, &kfile, data_key_path,
+                        3 | 0x8000000000000000ULL, 0x20) == EFI_SUCCESS && kfile) {
+          uint64_t w = 16;
+          kfile->write(kfile, &w, info.data_key);
+          kfile->close(kfile);
+        }
+        have_key = 1;
+        debug_string("AIUEOS_DATA_KEY_CREATED tsc-entropy weak\n");
+      } else {
+        debug_string("AIUEOS_DATA_KEY_LOADED\n");
+      }
+      kroot->close(kroot);
+      if (have_key) info.data_key_tag = 0x9a7461b0d2746b31ULL;
+    }
+  }
   if (!initramfs_size) return fail(114,"AIUEOS_LOADER_FAIL initramfs-empty");
   info.acpi_rsdp = 0;
   const void *firmware_acpi_rsdp=0;
