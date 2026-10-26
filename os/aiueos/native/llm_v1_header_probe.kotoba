@@ -1,0 +1,65 @@
+(ns aiueos.native.llm-v1-header-probe
+  (:require [aiueos.native.kernel :as kernel]
+            [aiueos.native.llm-v1-header :as llm])
+  (:export [main aiueos-isr-6]))
+
+;; Runs the real header validator in a C-free AIUEOS kernel image. Page 0 is
+;; the host-owned test header and page 1 is a 12-word guest receipt. This
+;; neither dispatches wire 11 nor executes a model.
+(defn- retain-kernel [] :i64 (kernel/main))
+(defn aiueos-isr-6 [vector :i64 error :i64 rip :i64 rsp :i64] :i64
+  (kernel/aiueos-isr-6 vector error rip rsp))
+
+(defn- put-word [page :i64 offset :i64 value :i64] :bool
+  (let [written (kernel-store-u32-4k page 4096 offset value)]
+    (= (+ (kernel-load-u32-4k page 4096 offset) (* 0 written)) value)))
+
+(defn- clear-words [page :i64 offset :i64 end :i64] :bool
+  (if (= offset end) true
+    (and (put-word page offset 0)
+         (clear-words page (+ offset 4) end))))
+
+(defn- initialize-header [header :i64] :bool
+  (and (clear-words header 0 64)
+       (put-word header 0 827149387)
+       (put-word header 4 1)
+       (put-word header 8 11)
+       (put-word header 12 5)
+       (put-word header 16 0)
+       (put-word header 20 5)
+       (put-word header 24 16)
+       (put-word header 28 0)
+       (put-word header 32 10)
+       (put-word header 36 64)))
+
+(defn- header-valid [header :i64] :i64
+  (llm/aiueos-llm-v1-header-valid
+   (kernel-subregion header 4096 0 64) 64))
+
+(defn- record-check [receipt :i64 slot :i64 valid :bool] :bool
+  (and valid (put-word receipt (* slot 8) 1)))
+
+(defn- bad-field [header :i64 receipt :i64 slot :i64
+                  offset :i64 bad :i64 original :i64] :bool
+  (and (put-word header offset bad)
+       (record-check receipt slot (= (header-valid header) 0))
+       (put-word header offset original)))
+
+(defn main [] :i64
+  (let [header (kernel-owned-page 0)
+        receipt (kernel-owned-page 1)]
+    (if (and (initialize-header header)
+             (clear-words receipt 0 96)
+             (record-check receipt 0 (= (header-valid header) 1))
+             (bad-field header receipt 1 0 0 827149387)
+             (bad-field header receipt 2 8 12 11)
+             (bad-field header receipt 3 32 9 10)
+             (bad-field header receipt 4 24 0 16)
+             (bad-field header receipt 5 28 2001 0)
+             (bad-field header receipt 6 40 1 0)
+             (bad-field header receipt 7 16 65537 0)
+             (bad-field header receipt 8 20 65537 5)
+             (bad-field header receipt 9 36 65537 64)
+             (bad-field header receipt 10 12 0 5)
+             (bad-field header receipt 11 36 0 64))
+      42 0)))

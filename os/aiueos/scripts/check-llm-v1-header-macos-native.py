@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 
-SOURCE = Path(__file__).resolve().parents[1] / "native/llm-v1-header.kotoba"
+SOURCE = Path(__file__).resolve().parents[1] / "native/llm_v1_header.kotoba"
 UNROOTED_CALL = "kernel-load-u32 header header-bytes 12"
 
 
