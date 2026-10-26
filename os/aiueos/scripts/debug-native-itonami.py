@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the matching native Itonami QEMU gate without a login or guest input.
+"""Run the matching native Itonami QEMU gate without a login or manual guest input.
 
 The selected gate owns fresh QEMU processes and uses private QMP standard I/O.
 This controller only selects a source-bound gate and saves its result, including
@@ -21,16 +21,16 @@ import sys
 HERE = Path(__file__).resolve().parent
 GATES = {
     "/os/aiueos/native/user-elf-v2-live-goal-entry.kotoba":
-        ("debug-native-user-v2-unattended.py", "PASS", True),
+        ("debug-native-user-v2-unattended.py", "PASS", False),
     "/os/aiueos/native/user-elf-v2-durable-goal-entry.kotoba":
         ("debug-native-user-v2-durable-unattended.py",
-         "PASS_NATIVE_DRAFT_COLD_RESTORE_TO_USER_V2_CPL3", True),
+         "PASS_NATIVE_DRAFT_COLD_RESTORE_TO_USER_V2_CPL3", False),
     "/os/aiueos/native/user-elf-v2-local-model-entry.kotoba":
         ("debug-native-local-model-confirm-qemu.py",
-         "PASS_NATIVE_LOCAL_MODEL_DENY_APPROVE_CPL3_AFTER_RESTORE", False),
+         "PASS_NATIVE_LOCAL_MODEL_DENY_APPROVE_CPL3_AFTER_RESTORE", True),
     "/os/aiueos/native/user-elf-v3-local-model-entry.kotoba":
         ("debug-native-local-model-confirm-qemu.py",
-         "PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE", False),
+         "PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE", True),
 }
 
 
@@ -57,10 +57,8 @@ def main():
     entry = state.get("kernelEntry")
     if entry not in GATES:
         parser.error("no unattended Itonami gate for this kernel entry")
-    script, expected, accepts_goal = GATES[entry]
-    if args.goal is not None and not accepts_goal:
-        parser.error("local-model gate has a fixed Goal fixture; omit --goal")
-    if args.boot_media is not None and accepts_goal:
+    script, expected, accepts_media = GATES[entry]
+    if args.boot_media is not None and not accepts_media:
         parser.error("--boot-media is currently supported by the local-model gate only")
     if args.boot_media is not None:
         if args.boot_media.is_symlink() or not args.boot_media.is_file():
@@ -122,6 +120,8 @@ def main():
     screenshots = [str(path) for path in sorted(guest.rglob("*.png"))]
     report = {"schema": "aiueos.native-itonami-unattended-debug.v1",
               "status": "PASS" if passed else "FAIL", "kernelEntry": entry,
+              "controller": {"bytes": Path(__file__).stat().st_size,
+                             "sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
               "build": str(build), "buildReceipt": str(state_path),
               "bootMedia": str(args.boot_media) if args.boot_media else None,
               "bootMediaPin": media_pin,

@@ -33,8 +33,11 @@ its modified EFI through an isolated FAT directory. The gate verifies the
 disk's EFI bytes before boot and checks the media digest again afterwards.
 The marked 64 KiB Goal draft disk remains an output-owned fixture.
 
-Use `--goal 'a b'` for live or durable Goal builds. The local-model gate has a
-fixed fixture and rejects `--goal`. The command prints the receipt path and
+Use `--goal 'a b'` for live or durable Goal builds. The local-model gate also
+accepts a 1–51 character lowercase Goal ending in a letter with a nonempty
+model row, for example `--goal 'awai s'`. It reads the frozen transition
+contract to derive the expected token and checks the entire guest Goal region
+and syscall request. The command prints the receipt path and
 returns nonzero on failure. Read `stderr.log`, `guest/boot-2/last-state.json`
 when present, and the QEMU logs under `guest/`. It uses private QMP standard
 I/O, no VNC, no network and no password. QMP's synthetic Y/N keys only test

@@ -24,6 +24,27 @@ Run the same gate on a pinned matching build:
 python3 os/aiueos/scripts/debug-native-itonami.py "$BUILD"
 ```
 
+The [variable-Goal run](variable-goal-summary.json) used the same pinned native
+kernel, user ELF and GPT/FAT16 media with `--goal 'awai j'`. The observer read
+the frozen 27-by-27 transition contract, expected token `o` (111), and checked
+the full OS-filled Goal region plus the user-originated syscall envelope. A
+fresh boot saved that Goal, a second boot restored its visible glyphs, `n`
+left the user pages zero, and `y` returned 111 to CPL3 with no prefilled token.
+The third boot refused a one-byte changed user slot before execution. The
+[wrapper receipt](variable-goal-debug-run.json), [restored frame](variable-goal-restored.png)
+and [choice frame](variable-goal-approval.png) are kept with the run. The
+observer also refused uppercase input and a Goal ending in a transition row
+without output before launching QEMU, with [input refusal readback](variable-goal-input-refusals.json).
+A separate `awai s` run returned token
+32, rather than the original fixed Goal's 105.
+
+To repeat the variable-Goal gate:
+
+```sh
+python3 os/aiueos/scripts/debug-native-itonami.py "$BUILD" \
+  --goal 'awai j' --boot-media "$MATCHING_NATIVE_MEDIA"
+```
+
 It writes a run receipt, guest traces and screenshots on success or failure.
 QEMU uses private standard-I/O QMP, with no VNC listener, password, NIC or
 manual guest input. These synthetic keys establish guest control-flow behavior;

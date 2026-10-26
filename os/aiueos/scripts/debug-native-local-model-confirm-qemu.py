@@ -64,7 +64,7 @@ def wait(base, qmp, directory, context, name, predicate, timeout=65):
     raise AssertionError((name, current))
 
 
-def endpoint(base, qmp, directory, code, request, elf, expected, user_call):
+def endpoint(base, qmp, directory, code, request, elf, expected, goal, user_call):
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         registers = qmp.hmp("info registers")
@@ -81,10 +81,13 @@ def endpoint(base, qmp, directory, code, request, elf, expected, user_call):
                 final = qmp.dump(request, 4096, "request-final.bin", directory)
                 code_length = 462 if user_call else 330
                 assert code_bytes[:code_length] == elf[4096:4096 + code_length]
+                assert struct.unpack_from("<I", final, 256)[0] == len(goal)
+                assert final[260:260 + len(goal)] == goal.encode("ascii")
+                assert final[260 + len(goal):320] == bytes(60 - len(goal))
                 if user_call:
                     assert struct.unpack_from("<I", final, 128)[0] == 1364350539
                     assert final[132:136] == bytes((1, 6, 0, 0))
-                    assert struct.unpack_from("<I", final, 136)[0] == ord("a")
+                    assert struct.unpack_from("<I", final, 136)[0] == ord(goal[-1])
                     assert final[140:232] == bytes(92)
                     assert final[316:320] == bytes(4), "host prefilled user token"
                 else:
@@ -112,6 +115,40 @@ def endpoint(base, qmp, directory, code, request, elf, expected, user_call):
     raise AssertionError(("approved local model token did not reach CPL3", failure))
 
 
+def model_expected_token(goal):
+    """Read the frozen 27x27 model data, independently of the guest code."""
+    matrix_path = HERE.parent / "contracts/micro-infer-transitions-v1.edn"
+    source = matrix_path.read_text(encoding="utf-8")
+    match = re.search(r"\n\s*:rows\s*\[", source)
+    if match is None:
+        raise ValueError("micro-infer contract has no rows vector")
+    start = match.end() - 1
+    depth = 0
+    end = None
+    for offset in range(start, len(source)):
+        if source[offset] == "[":
+            depth += 1
+        elif source[offset] == "]":
+            depth -= 1
+            if depth == 0:
+                end = offset + 1
+                break
+    if end is None:
+        raise ValueError("micro-infer rows vector is not closed")
+    body = source[start:end]
+    row_texts = re.findall(r"\[([0-9\s]+)\]", body)
+    rows = [list(map(int, row.split())) for row in row_texts]
+    if (re.sub(r"\s+", "", re.sub(r"\[[0-9\s]+\]", "", body)) != "[]"
+            or len(rows) != 27 or any(len(row) != 27 for row in rows)
+            or any(value < 0 or value > 5 for row in rows for value in row)):
+        raise ValueError("micro-infer contract is not a 27x27 nibble matrix")
+    input_row = rows[ord(goal[-1]) - ord("a") + 1]
+    peak = max(input_row)
+    if peak == 0:
+        raise ValueError("Goal ends in a model row with no output")
+    return ord(" abcdefghijklmnopqrstuvwxyz"[input_row.index(peak)]), matrix_path
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build_dir", type=Path)
@@ -120,7 +157,15 @@ def main():
     parser.add_argument("--firmware", type=Path)
     parser.add_argument("--boot-media", type=Path,
                         help="matching native GPT/FAT16 image for the two positive boots")
+    parser.add_argument("--goal", default="awai a",
+                        help="1-51 lowercase letters/spaces, ending in a letter with model output")
     args = parser.parse_args()
+    if not re.fullmatch(r"[a-z ]{0,50}[a-z]", args.goal):
+        parser.error("--goal requires 1-51 lowercase letters/spaces, ending in a letter")
+    try:
+        expected_token_value, matrix_path = model_expected_token(args.goal)
+    except ValueError as exc:
+        parser.error(str(exc))
     base = load_base()
     build = args.build_dir.resolve(strict=True)
     receipt = build / "build-state.json"
@@ -198,7 +243,7 @@ def main():
     blank = bytearray(128 * 512)
     struct.pack_into("<4I", blank, 0, 0x49415741, 0x54465244, 1, 128)
     disk.write_bytes(blank)
-    goal, expected_token = "awai a", ord("i")
+    goal, expected_token = args.goal, expected_token_value
     boots = []
     for ordinal in (1, 2):
         directory = output / f"boot-{ordinal}"
@@ -252,7 +297,7 @@ def main():
                 wait(base, qmp, directory, context, "pending-again",
                      lambda s: s["pending"] == 1 and s["title"] == PROMPT_TITLE)
                 base.key(qmp, "y")
-                user = endpoint(base, qmp, directory, code, request, elf, expected_token, user_call)
+                user = endpoint(base, qmp, directory, code, request, elf, expected_token, goal, user_call)
                 after = snapshot(base, qmp, directory, context)
                 assert after["approved"] == (0 if user_call else 1)
                 assert after["modelToken"] == expected_token
@@ -333,7 +378,8 @@ def main():
               "qemu": base.pin(args.qemu), "firmware": base.pin(args.firmware),
               "observer": base.pin(Path(__file__)),
               "userElfSha256": USER_ELF_SHA256 if user_call else ELF_SHA256,
-              "goal": goal, "expectedToken": expected_token, "boots": boots,
+              "goal": goal, "expectedToken": expected_token,
+              "modelContract": base.pin(matrix_path), "boots": boots,
               "modifiedSlotRefusal": modified,
               "scratchDisk": base.pin(disk), "qmpTransport": "private-stdio",
               "vncUsed": False, "networkUsed": False, "humanPasswordRequired": False,
