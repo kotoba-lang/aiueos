@@ -919,7 +919,7 @@
         (sput s sb 421 (+ (- (+ y h) 8) (sw s sb 2045)))
         (sput s sb 426 1) (sput s sb 428 64) (sput s sb 430 w)
         ;; ADR-0240: only the focused window's selection is drawn
-        (sput s sb 2034 (if (= focused 1) (sel-pack s sb id (+ 160 (* 64 (- id 1)))) (+ 127 (* 127 128) (* 127 16384))))
+        (if (= focused 1) (sput s sb 2034 (sel-pack s sb id (+ 160 (* 64 (- id 1))))) (sput s sb 2034 (+ 127 (* 127 128) (* 127 16384))))
         (sput s sb 2007 0)
         (body-block s sb f fb (pk3 (+ 160 (* 64 (- id 1))) (+ x 14) (+ y 42)))
         ;; the composition, only in the focused window, after its body; the
@@ -985,7 +985,7 @@
     (do (put-glyph s sb x y (+ (* gi 65536) gw)) gw))))
 
 (defn lock-dot [s sb i vw vh]
-  (do (sput s sb 422 (if (< i (bit-and (sw s sb 2031) 7)) 16777215 (if (= (hc s sb) 1) 8421504 5593702)))
+  (do (if (< i (bit-and (sw s sb 2031) 7)) (sput s sb 422 16777215) (sput s sb 422 (if (= (hc s sb) 1) 8421504 5593702)))
       (put-rect s sb (+ (- (quot vw 2) 44) (* 24 i)) (quot vh 2) (+ (* 12 65536) 12))))
 
 (defn lock-screen [s sb f fb p0] (let [vw (lo16 p0) vh (hi16 p0)]
