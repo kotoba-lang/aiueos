@@ -241,8 +241,12 @@
       (if (< py (- f 16)) 0 1))))
 
 ;; Set the capture for a press on stack index k (before the raise moves it).
-(defn set-capture [st sb kind id c d]
-  (do (w-put st sb 25 kind) (w-put st sb 26 id) (w-put st sb 27 c) (w-put st sb 28 d)))
+;; The x86 object admission refuses more than 5 arguments; the capture's four
+;; values arrive as two calls of two.
+(defn set-capture [st sb kind id]
+  (do (w-put st sb 25 kind) (w-put st sb 26 id)))
+(defn set-capture2 [st sb c d]
+  (do (w-put st sb 27 c) (w-put st sb 28 d)))
 
 (defn capture [st sb k px py]
   (let [b (+ 5 (* k 5))
@@ -250,20 +254,20 @@
         y (w-at st sb (+ b 2))]
     (do (w-put st sb 29 0) (w-put st sb 30 0)
         (if (= (in-handle st sb k px py) 1)
-          (do (set-capture st sb 2 (w-at st sb b) px py)
+          (do (do (set-capture st sb 2 (w-at st sb b)) (set-capture2 st sb px py))
               (w-put st sb 29 (w-at st sb (+ b 3)))
               (w-put st sb 30 (w-at st sb (+ b 4))))
           (if (> py (+ y 28))
             ;; D8: a body press on the selection is a content drag (kind 3)
             (if (and (= (w-at st sb 2036) (w-at st sb b)) (> (w-at st sb 2037) 0))
-              (set-capture st sb 3 (w-at st sb b) (- px x) (- py y))
-              (set-capture st sb 0 0 0 0))
-            (set-capture st sb 1 (w-at st sb b) (- px x) (- py y)))))))
+              (do (set-capture st sb 3 (w-at st sb b)) (set-capture2 st sb (- px x) (- py y)))
+              (do (set-capture st sb 0 0) (set-capture2 st sb 0 0)))
+            (do (set-capture st sb 1 (w-at st sb b)) (set-capture2 st sb (- px x) (- py y))))))))
 
 ;; --- launcher and close (ADR-0233) -------------------------------------------
 
 (defn release-all [st sb]
-  (do (set-capture st sb 0 0 0 0) (w-put st sb 29 0) (w-put st sb 30 0)))
+  (do (do (set-capture st sb 0 0) (set-capture2 st sb 0 0)) (w-put st sb 29 0) (w-put st sb 30 0)))
 
 ;; D8 (JUN-140) content drag and drop. A pointer/down inside the body of the
 ;; window the selection belongs to captures kind 3 (the content drag) with the
@@ -281,8 +285,11 @@
 ;; Move k code points from the source body's offset start to the target body's
 ;; offset line*1 (the drop's line start). The target keeps room: the move is
 ;; refused (0) when the target cannot take the payload, else 1.
-(defn body-move [st sb src start k tw at]
-  (let [sbase (+ 160 (* (- src 1) 64))
+;; The source's (window, offset) travels as one packed word (src*64 + start)
+;; because the object admission refuses more than 5 arguments.
+(defn body-move [st sb packed k tw]
+  (let [src (quot packed 64) start (- packed (* src 64))
+        sbase (+ 160 (* (- src 1) 64))
         tbase (+ 160 (* (- tw 1) 64))
         n (body-len st sb src)
         tn (body-len st sb tw)]
@@ -317,7 +324,7 @@
         (do (w-put st sb 2026 tw) (w-put st sb 2030 line) (w-put st sb 2031 k)
             (if (or (= tw 0) (< start 0))
               0
-              (do (body-move st sb src start k tw line)
+              (do (body-move st sb (+ (* src 64) start) k tw)
                   (w-put st sb 2036 0) (w-put st sb 2037 0)))
             0)))))
 
@@ -531,15 +538,18 @@
 
 ;; ADR-0255: the tray of minimized windows, bottom left: item i (0 first) is the i-th minimized
 ;; window by id, 120 x 24 at (6 + 126 i, vh - 30), inclusive. The id under (px, py) from id k on, or 0.
-(defn tray-at [st sb k i px py]
-  (if (> k 4) 0
-    (if (= (is-min st sb k) 0) (tray-at st sb (+ k 1) i px py)
-      (let [x (+ 6 (* 126 i))
-            y (- (w-at st sb 4) 30)]
-        (if (< px x) (tray-at st sb (+ k 1) (+ i 1) px py)
-          (if (> px (+ x 120)) (tray-at st sb (+ k 1) (+ i 1) px py)
-            (if (< py y) (tray-at st sb (+ k 1) (+ i 1) px py)
-              (if (> py (+ y 24)) (tray-at st sb (+ k 1) (+ i 1) px py) k))))))))
+;; The point travels packed (px*65536 + py): the object admission refuses
+;; more than 5 arguments.
+(defn tray-at [st sb k i point]
+  (let [px (quot point 65536) py (- point (* px 65536))]
+    (if (> k 4) 0
+      (if (= (is-min st sb k) 0) (tray-at st sb (+ k 1) i point)
+        (let [x (+ 6 (* 126 i))
+              y (- (w-at st sb 4) 30)]
+          (if (< px x) (tray-at st sb (+ k 1) (+ i 1) point)
+            (if (> px (+ x 120)) (tray-at st sb (+ k 1) (+ i 1) point)
+              (if (< py y) (tray-at st sb (+ k 1) (+ i 1) point)
+                (if (> py (+ y 24)) (tray-at st sb (+ k 1) (+ i 1) point) k)))))))))
 
 (defn restore [st sb n id]
   (do (release-all st sb)
@@ -562,7 +572,7 @@
 (defn press [st sb k1 px py]
   (let [n (w-at st sb 1)]
     (if (> (dock-at st sb 1 px py) 0) (restore st sb n (dock-at st sb 1 px py))
-    (if (> (tray-at st sb 1 0 px py) 0) (restore st sb n (tray-at st sb 1 0 px py))
+    (if (> (tray-at st sb 1 0 (+ (* px 65536) py)) 0) (restore st sb n (tray-at st sb 1 0 (+ (* px 65536) py)))
     (if (= k1 0) (press-miss st sb n px py)
       (if (= (w-at st sb 31) 0)
         (do (capture st sb (- k1 1) px py)
