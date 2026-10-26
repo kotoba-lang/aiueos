@@ -83,6 +83,8 @@ def main(args):
         raise ValueError("user source requires source and expected ELF SHA-256 pins")
     if args.user_source and args.user_slot:
         raise ValueError("choose generated user source or an existing user slot")
+    if args.user_target == "x86_64-aiueos-user-v3" and not args.user_source:
+        raise ValueError("user-v3 requires a pinned generated user source")
     if ((args.font or args.user_slot or args.user_source)
             and (not args.font or not (args.user_slot or args.user_source) or args.payload)):
         raise ValueError("dual payload requires font and one user payload without legacy payload")
@@ -118,6 +120,7 @@ def main(args):
              "bootFont": pin(font) if font else None,
              "bootUserSlot": pin(user_slot) if user_slot else None,
              "bootUserSource": pin(user_source) if user_source else None,
+             "bootUserTarget": args.user_target if user_source else None,
              "bootUserElf": None, "calls": []}
 
     def save():
@@ -189,7 +192,7 @@ def main(args):
                 user_images = []
                 for name in ("boot-user.elf", "boot-user.reproduced.elf"):
                     run("compile-" + name, ["compile", "boot-user-source.kotoba",
-                        "--target", "x86_64-aiueos-user-v2", "--output", name])
+                        "--target", args.user_target, "--output", name])
                     image = stage / name
                     if not image.is_file() or pin(image)["bytes"] != 8280:
                         raise ValueError("native compiler omitted the expected user-v2 ELF")
@@ -318,4 +321,7 @@ if __name__ == "__main__":
     parser.add_argument("--user-source", type=Path)
     parser.add_argument("--user-source-sha256")
     parser.add_argument("--user-elf-sha256")
+    parser.add_argument("--user-target", choices=("x86_64-aiueos-user-v2",
+                                                  "x86_64-aiueos-user-v3"),
+                        default="x86_64-aiueos-user-v2")
     main(parser.parse_args())

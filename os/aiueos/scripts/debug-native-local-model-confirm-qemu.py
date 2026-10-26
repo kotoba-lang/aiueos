@@ -21,6 +21,8 @@ import time
 HERE = Path(__file__).resolve().parent
 ENTRY = "/os/aiueos/native/user-elf-v2-local-model-entry.kotoba"
 ELF_SHA256 = "6d5ec74da6197788a5e778b8903cc40f001602c4c19cb4701d2620a948208e6d"
+USER_ENTRY = "/os/aiueos/native/user-elf-v3-local-model-entry.kotoba"
+USER_ELF_SHA256 = "331a3ed64c5859bc546a36ce9666e1a1e17e31195caca96407def6f63f5cc7b1"
 PROMPT_TITLE = "AIUEOS local model Goal? y/n"
 if not __debug__:
     raise RuntimeError("the QEMU assertion gate must not run with Python -O")
@@ -62,7 +64,7 @@ def wait(base, qmp, directory, context, name, predicate, timeout=65):
     raise AssertionError((name, current))
 
 
-def endpoint(base, qmp, directory, code, request, elf, expected):
+def endpoint(base, qmp, directory, code, request, elf, expected, user_call):
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         registers = qmp.hmp("info registers")
@@ -77,13 +79,37 @@ def endpoint(base, qmp, directory, code, request, elf, expected):
                 qmp.call("stop")
                 code_bytes = qmp.dump(code, 4096, "code-final.bin", directory)
                 final = qmp.dump(request, 4096, "request-final.bin", directory)
-                assert code_bytes[:330] == elf[4096:4426]
-                assert struct.unpack_from("<I", final, 316)[0] == expected
+                code_length = 462 if user_call else 330
+                assert code_bytes[:code_length] == elf[4096:4096 + code_length]
+                if user_call:
+                    assert struct.unpack_from("<I", final, 128)[0] == 1364350539
+                    assert final[132:136] == bytes((1, 6, 0, 0))
+                    assert struct.unpack_from("<I", final, 136)[0] == ord("a")
+                    assert final[140:232] == bytes(92)
+                    assert final[316:320] == bytes(4), "host prefilled user token"
+                else:
+                    assert struct.unpack_from("<I", final, 316)[0] == expected
                 assert struct.unpack_from("<Q", final, 8)[0] == 255
                 return {"rip": rip, "cpl": cpl, "result": result,
-                        "modelTokenInput": expected, "codeMatchesPinnedElf": True}
+                        "modelTokenInput": 0 if user_call else expected,
+                        "userRequestEnvelope": user_call,
+                        "codeMatchesPinnedElf": True}
         time.sleep(.2)
-    raise AssertionError("approved local model token did not reach user-v2 CPL3")
+    failure = snapshot(base, qmp, directory, request - 0x21000)
+    kernel_state = qmp.dump(request - 0x21000 + 32768, 512,
+                            "kernel-user-context-after-failure.bin", directory)
+    failure["userHandler"] = {
+        "savedRSP": struct.unpack_from("<Q", kernel_state, 0)[0],
+        "savedRIP": struct.unpack_from("<Q", kernel_state, 8)[0],
+        "savedRFLAGS": struct.unpack_from("<Q", kernel_state, 16)[0],
+        "savedRDI": struct.unpack_from("<Q", kernel_state, 24)[0],
+        "savedRAX": struct.unpack_from("<Q", kernel_state, 32)[0],
+        "active": struct.unpack_from("<Q", kernel_state, 64)[0],
+        "lastReturn": struct.unpack_from("<Q", kernel_state, 72)[0],
+    }
+    (directory / "endpoint-failure.json").write_text(json.dumps(failure, indent=2) + "\n")
+    qmp.dump(code, 4096, "code-after-failure.bin", directory)
+    raise AssertionError(("approved local model token did not reach CPL3", failure))
 
 
 def main():
@@ -99,8 +125,12 @@ def main():
     if not receipt.is_file():
         parser.error("build_dir requires build-state.json")
     built = json.loads(receipt.read_text())
-    if built.get("state") != "MACOS_NATIVE_IMAGE_CANDIDATE" or built.get("kernelEntry") != ENTRY:
+    entry = built.get("kernelEntry")
+    user_call = entry == USER_ENTRY
+    if built.get("state") != "MACOS_NATIVE_IMAGE_CANDIDATE" or entry not in (ENTRY, USER_ENTRY):
         parser.error("build is not the local-model confirmation candidate")
+    if user_call and built.get("bootUserTarget") != "x86_64-aiueos-user-v3":
+        parser.error("user syscall candidate requires the Amu user-v3 target")
     args.kernel, args.efi = build / "KERNEL.ELF", build / "BOOTX64.EFI"
     font, slot = build / "source/boot-font.bin", build / "source/boot-user-slot.bin"
     for name, path, expected in (("kernel", args.kernel, built["kernel"]),
@@ -110,14 +140,16 @@ def main():
         if path.is_symlink() or not path.is_file() or base.pin(path) != expected:
             parser.error(f"{name} differs from build receipt")
     graph = built.get("sourceGraph", {})
-    for relative in ("native/user-elf-v2-local-model-entry.kotoba",
+    for relative in ("native/user-elf-v3-local-model-entry.kotoba" if user_call
+                     else "native/user-elf-v2-local-model-entry.kotoba",
                      "native/desktop.kotoba", "native/draft_store.kotoba",
                      "native/micro_infer.kotoba"):
         source = HERE.parent / relative
         if (source.is_symlink() or not source.is_file()
                 or base.pin(source) != graph.get("/os/aiueos/" + relative)):
             parser.error(f"{relative} differs from build receipt")
-    user_source = HERE.parent / "native/itonami-local-model-user-v2.kotoba"
+    user_source = HERE.parent / ("native/itonami-local-model-user-v3.kotoba" if user_call
+                                 else "native/itonami-local-model-user-v2.kotoba")
     user_elf = build / "boot-user.elf"
     if (user_source.is_symlink() or not user_source.is_file()
             or base.pin(user_source) != built.get("bootUserSource")
@@ -131,11 +163,12 @@ def main():
             (0x0031444c50554941, 2) or elf_size != 8280
             or any(slot_bytes[64 + elf_size:])
             or base.pin(slot)["sha256"] != built["bootUserSlot"]["sha256"]
-            or base.hashlib.sha256(elf).hexdigest() != ELF_SHA256
+            or base.hashlib.sha256(elf).hexdigest() !=
+            (USER_ELF_SHA256 if user_call else ELF_SHA256)
             or elf != user_elf.read_bytes()
             or efi.count(kernel) != 1 or efi.count(slot_bytes) != 1
             or efi.count(font.read_bytes()) != 1):
-        parser.error("kernel, EFI or user-v2 model token payload differs")
+        parser.error("kernel, EFI or model user payload differs")
     header = struct.unpack_from("<IIQQQQQQ", kernel, 120)
     if header[:4] != (1, 6, 1048576, 0x200000):
         parser.error("unexpected native context layout")
@@ -189,7 +222,7 @@ def main():
                                lambda s: s["pending"] == 1 and s["approved"] == 0
                                and s["modelToken"] == 0 and s["title"] == PROMPT_TITLE)
                 assert qmp.dump(request, 4096, "request-pending.bin", directory)[256:320] == bytes(64)
-                assert qmp.dump(code, 4096, "code-pending.bin", directory)[:330] == bytes(330)
+                assert qmp.dump(code, 4096, "code-pending.bin", directory)[:462 if user_call else 330] == bytes(462 if user_call else 330)
                 approval_ppm = directory / "approval.ppm"
                 approval_png = directory / "approval.png"
                 qmp.call("screendump", {"filename": str(approval_ppm)})
@@ -201,16 +234,17 @@ def main():
                               and s["submitted"] == 0 and s["modelToken"] == 0
                               and s["title"] == "Itonami")
                 assert qmp.dump(request, 4096, "request-denied.bin", directory)[256:320] == bytes(64)
-                assert qmp.dump(code, 4096, "code-denied.bin", directory)[:330] == bytes(330)
+                assert qmp.dump(code, 4096, "code-denied.bin", directory)[:462 if user_call else 330] == bytes(462 if user_call else 330)
                 registers = qmp.hmp("info registers")
                 assert re.search(r"\bCPL=0\b", registers)
                 base.key(qmp, "ret")
                 wait(base, qmp, directory, context, "pending-again",
                      lambda s: s["pending"] == 1 and s["title"] == PROMPT_TITLE)
                 base.key(qmp, "y")
-                user = endpoint(base, qmp, directory, code, request, elf, expected_token)
+                user = endpoint(base, qmp, directory, code, request, elf, expected_token, user_call)
                 after = snapshot(base, qmp, directory, context)
-                assert after["approved"] == 1 and after["modelToken"] == expected_token
+                assert after["approved"] == (0 if user_call else 1)
+                assert after["modelToken"] == expected_token
                 boots.append({"boot": 2, "restored": current, "pending": pending,
                               "denied": denied, "screenshot": visible,
                               "approvalScreenshot": {"image": str(approval_png),
@@ -258,7 +292,8 @@ def main():
                 rip, cpl = int(rip_match.group(1), 16), int(cpl_match.group(1))
                 assert cpl != 3, "modified user ELF reached CPL3"
                 if (cpl == 0 and page[:320] == bytes(320)
-                        and code_page[:330] == bytes(330) and current["modelToken"] == 0):
+                        and code_page[:462 if user_call else 330] == bytes(462 if user_call else 330)
+                        and current["modelToken"] == 0):
                     samples = samples + 1 if rip == last_rip else 1
                     last_rip = rip
                 else:
@@ -271,13 +306,16 @@ def main():
         base.close(process, qmp, log)
         args.efi = original_efi
     assert disk.read_bytes() == first, "modified slot boot changed the draft disk"
-    report = {"schema": "aiueos.native-local-model-confirm-qemu.v1",
-              "status": "PASS_NATIVE_LOCAL_MODEL_DENY_APPROVE_CPL3_AFTER_RESTORE",
+    report = {"schema": "aiueos.native-local-model-confirm-qemu.v2",
+              "status": ("PASS_NATIVE_USER_MODEL_SYSCALL_AFTER_RESTORE" if user_call
+                         else "PASS_NATIVE_LOCAL_MODEL_DENY_APPROVE_CPL3_AFTER_RESTORE"),
+              "kernelEntry": entry, "userOriginatedModelCall": user_call,
               "build": str(build), "kernel": base.pin(args.kernel), "efi": base.pin(args.efi),
               "slot": base.pin(slot), "font": base.pin(font),
               "userSource": base.pin(user_source), "userElf": base.pin(user_elf),
               "qemu": base.pin(args.qemu), "firmware": base.pin(args.firmware),
-              "observer": base.pin(Path(__file__)), "userElfSha256": ELF_SHA256,
+              "observer": base.pin(Path(__file__)),
+              "userElfSha256": USER_ELF_SHA256 if user_call else ELF_SHA256,
               "goal": goal, "expectedToken": expected_token, "boots": boots,
               "modifiedSlotRefusal": modified,
               "scratchDisk": base.pin(disk), "qmpTransport": "private-stdio",
