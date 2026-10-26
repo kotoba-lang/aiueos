@@ -8,6 +8,15 @@
 ;; need not fit into one machine window. A matching selected-model region is
 ;; an input from host policy, not a guest grant. This function does not verify
 ;; grant authority or dispatch a provider.
+;; Region roots are host-checked positive low-half addresses. Compare by
+;; subtraction so adding a length cannot wrap. A zero-length region still
+;; owns its root byte for alias detection; no byte is read from it.
+(defn- separate-regions? [a :i64 a-bytes :i64 b :i64 b-bytes :i64] :bool
+  (and (> a 0) (> b 0) (>= a-bytes 0) (>= b-bytes 0)
+       (if (< a b)
+         (>= (- b a) (if (= a-bytes 0) 1 a-bytes))
+         (>= (- a b) (if (= b-bytes 0) 1 b-bytes)))))
+
 (defn aiueos-llm-v1-request-shape-valid
   [wire-header :i64 wire-header-bytes :i64
    model :i64 model-bytes :i64
@@ -30,6 +39,21 @@
                (= (+ model-bytes system-bytes prompt-bytes) declared-payload)
                (= selected-model-bytes model-bytes)
                (= result-bytes declared-result)
+               (separate-regions? wire-header wire-header-bytes model model-bytes)
+               (separate-regions? wire-header wire-header-bytes system system-bytes)
+               (separate-regions? wire-header wire-header-bytes prompt prompt-bytes)
+               (separate-regions? wire-header wire-header-bytes selected-model selected-model-bytes)
+               (separate-regions? wire-header wire-header-bytes result result-bytes)
+               (separate-regions? model model-bytes system system-bytes)
+               (separate-regions? model model-bytes prompt prompt-bytes)
+               (separate-regions? model model-bytes selected-model selected-model-bytes)
+               (separate-regions? model model-bytes result result-bytes)
+               (separate-regions? system system-bytes prompt prompt-bytes)
+               (separate-regions? system system-bytes selected-model selected-model-bytes)
+               (separate-regions? system system-bytes result result-bytes)
+               (separate-regions? prompt prompt-bytes selected-model selected-model-bytes)
+               (separate-regions? prompt prompt-bytes result result-bytes)
+               (separate-regions? selected-model selected-model-bytes result result-bytes)
                (utf8/aiueos-llm-v1-utf8-valid model model-bytes)
                (utf8/aiueos-llm-v1-utf8-valid system system-bytes)
                (utf8/aiueos-llm-v1-utf8-valid prompt prompt-bytes))

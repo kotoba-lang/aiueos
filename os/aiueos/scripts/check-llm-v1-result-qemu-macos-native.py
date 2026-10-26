@@ -16,6 +16,7 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 NATIVE = HERE.parent / "native"
+ALIAS_PROBE_SHA256 = "54b6b739daaf6b8b67f78fc339942118a8cf0d054593b4fc6481c95136c8a7c4"
 
 
 def pin(path):
@@ -44,6 +45,8 @@ def main():
     observer = a.observer.resolve(strict=True)
     if a.observer.is_symlink() or pin(observer)["sha256"] != a.observer_sha256:
         p.error("observer must be a regular file with the declared digest")
+    if pin(NATIVE / "llm_v1_header_probe.kotoba")["sha256"] != ALIAS_PROBE_SHA256:
+        p.error("review the alias checks before claiming their QEMU readback")
     output = a.output.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     cases = (("positive", "llm_v1_header_probe.kotoba", True),
@@ -110,6 +113,12 @@ def main():
              "guestEmulation": "QEMU TCG", "wire11Dispatch": False,
              "modelExecution": False, "humanConsent": False,
              "utf8ComponentValidated": True, "aliasingQualified": False,
+             "aliasRefusalsObserved": [
+                 "model-selected-same-root",
+                 "empty-system-prompt-same-root",
+                 "prompt-result-same-root",
+                 "prompt-result-overlap-offset-1",
+             ],
              "nestedUserValueQualified": False,
              "desktop": False, "physicalHardware": False}
     (output / "llm-result-qemu.json").write_text(json.dumps(proof, indent=2) + "\n")

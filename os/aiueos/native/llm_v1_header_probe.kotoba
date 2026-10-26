@@ -139,30 +139,62 @@
                     (kernel-subregion result 4096 0 64) 64) 1))
              (put-byte selected 0 120)
              (record-check receipt 13
-               (= (request/aiueos-llm-v1-request-shape-valid
-                    (kernel-subregion header 4096 0 64) 64
-                    (kernel-subregion model 4096 0 5) 5
-                    (kernel-subregion system 4096 0 0) 0
-                    (kernel-subregion prompt 4096 0 5) 5
-                    (kernel-subregion selected 4096 0 5) 5
-                    (kernel-subregion result 4096 0 64) 64) 0))
+               (and (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion result 4096 0 64) 64) 0)
+                    ;; The model bytes match exactly here; only the two
+                    ;; region roles alias, so the call must still refuse.
+                    (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion result 4096 0 64) 64) 0)))
              (put-byte selected 0 108)
              (record-check receipt 14
-               (= (request/aiueos-llm-v1-request-shape-valid
-                    (kernel-subregion header 4096 0 64) 64
-                    (kernel-subregion model 4096 0 5) 5
-                    (kernel-subregion system 4096 0 0) 0
-                    (kernel-subregion prompt 4096 0 4) 4
-                    (kernel-subregion selected 4096 0 5) 5
-                    (kernel-subregion result 4096 0 64) 64) 0))
+               (and (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 4) 4
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion result 4096 0 64) 64) 0)
+                    ;; Even an empty system region has its own root.
+                    (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion prompt 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion result 4096 0 64) 64) 0)))
              (record-check receipt 15
-               (= (request/aiueos-llm-v1-request-shape-valid
-                    (kernel-subregion header 4096 0 64) 64
-                    (kernel-subregion model 4096 0 5) 5
-                    (kernel-subregion system 4096 0 0) 0
-                    (kernel-subregion prompt 4096 0 5) 5
-                    (kernel-subregion selected 4096 0 5) 5
-                    (kernel-subregion result 4096 0 63) 63) 0))
+               (and (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion result 4096 0 63) 63) 0)
+                    (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion prompt 4096 0 64) 64) 0)
+                    ;; Different roots still overlap within the prompt page.
+                    (= (request/aiueos-llm-v1-request-shape-valid
+                         (kernel-subregion header 4096 0 64) 64
+                         (kernel-subregion model 4096 0 5) 5
+                         (kernel-subregion system 4096 0 0) 0
+                         (kernel-subregion prompt 4096 0 5) 5
+                         (kernel-subregion selected 4096 0 5) 5
+                         (kernel-subregion prompt 4096 1 64) 64) 0)))
              (put-byte model 0 120)
              (record-check receipt 16
                (= (request/aiueos-llm-v1-request-shape-valid
