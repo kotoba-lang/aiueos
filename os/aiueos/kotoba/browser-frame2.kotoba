@@ -232,9 +232,8 @@
   ;; Font blobs are larger than the base 512-byte native load window. Narrow
   ;; to the containing 16 KiB slice before reading the aligned codepoint word.
   (let [offset (* i 4)
-        length (sw s sb 423)
         chunk-offset (* (quot offset 16384) 16384)
-        remaining (- length chunk-offset)
+        remaining (- (sw s sb 423) chunk-offset)
         chunk-length (if (> remaining 16384) 16384 remaining)]
     (kernel-load-u32-16k
      (kernel-subregion f fb 0 fb)
@@ -357,13 +356,13 @@
       (sput s sb 417 (+ (sw s sb 417) gw))
       0)))
 
-(defn lay-comp [s sb f fb p0] (let [i (lo16 p0) n (hi16 p0)]
+(defn lay-comp [s sb f fb p0] (loop [p0 p0] (let [i (lo16 p0) n (hi16 p0)]
   (if (>= i n) 0
     (let [gi (glyph-of s sb f fb (comp-cp s sb i))
           gw (glyph-width s sb f fb gi)]
       (do (if (> (+ (sw s sb 417) gw) (sw s sb 420)) (newline s sb) 0)
           (place-ruled s sb f fb (+ (* gi 65536) gw))
-          (lay-comp s sb f fb (+ (* (+ i 1) 65536) n)))))))
+          (recur (+ (* (+ i 1) 65536) n))))))))
 
 (defn caret [s sb]
   ;; ADR-0232: 1 x 16 in the text colour at the cursor, if its foot is above
@@ -400,13 +399,13 @@
 
 (defn adv [s sb f fb cp] (glyph-width s sb f fb (glyph-of s sb f fb cp)))
 
-(defn has-nl [s sb base i]
+(defn has-nl [s sb base i] (loop [base base i i]
   
-    (if (= (at s sb base i) 0) 0 (if (= (at s sb base i) 10) 1 (has-nl s sb base (+ i 1)))))
+    (if (= (at s sb base i) 0) 0 (if (= (at s sb base i) 10) 1 (recur base (+ i 1))))))
 
-(defn inked [s sb base i]
+(defn inked [s sb base i] (loop [base base i i]
   
-    (if (= (at s sb base i) 0) 0 (if (= (ws (at s sb base i)) 1) (inked s sb base (+ i 1)) 1)))
+    (if (= (at s sb base i) 0) 0 (if (= (ws (at s sb base i)) 1) (recur base (+ i 1)) 1))))
 
 (defn cwidth [s sb f fb p0] (loop [p0 p0 acc 0] (let [base (u3a p0) i (u3b p0) pws (u3c p0)]
   
@@ -512,9 +511,9 @@
         (verbatim s sb f fb (pk3 base 0 0))
         (pack s sb f fb (+ (* base 65536) 0))))))
 
-(defn blen [s sb base i]
+(defn blen [s sb base i] (loop [base base i i]
   (if (>= i 64) 64
-    (if (= (sw s sb (+ base i)) 0) i (blen s sb base (+ i 1)))))
+    (if (= (sw s sb (+ base i)) 0) i (recur base (+ i 1))))))
 
 (defn f-caret [s sb id base]
   ;; ADR-0263: window id's caret index; the end when the caret is another window's or none
@@ -814,10 +813,10 @@
         (if (>= (+ py 6) (sw s sb 4)) 0
           (on-handle s sb px py))))))
 
-(defn diag [s sb x y i]
+(defn diag [s sb x y i] (loop [x x y y i i]
   (if (> i 9) 0
     (do (put-rect s sb (+ (- x 5) i) (+ (- y 5) i) (+ (* 2 65536) 2))
-        (diag s sb x y (+ i 1)))))
+        (recur x y (+ i 1))))))
 
 (defn resize-cursor [s sb x y]
   (do (sput s sb 422 (ink s sb))
@@ -929,28 +928,30 @@
           0))))
 
 (defn emit [s sb f fb k]
-  (if (>= k (sw s sb 1)) 0
-    (do (if (= (minimized s sb (sw s sb (+ 5 (* k 5)))) 1) 0 (emit-window s sb f fb k))
-        (emit s sb f fb (+ k 1)))))
+  (loop [q k]
+    (if (>= q (sw s sb 1)) 0
+      (do (if (= (minimized s sb (sw s sb (+ 5 (* q 5)))) 1) 0 (emit-window s sb f fb q))
+          (recur (+ q 1))))))
 
 ;; --- admission --------------------------------------------------------------
 
 (defn has-id [s sb n k id]
-  (if (>= k n) 0
-    (if (= (sw s sb (+ 5 (* k 5))) id) 1
-      (has-id s sb n (+ k 1) id))))
+  (loop [q k]
+    (if (>= q n) 0
+      (if (= (sw s sb (+ 5 (* q 5))) id) 1
+        (recur (+ q 1))))))
 
 (defn focus-ok [s sb n]
   (if (= n 0)
     (if (= (sw s sb 2) 0) 1 0)
     (has-id s sb n 0 (sw s sb 2))))
 
-(defn ids-ok [s sb n k]
+(defn ids-ok [s sb n k] (loop [n n k k]
   (if (>= k n) 1
     
       (if (< (sw s sb (+ 5 (* k 5))) 1) 0
         (if (> (sw s sb (+ 5 (* k 5))) 4) 0
-          (ids-ok s sb n (+ k 1))))))
+          (recur n (+ k 1)))))))
 
 (defn rect-ok [s sb k vw vh]
   (let [b (+ 5 (* k 5))
@@ -963,15 +964,15 @@
         (if (> (+ x w) vw) 0
           (if (> (+ y h) vh) 0 1))))))
 
-(defn rects-ok [s sb n k p0] (let [vw (lo16 p0) vh (hi16 p0)]
+(defn rects-ok [s sb n k p0] (loop [n n k k p0 p0] (let [vw (lo16 p0) vh (hi16 p0)]
   (if (>= k n) 1
     (if (= (rect-ok s sb k vw vh) 0) 0
-      (rects-ok s sb n (+ k 1) (+ (* vw 65536) vh))))))
+      (recur n (+ k 1) (+ (* vw 65536) vh)))))))
 
-(defn scroll-ok [s sb id]
+(defn scroll-ok [s sb id] (loop [id id]
   (if (> id 4) 1
     (if (> (sw s sb (+ 2039 id)) 65535) 0
-      (scroll-ok s sb (+ id 1)))))
+      (recur (+ id 1))))))
 
 ;; ADR-0258: the lock screen. With word 2030 = 1 the frame is only this: a dark background, the
 ;; word ロック中 in white, four dots (the PIN digits typed so far white, the rest grey) and, after a refusal
