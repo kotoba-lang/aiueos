@@ -5475,6 +5475,11 @@ qwen_runtime_boot_complete:
         int f5 = aiueos_uhci_test();
         serial_string("AIUEOS_UHCI_TEST rc=");
         serial_decimal((uint32_t)f5);
+        {
+          extern uint8_t aiueos_uhci_ep_out, aiueos_uhci_ep_in;
+          serial_string(" ep-out="); serial_decimal(aiueos_uhci_ep_out);
+          serial_string(" ep-in="); serial_decimal(aiueos_uhci_ep_in);
+        }
         serial_string("\r\n");
       } else {
         extern uint32_t aiueos_uhci_scan_seen[12];

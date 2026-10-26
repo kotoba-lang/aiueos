@@ -812,6 +812,7 @@ static inline void out32(uint16_t port, uint32_t value) {
 }
 
 uint32_t aiueos_uhci_scan_seen[12];
+uint8_t aiueos_uhci_ep_out, aiueos_uhci_ep_in;
 int aiueos_uhci_probe(void) {
   int seen = 0;
   for (uint32_t bus = 0; bus < 8 && seen < 12; bus++) {
@@ -938,7 +939,9 @@ static int uhci_scsi_read(uint8_t addr, uint8_t ep_out, uint8_t ep_in,
   static uint32_t csw[4] __attribute__((section(".high_bss"), aligned(16)));
   uint32_t xfer_len = (uint32_t)sectors * 512u;
   for (int i = 0; i < 16; i++) cbw[i] = 0;
-  cbw[0] = 0x55534243u; cbw[1] = 0x01020304u; cbw[2] = xfer_len;
+  /* the CBW signature is the bytes 'U','S','B','C' = little-endian 0x43425355
+     (measured: the byte-swapped 0x55534243 makes the device STALL the CBW) */
+  cbw[0] = 0x43425355u; cbw[1] = 0x01020304u; cbw[2] = xfer_len;
   cbw[3] = 0x80u | (10u << 16); /* byte 12 = the direction IN; byte 14 = the CBWCBLength (10) */
   uint8_t *c = (uint8_t *)cbw;
   c[15] = 0x28; /* READ(10) */
@@ -949,7 +952,7 @@ static int uhci_scsi_read(uint8_t addr, uint8_t ep_out, uint8_t ep_in,
      endpoint carries the CBW first (toggle 0); the IN endpoint carries the
      data first (toggle 0) and the CSW next (toggle 1) */
   int n = uhci_bulk(addr, ep_out, 0, cbw, 31, 0);
-  if (n < 0) return -71; /* the CBW did not go out */
+  if (n < 0) return -71 - (uhci_tds[4].status & 0x7f); /* the CBW: encode the TD status */
   n = uhci_bulk(addr, ep_in, 1, uhci_data, (uint16_t)(xfer_len > 512 ? 512 : xfer_len), 0);
   if (n < 0) return -72; /* the data did not come in */
   int m = uhci_bulk(addr, ep_in, 1, csw, 13, 1);
@@ -989,10 +992,50 @@ int aiueos_uhci_test(void) {
   if (uhci_control(2, 0x80, 6, 0x0100, 0, 18) < 0) return -5;
   if (uhci_data[0] != 18 || uhci_data[4] != 0) return -6; /* the device descriptor sanity */
   (void)maxpkt;
+  /* the configuration descriptor: fetch the 9-byte header, then the full
+     wTotalLength, and find the bulk endpoints (the class 08 / subclass 06
+     / proto 50 mass-storage interface) */
+  if (uhci_control(2, 0x80, 6, 0x0200, 0, 9) < 0) return -20;
+  uint16_t total = (uint16_t)(uhci_data[2] | (uhci_data[3] << 8));
+  if (total < 9 || total > 256) total = 64;
+  if (uhci_control(2, 0x80, 6, 0x0200, 0, total) < 0) return -21;
+  uint8_t ep_out = 0, ep_in = 0;
+  extern uint8_t aiueos_uhci_ep_out, aiueos_uhci_ep_in;
+  for (int i = 0; i + 1 < (int)total; ) {
+    uint8_t dlen = uhci_data[i], dtype = uhci_data[i + 1];
+    if (dlen < 2) break;
+    if (dtype == 5 && dlen >= 7) { /* the endpoint descriptor */
+      uint8_t addr = uhci_data[i + 2], attr = uhci_data[i + 3];
+      if ((attr & 3) == 2) { /* the bulk */
+        if (addr & 0x80) ep_in = addr & 0x0f; else ep_out = addr & 0x0f;
+      }
+    }
+    i += dlen;
+  }
+  aiueos_uhci_ep_out = ep_out; aiueos_uhci_ep_in = ep_in;
+  if (!ep_out || !ep_in) return -22 - (int)ep_out * 4 - (int)ep_in; /* the encode for diagnosis */
+  /* SET_CONFIGURATION(1): the device's endpoints stay unconfigured and the
+     bulk transactions STALL until this is sent (measured) */
+  if (uhci_control(2, 0x00, 9, 1, 0, 0) < 0) return -23;
+  for (volatile int s = 0; s < 200000; s++) { }
   /* the BBB mass-storage: the SCSI READ(10) of LBA 2 (the known file) */
-  { int sc = uhci_scsi_read(2, 1, 2, 2, 1); if (sc < 0) return sc; }
-  if (uhci_data[0] == 'A' && uhci_data[1] == 'I' && uhci_data[2] == 'U') return uhci_data[0];
-  return -8;
+  { int sc = uhci_scsi_read(2, ep_out, ep_in, 2, 1); if (sc < 0) return sc; }
+  if (!(uhci_data[0] == 'A' && uhci_data[1] == 'I' && uhci_data[2] == 'U')) return -8;
+  /* the file copy: the file lands in the internal file system (F2's table:
+     the F2 layer is metadata-only, so the file's CONTENT readback is a
+     second read from the media compared byte-for-byte — the receipt
+     records that boundary) */
+  {
+    static uint8_t readback[512] __attribute__((section(".high_bss"), aligned(16)));
+    extern int fs_create(const char *name, uint32_t size);
+    if (fs_create("USBFILE", 512) != 1) return -9;
+    for (int i = 0; i < 512; i++) readback[i] = uhci_data[i]; /* the first read saved */
+    int reread = uhci_scsi_read(2, ep_out, ep_in, 2, 1);
+    if (reread < 0) return -10;
+    for (int i = 0; i < 512; i++)
+      if (uhci_data[i] != readback[i]) return -11; /* the copy must not change a byte */
+  }
+  return uhci_data[0];
 }
 
 /* ---- F2 durable file system (JUN-140) ------------------------------------
@@ -1089,7 +1132,7 @@ static uint32_t fs_free_first(void) {
   return used;
 }
 /* result: 1 ok, 0 error, 2 disk full (reported, nothing written) */
-static int fs_create(const char *name, uint32_t size) {
+int fs_create(const char *name, uint32_t size) {
   int slot = -1;
   for (unsigned i = 0; i < FS_ENTRIES; i++) if (fs_table_live.entries[i].state == 0) { slot = (int)i; break; }
   if (slot < 0 || fs_find(name) >= 0) return 0;
