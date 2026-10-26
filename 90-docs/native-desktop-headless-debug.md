@@ -35,6 +35,12 @@ the guest's branch behavior; they are not human consent for a real external
 operation. Use a fresh user choice at the trusted operation boundary in a
 product run.
 
+Use this command for each technical regression or restart check, including
+after a fresh native build. The receipt identifies the exact build and gate;
+keep that receipt with the issue or PR evidence. Screen Sharing and a person
+typing test keys are optional interactive UX review, not a prerequisite for
+debugging or for reproducing the automated result.
+
 For a Mac native dual-payload user-v2 build, give its build directory to the
 unattended user debugger. It validates the build receipt, extracts the pinned
 ELF from the staged user slot, boots fresh isolated QEMU guests, types the

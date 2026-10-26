@@ -10,9 +10,13 @@ logs even when the guest gate fails. For the older local-draft desktop profile,
 run `os/aiueos/scripts/debug-native-desktop-unattended.py`, adding
 `--verify-restore` for save and cold reboot. See
 `90-docs/native-desktop-headless-debug.md`.
-Read guest state, send test keys, and capture the framebuffer there before
-asking a person to reconnect Screen Sharing, enter a VNC password, or press
-guest keys. Keep any separately shared VNC session password protected.
+This is the default for each routine VM debug run: inspect `debug-run.json`,
+the guest gate receipt, logs and screenshots before reporting the result.
+Do not ask the user to reconnect Screen Sharing, enter a VNC password or press
+guest keys to repeat a technical check. Request human input only when the
+remaining question actually requires a person's judgment or a trusted product
+approval; a QMP-injected key cannot supply that approval.
+Keep any separately shared VNC session password protected.
 QMP is a local VM control channel, so keep its Unix socket inside a private
 task workspace when attaching to a running VM. The headless restart gate uses
 private QMP standard-input/output pipes and needs no socket listener. A QMP
