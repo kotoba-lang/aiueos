@@ -28,3 +28,16 @@ The next implementation must give native provider/validation code a separate
 admitted region or version the kernel/data/user layout together. No QEMU boot
 or scorecard point is claimed for this unbuilt candidate; the last passing
 user-v3 QEMU proof belongs to the 31-module image.
+
+## Text lower bound
+
+The same diagnostic F2 compiled four temporary, **nonfunctional** source
+variants in an isolated worktree. Replacing only the bridge body still needed
+1,063,673 bytes; replacing only the request-shape body needed 1,065,065;
+replacing the header and UTF-8 bodies needed 1,062,425. Replacing all four
+new modules with minimal functions still needed 1,050,889 bytes, which is
+2,313 bytes beyond the fixed boundary. These variants have no validation
+semantics and were never booted. The source-bound [size-lower-bound.json](size-lower-bound.json)
+records each failed compile. This rules out a behavior-preserving rewrite of
+those four function bodies as the sole solution; the layout or component
+placement must change.
