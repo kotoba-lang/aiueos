@@ -6,8 +6,8 @@
   "sourceRepository": "kotoba-lang/aiueos",
   "core": "shared",
   "configurationOwner": "network-awai",
-  "purpose": "Awai Network OS distribution",
-  "presetIntent": ["itonami-workspace", "awai-node", "awai-node-console"],
+  "purpose": "Awai Network OS distribution; web3-first, user-owned-keys browser OS (kotoba ADR-0275)",
+  "presetIntent": ["itonami-workspace", "awai-node", "awai-node-console", "wallet-did", "content-addressed-open", "consent-surface"],
   "componentInstallation": "not-performed-by-descriptor",
   "admission": "inherited-common-contracts",
   "qualification": "requires-specific-core-and-component-receipts"
